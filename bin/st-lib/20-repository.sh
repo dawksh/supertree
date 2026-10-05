@@ -99,16 +99,18 @@ adopt_hashed_session() {
 # Rows: repo key, branch, path, tmux session. Session names stay readable
 # (repo/branch); a short hash is added only where two trees would collide.
 list_trees() {
-  local r repo branch path sess clash live
+  local r repo branch path sess clash live root
   [ -f "$ST_REPOS" ] || return 0
   live=$(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+  root=$(cd "$ST_WORKTREE_ROOT" 2>/dev/null && pwd -P || printf '%s' "$ST_WORKTREE_ROOT")
   while read -r r; do
     [ -d "$r" ] || continue
     repo=$(repo_key "$r")
-    git -C "$r" worktree list --porcelain 2>/dev/null | awk -v repo="$repo" '
-      /^worktree /{p=substr($0,10)}
-      /^branch /{b=$2; sub("refs/heads/","",b); print repo"\t"b"\t"p}
-      /^detached$/{print repo"\t(detached)\t"p}'
+    # Skip linked worktrees made by other tools (e.g. Cursor) outside our root.
+    git -C "$r" worktree list --porcelain 2>/dev/null | awk -v repo="$repo" -v root="$root/" '
+      /^worktree /{p=substr($0,10); n++; keep = n == 1 || index(p, root) == 1}
+      keep && /^branch /{b=$2; sub("refs/heads/","",b); print repo"\t"b"\t"p}
+      keep && /^detached$/{print repo"\t(detached)\t"p}'
   done < "$ST_REPOS" | awk -F '\t' '
     {
       row[NR] = $0; branch[NR] = $2; name = $1; sub(/-[^-]*$/, "", name)
