@@ -75,7 +75,7 @@ git -C "$fixture" -c user.name=Test -c user.email=test@example.com \
   commit -q --allow-empty -m init
 git -C "$fixture" worktree add -q -b multi-agent "$TEST_ROOT/multi-agent"
 printf '%s\n' "$fixture" > "$tmux_state/repos"
-ST_STATE="$tmux_state" "$ROOT/bin/st" go multi-agent
+ST_STATE="$tmux_state" ST_WORKTREE_ROOT="$TEST_ROOT" "$ROOT/bin/st" go multi-agent
 grep -F -- '-n codex' "$ST_TMUX_LOG" >/dev/null || fail 'session did not create a codex window'
 grep -F -- '_run _agent' "$ST_TMUX_LOG" >/dev/null || fail 'session did not use the generic agent launcher'
 
