@@ -321,9 +321,23 @@ cmd_agent() {
   select_window_type agent
 }
 
+cmd_leave() {
+  local tty=${1:-} cur origin
+  [ -n "${TMUX:-}" ] || die "st leave only works inside tmux"
+  [ -n "$tty" ] || tty=$(tmux display-message -p '#{client_tty}')
+  cur=$(tmux display-message -p -c "$tty" '#S' 2>/dev/null || true)
+  origin=$(cat "$ST_STATE/origin/$(tty_key "$tty")" 2>/dev/null) || origin=""
+  # Go back to the session st was opened from; detach only when there is none.
+  if [ -n "$origin" ] && [ "$origin" != "$cur" ] && tmux has-session -t "=$origin" 2>/dev/null; then
+    tmux switch-client -c "$tty" -t "=$origin" && return 0
+  fi
+  tmux detach-client -t "$tty"
+}
+
 st_register_command 'down' cmd_down 'close sessions; keep worktrees' 'down [branch|--subtrees|--all]'
 st_register_command 'toggle' cmd_toggle ''
 st_register_command 'window' cmd_window ''
 st_register_command 'last' cmd_last 'switch to the previous tree'
 st_register_command 'agent' cmd_agent ''
+st_register_command 'leave' cmd_leave ''
 st_register_command '_sessions' known_sessions ''
