@@ -136,7 +136,7 @@ update those with `git pull` instead.
 cd ~/projects/webauth
 st new feat-otp        # worktree + deps + env + session, drops you in the agent
 # ... work ...
-M-q                    # leave tmux; the tree keeps running
+M-q                    # back to where you ran st; the tree keeps running
 st resume feat-otp     # back in the running tree
 st down feat-otp       # close the tree session; agent history stays
 st rm feat-otp         # done with it: session, worktree and branch go away
@@ -191,7 +191,7 @@ st down --all -y                 skip the confirmation
 | `M-Tab` | switch to the tree you were in before; press again to come back |
 | `M-r` | pick any repo you have used `st new` in, enter a branch, and create a tree there — no `cd` needed |
 | `M-1` / `M-2` / `M-3` | select a configured window by position |
-| `M-q` | leave tmux; keep the current tree session running |
+| `M-q` | go back to the session you ran `st` from (leaves tmux if you started outside it) |
 | `M-Q` (Option-Shift-Q) | leave tmux; keep the current tree session running |
 
 In the tree picker, press Enter to open a tree, Ctrl-D to delete the selected
@@ -344,8 +344,9 @@ after reviewing them. Global user config remains sourced on every invocation.
 `Ctrl-D`. The window falls back to a shell in the worktree. `M-1` recreates the
 configured agent window if it has been closed.
 
-**Leave tmux** — `M-q` or `M-Q` detaches your client and returns to your terminal
-shell. The tree session, agent, and editor keep running. Reattach with
+**Leave tmux** — `M-q` switches back to the tmux session you ran `st` from, or
+detaches if you started outside tmux. `M-Q` always detaches your client and
+returns to your terminal shell. The tree session, agent, and editor keep running. Reattach with
 `st resume [branch]` or `tmux attach`.
 
 **Close the tree** — `st down`. Kills only the tmux session. Unsaved editor

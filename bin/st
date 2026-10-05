@@ -88,7 +88,8 @@ keys (inside tmux)
   M-w   tree picker          M-e   toggle first <-> second configured window
   M-Tab switch to the previous tree
   M-1 / M-2 / M-3           select configured window by position
-  M-q / M-Q   leave tmux; keep the tree session running
+  M-q         back to the session st was opened from
+  M-Q         leave tmux; keep the tree session running
 USAGE
 }
 
