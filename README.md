@@ -189,6 +189,7 @@ st down --all -y                 skip the confirmation
 | `M-w` | tree picker, ordered by most recently opened tree, with a `+ new branch…` row |
 | `M-e` | toggle between the first two configured windows |
 | `M-Tab` | switch to the tree you were in before; press again to come back |
+| `M-r` | pick any repo you have used `st new` in, enter a branch, and create a tree there — no `cd` needed |
 | `M-1` / `M-2` / `M-3` | select a configured window by position |
 | `M-q` | leave tmux; keep the current tree session running |
 | `M-Q` (Option-Shift-Q) | leave tmux; keep the current tree session running |
