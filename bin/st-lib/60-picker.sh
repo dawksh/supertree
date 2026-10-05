@@ -125,5 +125,37 @@ cmd_go() {
   attach "$sess"
 }
 
+cmd_roots() {
+  local popup_client='' rows root label branch self
+  case ${1:-} in
+    --popup) [ $# -ge 2 ] || die "usage: st roots --popup <tmux-client>"; popup_client=$2;;
+    '') ;;
+    *) die "usage: st roots";;
+  esac
+  [ -f "$ST_REPOS" ] || die "no roots known yet — run 'st new <branch>' inside a repo"
+  rows=$(sort -u "$ST_REPOS" | while IFS= read -r root; do
+    [ -d "$root" ] || continue
+    case $root in ("$HOME"/*) label="~${root#"$HOME"}";; (*) label=$root;; esac
+    printf '%s\t%s\n' "$label" "$root"
+  done)
+  [ -n "$rows" ] || die "no roots known yet — run 'st new <branch>' inside a repo"
+
+  if [ -n "$popup_client" ]; then
+    self=$(st_executable)
+    tmux display-popup -c "$popup_client" -E -w 80% -h 70% "$self roots"
+    return
+  fi
+
+  root=$(printf '%s\n' "$rows" |
+    fzf --delimiter=$'\t' --with-nth=1 --height=100% --reverse \
+        --border --border-label=' Roots ' --prompt='Find root › ' \
+        --bind='esc:abort') || return 0
+  root=$(printf '%s' "$root" | cut -f2)
+  printf 'branch: ' >&2; read -r branch
+  [ -n "$branch" ] || return 0
+  cmd_new "$branch" --repo "$root"
+}
+
 st_register_command 'go' cmd_go 'pick a tree and switch to it' 'go [query]'
 st_register_command 'resume' cmd_go 'reopen a tree and resume its agent' 'resume [query]'
+st_register_command 'roots' cmd_roots 'pick a known repo and create a tree in it'

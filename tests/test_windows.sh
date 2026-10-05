@@ -49,6 +49,10 @@ git init -q "$fixture"
 git -C "$fixture" checkout -qb main
 git -C "$fixture" -c user.name=Test -c user.email=test@example.com \
   commit -q --allow-empty -m init
+# A main checkout is only listed while it has a worktree under the root.
+mkdir -p "$HOME/projects/.worktrees"
+git -C "$fixture" worktree add -q -b feature \
+  "$(cd "$HOME/projects/.worktrees" && pwd -P)/supertree/feature"
 printf '%s\n' "$fixture" > "$ST_STATE/repos"
 main_session=$("$ROOT/bin/st" _sessions | grep -x 'supertree/main' | head -1)
 [ -n "$main_session" ] || fail 'main session was not listed'

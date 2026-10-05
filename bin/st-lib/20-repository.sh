@@ -107,10 +107,16 @@ list_trees() {
     [ -d "$r" ] || continue
     repo=$(repo_key "$r")
     # Skip linked worktrees made by other tools (e.g. Cursor) outside our root.
+    # Flag the main checkout as orphaned when no worktree under our root is left.
     git -C "$r" worktree list --porcelain 2>/dev/null | awk -v repo="$repo" -v root="$root/" '
-      /^worktree /{p=substr($0,10); n++; keep = n == 1 || index(p, root) == 1}
-      keep && /^branch /{b=$2; sub("refs/heads/","",b); print repo"\t"b"\t"p}
-      keep && /^detached$/{print repo"\t(detached)\t"p}'
+      /^worktree /{p=substr($0,10); n++; keep = n == 1 || index(p, root) == 1; row = ""}
+      keep && /^branch /{b=$2; sub("refs/heads/","",b); row = repo"\t"b"\t"p}
+      keep && /^detached$/{row = repo"\t(detached)\t"p}
+      row != "" { if (n == 1) main = row; else linked[++k] = row; row = "" }
+      END {
+        if (main != "") print main "\t" (k ? 0 : 1)
+        for (i = 1; i <= k; i++) print linked[i] "\t0"
+      }'
   done < "$ST_REPOS" | awk -F '\t' '
     {
       row[NR] = $0; branch[NR] = $2; name = $1; sub(/-[^-]*$/, "", name)
@@ -125,9 +131,10 @@ list_trees() {
         if (!((sess[i], branch[i]) in seen_tree)) { seen_tree[sess[i], branch[i]] = 1; trees[sess[i]]++ }
       }
       for (i = 1; i <= NR; i++) print row[i] "\t" sess[i] "\t" (trees[sess[i]] > 1)
-    }' | while IFS=$'\t' read -r repo branch path sess clash; do
+    }' | while IFS=$'\t' read -r repo branch path orphan sess clash; do
     [ "$clash" = 0 ] || sess="$sess-$(identity_hash "$branch" | cut -c1-6)"
     adopt_hashed_session "$repo" "$branch" "$sess" "$live"
+    [ "$orphan" = 0 ] || tmux has-session -t "=$sess" 2>/dev/null || continue
     printf '%s\t%s\t%s\t%s\n' "$repo" "$branch" "$path" "$sess"
   done
 }
