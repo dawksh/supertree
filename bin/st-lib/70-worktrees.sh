@@ -34,6 +34,7 @@ cmd_new() {
     if git -C "$main" show-ref --verify --quiet "refs/heads/$branch"; then
       git -C "$main" worktree add -q "$dir" "$branch"
     else
+      base=$(pre_create "$main" "$branch" "$base") || die "pre-create hook failed; no worktree created"
       git -C "$main" worktree add -q -b "$branch" "$dir" ${base:+"$base"}
     fi
   fi

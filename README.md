@@ -292,16 +292,19 @@ one invocation.
 
 ## Creating a tree
 
-`st new` does four things, all skippable with `--bare`:
+`st new` does these things; all but the worktree are skipped with `--bare`:
 
-1. **Worktree** — `git worktree add` under `~/projects/.worktrees/<repo>/<slug>`.
-2. **Deps** — symlinks each `ST_LINK_DIRS` entry from the main checkout, but only
+1. **Pre-create** — for a new branch, runs `ST_PRE_CREATE` in the main checkout
+   and picks the start point: `--from`, else `ST_BASE_BRANCH`, else current HEAD.
+   If the hook fails, no worktree is created.
+2. **Worktree** — `git worktree add` under `~/projects/.worktrees/<repo>/<slug>`.
+3. **Deps** — symlinks each `ST_LINK_DIRS` entry from the main checkout, but only
    when the lockfile is byte-identical. If it differs, runs `ST_INSTALL_CMD`
    instead, so a branch that changed dependencies never silently runs main's
    `node_modules` or writes into it.
-3. **Env** — copies each `ST_COPY_GLOBS` match from the main checkout. Copies,
+4. **Env** — copies each `ST_COPY_GLOBS` match from the main checkout. Copies,
    not symlinks, so a tree can diverge.
-4. **Hook** — runs `ST_POST_CREATE`.
+5. **Hook** — runs `ST_POST_CREATE`.
 
 Build output (`.next`, `dist`) is never shared between trees.
 
@@ -327,7 +330,14 @@ ST_COPY_GLOBS=('.env*')          # copied from main
 ST_INSTALL_CMD='npm ci'          # used when the lockfile differs
 ST_LOCKFILES=(package-lock.json yarn.lock pnpm-lock.yaml bun.lockb)
 ST_POST_CREATE='echo "PORT=$((3000 + ST_TREE_INDEX))" >> .env.local'
+ST_BASE_BRANCH=dev               # new branches start from dev
+ST_PRE_CREATE='git fetch origin dev:dev'   # fast-forward local dev first
 ```
+
+`ST_PRE_CREATE` runs in the main checkout, only when the branch does not exist
+yet, and gets `ST_TREE_BRANCH` and `ST_BASE_BRANCH`. `git fetch origin dev:dev`
+updates `dev` without checking it out and refuses if `dev` has diverged or is
+checked out somewhere; use `git -C <that checkout> pull --ff-only` in that case.
 
 The hook gets `ST_TREE_DIR`, `ST_TREE_BRANCH` and `ST_TREE_INDEX`.
 `ST_TREE_INDEX` is a stable small integer per tree — derive a dev server port
