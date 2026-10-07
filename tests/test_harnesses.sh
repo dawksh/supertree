@@ -60,10 +60,31 @@ assert_log 'codex|'
 
 # Session construction names the first window after the configured harness.
 export ST_TMUX_LOG="$TEST_ROOT/tmux.log"
+export ST_TMUX_OPTIONS="$TEST_ROOT/tmux-options"
+export ST_TMUX_SESSIONS="$TEST_ROOT/tmux-sessions"
+: > "$ST_TMUX_SESSIONS"
 printf '%s\n' \
-  '#!/bin/sh' \
+  '#!/usr/bin/env bash' \
   'printf "%s\n" "$*" >> "$ST_TMUX_LOG"' \
-  '[ "${1:-}" = has-session ] && exit 1' \
+  'case ${1:-} in' \
+  '  has-session) exit 1;;' \
+  '  new-session)' \
+  '    args=("$@"); for ((i=1; i<${#args[@]}; i++)); do' \
+  '      [ "${args[i]}" = -s ] && printf "%s\n" "${args[i+1]}" >> "$ST_TMUX_SESSIONS"' \
+  '    done;;' \
+  '  list-sessions)' \
+  '    awk '\''!seen[$0]++ { print "$" NR "\t" $0 }'\'' "$ST_TMUX_SESSIONS";;' \
+  '  set-option)' \
+  '    args=("$@"); for ((i=1; i<${#args[@]}; i++)); do' \
+  '      [ "${args[i]}" = -t ] && sess=${args[i+1]#=}' \
+  '      [[ ${args[i]} = @* ]] && { opt=${args[i]}; value=${args[i+1]}; }' \
+  '    done; printf "%s|%s|%s\n" "$sess" "$opt" "$value" >> "$ST_TMUX_OPTIONS";;' \
+  '  show-options)' \
+  '    args=("$@"); for ((i=1; i<${#args[@]}; i++)); do' \
+  '      [ "${args[i]}" = -t ] && sess=${args[i+1]#=}' \
+  '      [[ ${args[i]} = @* ]] && opt=${args[i]}' \
+  '    done; awk -F "[|]" -v s="$sess" -v o="$opt" '\''$1 == s && $2 == o { value=$3 } END { if (value != "") print value }'\'' "$ST_TMUX_OPTIONS" 2>/dev/null;;' \
+  'esac' \
   'exit 0' > "$HOME/.local/bin/tmux"
 chmod +x "$HOME/.local/bin/tmux"
 printf 'ST_HARNESS=codex\n' > "$ST_CONFIG"

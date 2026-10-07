@@ -36,22 +36,43 @@ while [ $# -gt 0 ]; do
 done
 
 case ${command:-} in
+  list-sessions)
+    if [[ ${last:-} == *'#{session_id}'* ]]; then
+      printf '$1\torigin\n$2\t%s\n$3\t%s\n' "$ST_TEST_TREE_A" "$ST_TEST_TREE_B"
+    else
+      printf 'origin\n%s\n%s\n' "$ST_TEST_TREE_A" "$ST_TEST_TREE_B"
+    fi
+    ;;
   display-message)
     case ${last:-} in
       '#{client_tty}') printf '%s\n' "$ST_TEST_TTY";;
       '#S') cat "$ST_TEST_CURRENT";;
       '#{window_id}')
         session=$(cat "$ST_TEST_CURRENT")
-        case $session in origin) window=@1;; tree-a) window=@2;; *) window=@3;; esac
+        case $session in origin) window=@1;; "$ST_TEST_TREE_A") window=@2;; *) window=@3;; esac
         printf '%s\n' "$window"
         ;;
     esac
+    ;;
+  show-options)
+    option=${last:-}
+    if [ "$option" = @supertree_label ]; then
+      case $target in
+        '$2'|"$ST_TEST_TREE_A") printf 'repo/branch-a\n';;
+        '$3'|"$ST_TEST_TREE_B") printf 'repo/branch-b\n';;
+      esac
+    fi
     ;;
   has-session)
     grep -qxF -- "${target%%:*}" "$ST_TEST_LIVE"
     ;;
   switch-client)
     session=${target%%:*}
+    case $session in
+      '$1') session=origin;;
+      '$2') session=$ST_TEST_TREE_A;;
+      '$3') session=$ST_TEST_TREE_B;;
+    esac
     grep -qxF -- "$session" "$ST_TEST_LIVE" || exit 1
     if [ -f "$ST_TEST_FAIL_SWITCH" ] && grep -qxF -- "$target" "$ST_TEST_FAIL_SWITCH"; then
       : > "$ST_TEST_FAIL_SWITCH"
@@ -72,25 +93,30 @@ mkdir -p "$repo"
 git -C "$repo" init -q
 git -C "$repo" -c user.name=Test -c user.email=test@example.com \
   commit -q --allow-empty -m init
+git -C "$repo" worktree add -q -b branch-a "$ST_WORKTREE_ROOT/repo/branch-a"
+git -C "$repo" worktree add -q -b branch-b "$ST_WORKTREE_ROOT/repo/branch-b"
+printf '%s\n' "$repo" > "$ST_STATE/repos"
+export ST_TEST_TREE_A=$($ROOT/bin/st _sessions | grep '/branch-a$')
+export ST_TEST_TREE_B=$($ROOT/bin/st _sessions | grep '/branch-b$')
 
-printf '%s\n' origin tree-a tree-b > "$ST_TEST_LIVE"
+printf '%s\n' origin "$ST_TEST_TREE_A" "$ST_TEST_TREE_B" > "$ST_TEST_LIVE"
 printf 'origin\n' > "$ST_TEST_CURRENT"
 origin_file="$ST_STATE/origin/-dev-ttys001"
 
 go() {
-  local label=$1 session=$2
-  ST_PICKER_ROWS=$(printf '%s  closed\t%s\t%s' "$label" "$repo" "$session") \
+  local label=$1 path=$2 session=$3
+  ST_PICKER_ROWS=$(printf '%s  closed\t%s\t%s' "$label" "$path" "$session") \
     "$ROOT/bin/st" go "$label"
 }
 
-go demo/a tree-a
-go demo/b tree-b
-[ "$(cat "$ST_TEST_CURRENT")" = tree-b ] || fail 'nested switch did not reach tree B'
-expected=$(printf 'origin\t@1\ntree-a\t@2')
+go repo/branch-a "$ST_WORKTREE_ROOT/repo/branch-a" "$ST_TEST_TREE_A"
+go repo/branch-b "$ST_WORKTREE_ROOT/repo/branch-b" "$ST_TEST_TREE_B"
+[ "$(cat "$ST_TEST_CURRENT")" = "$ST_TEST_TREE_B" ] || fail 'nested switch did not reach tree B'
+expected=$(printf 'origin\t@1\n%s\t@2' "$ST_TEST_TREE_A")
 [ "$(cat "$origin_file")" = "$expected" ] || fail 'nested origins were not pushed in order'
 
 "$ROOT/bin/st" leave "$ST_TEST_TTY"
-[ "$(cat "$ST_TEST_CURRENT")" = tree-a ] || fail 'first leave did not return to tree A'
+[ "$(cat "$ST_TEST_CURRENT")" = "$ST_TEST_TREE_A" ] || fail 'first leave did not return to tree A'
 [ "$(cat "$origin_file")" = $'origin\t@1' ] || fail 'first leave did not consume tree A'
 
 "$ROOT/bin/st" leave "$ST_TEST_TTY"
@@ -104,22 +130,22 @@ expected=$(printf 'origin\t@1\ntree-a\t@2')
 # Missing entries and entries equal to the current session are consumed rather
 # than blocking an older live origin.
 rm -f "$ST_TEST_DETACHED"
-printf 'tree-b\n' > "$ST_TEST_CURRENT"
-printf 'origin\t@7\nstale-session\t@99\ntree-b\t@8\n' > "$origin_file"
+printf '%s\n' "$ST_TEST_TREE_B" > "$ST_TEST_CURRENT"
+printf 'origin\t@7\nstale-session\t@99\n%s\t@8\n' "$ST_TEST_TREE_B" > "$origin_file"
 "$ROOT/bin/st" leave "$ST_TEST_TTY"
 [ "$(cat "$ST_TEST_CURRENT")" = origin ] || fail 'leave did not skip duplicate and stale origins'
 [ ! -s "$origin_file" ] || fail 'stale origins remained after unwind'
 [ ! -e "$ST_TEST_DETACHED" ] || fail 'stale history caused a detach despite a live origin'
 
 # A legacy single-session file remains readable.
-printf 'tree-b\n' > "$ST_TEST_CURRENT"
+printf '%s\n' "$ST_TEST_TREE_B" > "$ST_TEST_CURRENT"
 printf 'origin\n' > "$origin_file"
 "$ROOT/bin/st" leave "$ST_TEST_TTY"
 [ "$(cat "$ST_TEST_CURRENT")" = origin ] || fail 'legacy origin record was not restored'
 [ ! -s "$origin_file" ] || fail 'legacy origin record was not consumed'
 
 # If a recorded window disappeared, restoration falls back to the session.
-printf 'tree-b\n' > "$ST_TEST_CURRENT"
+printf '%s\n' "$ST_TEST_TREE_B" > "$ST_TEST_CURRENT"
 printf 'origin\t@missing\n' > "$origin_file"
 export ST_TEST_FAIL_SWITCH="$TEST_ROOT/fail-switch"
 printf 'origin:@missing\n' > "$ST_TEST_FAIL_SWITCH"

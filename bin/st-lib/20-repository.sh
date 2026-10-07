@@ -86,15 +86,32 @@ tree_index() {
   printf '%s\n' "$n" | tee "$f"
 }
 
-# Sessions opened before readable names keep running under the new name.
+# Sessions opened before readable names keep running under the new name. A
+# legacy session is eligible only when its Supertree label matches this exact
+# tree; a same-name session without ownership metadata is left untouched.
 adopt_hashed_session() {
-  local repo=$1 branch=$2 sess=$3 live=$'\n'$4$'\n' hashed target
-  case $live in *$'\n'"$repo/"*) ;; *) return 0;; esac
+  local repo=$1 branch=$2 path=$3 sess=$4 live=$'\n'$5$'\n' hashed target
   hashed=$(sess_name "$repo" "$(branch_key "$branch")")
-  case $live in *$'\n'"$hashed"$'\n'*) ;; *) return 0;; esac
-  case $live in *$'\n'"$sess"$'\n'*) return 0;; esac
-  target=$(tmux_session_target "$hashed") || return 0
-  tmux rename-session -t "$target" "$sess" 2>/dev/null || true
+  case $live in
+    *$'\n'"$sess"$'\n'*)
+      if claim_tree_session "$sess" "$repo" "$branch" "$path"; then
+        printf '%s' "$sess"
+      elif case $live in *$'\n'"$hashed"$'\n'*) true;; *) false;; esac &&
+           claim_tree_session "$hashed" "$repo" "$branch" "$path"; then
+        # The readable name is foreign. Keep using the legitimate legacy name.
+        printf '%s' "$hashed"
+      else
+        printf '%s' "$sess"
+      fi
+      return;;
+  esac
+  case $live in *$'\n'"$hashed"$'\n'*) ;; *) printf '%s' "$sess"; return;; esac
+  if target=$(claim_tree_session_target "$hashed" "$repo" "$branch" "$path") &&
+     tmux rename-session -t "$target" "$sess" 2>/dev/null; then
+    printf '%s' "$sess"
+  else
+    printf '%s' "$sess"
+  fi
 }
 
 # Rows: repo key, branch, path, tmux session. Session names stay readable
@@ -134,8 +151,11 @@ list_trees() {
       for (i = 1; i <= NR; i++) print row[i] "\t" sess[i] "\t" (trees[sess[i]] > 1)
     }' | while IFS=$'\t' read -r repo branch path orphan sess clash; do
     [ "$clash" = 0 ] || sess="$sess-$(identity_hash "$branch" | cut -c1-6)"
-    adopt_hashed_session "$repo" "$branch" "$sess" "$live"
-    [ "$orphan" = 0 ] || tmux_has_session "$sess" 2>/dev/null || continue
+    sess=$(adopt_hashed_session "$repo" "$branch" "$path" "$sess" "$live")
+    [ "$orphan" = 0 ] || {
+      tmux_has_session "$sess" 2>/dev/null &&
+        claim_tree_session "$sess" "$repo" "$branch" "$path"
+    } || continue
     printf '%s\t%s\t%s\t%s\n' "$repo" "$branch" "$path" "$sess"
   done
 }

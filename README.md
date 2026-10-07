@@ -225,6 +225,14 @@ only when two trees would otherwise get the same name. Sessions opened under the
 older hashed names are renamed the next time supertree lists trees. Windows are addressed
 by **name**, not index, so your `base-index` setting is irrelevant.
 
+Supertree-owned tmux sessions carry a durable identity option in addition to
+their readable name. A different tmux session that happens to use the same name
+is never attached, renamed, evacuated, or killed. Sessions created by older
+Supertree releases are migrated automatically only when their exact historical
+`@supertree_label` matches the repository and branch; name alone is not treated
+as ownership. If a foreign session occupies a tree's readable name, rename or
+close that session before opening the tree.
+
 Each program window drops to an interactive shell in the same worktree when its
 program exits. Window order and selection are configurable.
 

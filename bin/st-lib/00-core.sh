@@ -13,19 +13,24 @@ st_executable() {
   esac
 }
 
+# Resolve a readable session name to tmux's opaque, unambiguous session ID.
+tmux_session_id() {
+  local name=$1 id
+  id=$(tmux list-sessions -F '#{session_id}'$'\t''#{session_name}' 2>/dev/null |
+    awk -F '\t' -v wanted="$name" '$2 == wanted { print $1; exit }') || return 1
+  [ -n "$id" ] || return 1
+  printf '%s' "$id"
+}
+
 # Most tmux commands accept an exact session name as "=name". switch-client is
 # different: a target containing ':', '.' or '%' is parsed as a pane target.
 # Resolve such names to tmux's opaque session ID so valid Git branch characters
 # can never change the target grammar. Names without those characters retain the
 # exact-match form, which also keeps compatibility with older tmux versions.
 tmux_session_target() {
-  local name=$1 id
+  local name=$1
   case $name in
-    *[:.%]*)
-      id=$(tmux list-sessions -F '#{session_id}'$'\t''#{session_name}' 2>/dev/null |
-        awk -F '\t' -v wanted="$name" '$2 == wanted { print $1; exit }') || return 1
-      [ -n "$id" ] || return 1
-      printf '%s' "$id";;
+    *[:.%]*) tmux_session_id "$name";;
     *) printf '=%s' "$name";;
   esac
 }

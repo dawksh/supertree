@@ -4,11 +4,11 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TEST_ROOT=$(mktemp -d)
 TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P)
-REAL_TMUX=$(command -v tmux)
+REAL_TMUX=$(command -v tmux || true)
 TEST_SOCKET="supertree-targets-$$"
 
 cleanup() {
-  "$REAL_TMUX" -L "$TEST_SOCKET" kill-server 2>/dev/null || true
+  [ -z "$REAL_TMUX" ] || "$REAL_TMUX" -L "$TEST_SOCKET" kill-server 2>/dev/null || true
   rm -rf "$TEST_ROOT"
 }
 trap cleanup EXIT
@@ -36,8 +36,8 @@ done
 printf '%s\n' "$fixture" > "$ST_STATE/repos"
 
 # switch-client treats any target containing '%' as a pane target. This stub
-# models live sessions and verifies that st converts only the ambiguous name to
-# an opaque session ID while retaining exact-name targets for other metacharacters.
+# models live sessions and verifies that st attaches through the opaque session
+# ID returned by the final ownership validation.
 cat > "$HOME/.local/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$ST_TMUX_LOG"
@@ -51,6 +51,23 @@ case ${1:-} in
     esac;;
   list-panes) exit 0;;
   list-clients) exit 0;;
+  show-options)
+    target=''; option=''
+    while [ $# -gt 0 ]; do
+      case $1 in
+        -t) target=$2; shift 2;;
+        @*) option=$1; shift;;
+        *) shift;;
+      esac
+    done
+    if [ "$option" = @supertree_label ]; then
+      case $target in
+        '$42'|'=demo/percent%x') printf 'demo/percent%%x\n';;
+        '$43'|'=demo/hash#x') printf 'demo/hash#x\n';;
+        '$44'|'=demo/semi;x') printf 'demo/semi;x\n';;
+        '$45'|"=demo/quote'x") printf "demo/quote'x\n";;
+      esac
+    fi;;
   display-message)
     case ${!#} in
       '#{client_tty}') printf '/dev/pts/test\n';;
@@ -68,7 +85,9 @@ for branch in 'percent%x' 'hash#x' 'semi;x' "quote'x"; do
   "$ROOT/bin/st" go "$branch"
   case $branch in
     'percent%x') expected='$42';;
-    *) expected="=demo/$branch";;
+    'hash#x') expected='$43';;
+    'semi;x') expected='$44';;
+    "quote'x") expected='$45';;
   esac
   grep -Fx "switch-client -t $expected" "$ST_TMUX_LOG" >/dev/null ||
     fail "go $branch did not use safe exact target $expected"
@@ -77,6 +96,10 @@ unset TMUX TMUX_PANE
 
 # Exercise destructive targeting against a real isolated tmux server. A
 # similarly named session must survive, proving the resolved target is exact.
+[ -n "$REAL_TMUX" ] || {
+  printf 'ok: safe exact fake tmux targets (live checks skipped; tmux is not installed)\n'
+  exit 0
+}
 export ST_REAL_TMUX="$REAL_TMUX" ST_TEST_SOCKET="$TEST_SOCKET"
 cat > "$HOME/.local/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
@@ -88,6 +111,7 @@ export PATH="$HOME/.local/bin:$PATH"
 percent_session=$($ROOT/bin/st _sessions | grep -Fx 'demo/percent%x')
 [ -n "$percent_session" ] || fail 'percent session was not listed'
 tmux new-session -d -s "$percent_session" -n shell
+tmux set-option -q -t "$percent_session" @supertree_label 'demo/percent%x'
 tmux new-session -d -s "$percent_session-extra" -n shell
 "$ROOT/bin/st" down "$percent_session"
 if tmux has-session -t "=$percent_session" 2>/dev/null; then
@@ -99,6 +123,7 @@ tmux has-session -t "=$percent_session-extra" 2>/dev/null ||
 for branch in 'hash#x' 'semi;x' "quote'x"; do
   session=$($ROOT/bin/st _sessions | grep -Fx "demo/$branch")
   tmux new-session -d -s "$session" -n shell
+  tmux set-option -q -t "$session" @supertree_label "demo/$branch"
   "$ROOT/bin/st" down "$session"
   if tmux has-session -t "=$session" 2>/dev/null; then
     fail "metacharacter session remained open: $session"

@@ -29,6 +29,14 @@ cat > "$HOME/.local/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$ST_TEST_LOG"
 case ${1:-} in
+  list-sessions)
+    case $* in
+      *'#{session_id}'*)
+        [ -z "${ST_TEST_FEATURE_SESSION:-}" ] || printf '$42\t%s\n' "$ST_TEST_FEATURE_SESSION";;
+      *'#{session_last_attached}'*) printf '1|fallback\n';;
+      *) [ -z "${ST_TEST_FEATURE_SESSION:-}" ] || printf '%s\n' "$ST_TEST_FEATURE_SESSION";;
+    esac
+    ;;
   display-message)
     format=${!#}
     case $format in
@@ -37,12 +45,15 @@ case ${1:-} in
       '#{window_id}') printf '%s\n' "$ST_TEST_WINDOW_ID";;
     esac
     ;;
+  show-options)
+    option=${!#}
+    [ "$option" != @supertree_label ] || printf 'demo/feature\n'
+    ;;
   has-session) exit 0;;
   list-panes) exit 0;;
   list-clients)
     [ -n "${ST_TEST_CLIENTS:-}" ] && printf '%s\n' "$ST_TEST_CLIENTS"
     ;;
-  list-sessions) printf '1|fallback\n';;
   switch-client)
     if [ "${ST_TEST_FAIL_SAVED_WINDOW:-0}" = 1 ] &&
        [[ $* == *':@'* ]]; then
@@ -62,13 +73,14 @@ git -C "$repo" worktree add -q -b feature "$ST_WORKTREE_ROOT/demo/feature"
 printf '%s\n' "$repo" > "$ST_STATE/repos"
 feature_session=$("$ROOT/bin/st" _sessions | grep '/feature$')
 [ -n "$feature_session" ] || fail 'feature session was not listed'
+export ST_TEST_FEATURE_SESSION="$feature_session"
 
 # Entering a tree records both the outside session and its exact window.
 : > "$ST_TEST_LOG"
 "$ROOT/bin/st" go feature
 origin_file="$ST_STATE/origin/-dev-pts-42"
 [ "$(cat "$origin_file")" = $'outside\t@7' ] || fail 'origin did not include the window ID'
-assert_log_contains "switch-client -t =$feature_session"
+assert_log_contains 'switch-client -t $42'
 
 # Even if the outside session changed windows while we were away, leave uses
 # the saved ID rather than that session's newly active window.
@@ -99,8 +111,8 @@ if grep -q ':@' "$ST_TEST_LOG"; then fail 'legacy state invented a window target
 printf 'outside\t@7\n' > "$origin_file"
 : > "$ST_TEST_LOG"
 ST_TEST_CLIENTS="$ST_TEST_TTY" "$ROOT/bin/st" down feature -y >/dev/null
-assert_log_contains "list-clients -t =$feature_session -F #{client_tty}"
+assert_log_contains 'list-clients -t $42 -F #{client_tty}'
 assert_log_contains 'switch-client -c /dev/pts/42 -t =outside:@7'
-assert_log_contains "kill-session -t =$feature_session"
+assert_log_contains 'kill-session -t $42'
 
 printf 'ok: exact origin windows, stale-window fallback, and legacy origin state\n'

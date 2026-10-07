@@ -105,7 +105,7 @@ cmd_version() { printf "st %s\n" "$ST_VERSION"; }
 cmd_uninstall() {
   [ $# -eq 0 ] || die "usage: st uninstall"
   local self confdir tmux_conf fragment config staged sessions sess manifest key binding module_dir
-  local had_fragment=0 current_sess='' close_current=0
+  local had_fragment=0 current_sess='' close_current=0 current_tree='' current_repo='' current_branch='' current_path=''
   self=$(st_executable)
   [ -L "$self" ] || [ "$ST_VERSION" != dev ] ||
     die "run the installed st command, not the development source file"
@@ -140,9 +140,16 @@ cmd_uninstall() {
   fi
   while IFS= read -r sess; do
     [ -n "$sess" ] || continue
+    tmux_has_session "$sess" 2>/dev/null || continue
+    owned_tree_session "$sess" || continue
     evacuate_clients "$sess"
-    if [ "$sess" = "$current_sess" ]; then close_current=1; continue; fi
-    tmux_kill_session "$sess" 2>/dev/null || true
+    if [ "$sess" = "$current_sess" ]; then
+      close_current=1
+      current_tree=$(known_tree_for_session "$sess" || true)
+      IFS=$'\t' read -r current_repo current_branch current_path <<< "$current_tree"
+      continue
+    fi
+    kill_owned_tree_session "$sess" 2>/dev/null || true
   done <<EOF
 $sessions
 EOF
@@ -190,7 +197,7 @@ EOF
   rm -f -- "$self" "$manifest"
   info "uninstalled st"
   if [ "$close_current" = 1 ]; then
-    tmux_kill_session "$current_sess" 2>/dev/null || true
+    kill_tree_session "$current_sess" "$current_repo" "$current_branch" "$current_path" 2>/dev/null || true
   fi
 }
 

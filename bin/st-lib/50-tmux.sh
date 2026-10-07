@@ -60,13 +60,112 @@ create_window() {
   fi
 }
 
+# A readable tmux name is presentation, not proof that a session belongs to us.
+# New sessions carry a stable identity derived from the exact repository and
+# branch identities. Sessions from releases before this marker are migrated
+# only when they carry the exact @supertree_label that those releases set.
+tree_session_identity() {
+  local main
+  main=$(main_worktree "$1")
+  [ -n "$main" ] || return 1
+  printf 'v1:%s' "$(identity_hash "$main
+$2")"
+}
+
+legacy_session_label() {
+  local path=$1 branch=$2 main
+  main=$(main_worktree "$path")
+  [ -n "$main" ] || return 1
+  printf '%s/%s' "$(basename "$main")" "$branch"
+}
+
+claim_tree_session_target() {
+  local sess=$1 repo=$2 branch=$3 path=$4 expected actual label expected_label target
+  target=$(tmux_session_id "$sess") || return 1
+  expected=$(tree_session_identity "$path" "$branch")
+  actual=$(tmux show-options -qv -t "$target" @supertree_identity 2>/dev/null || true)
+  if [ "$actual" != "$expected" ]; then
+    [ -z "$actual" ] || return 1
+
+    # Safe compatibility path: old Supertree sessions have this option; an
+    # arbitrary same-name tmux session does not. Do not infer ownership by name.
+    label=$(tmux show-options -qv -t "$target" @supertree_label 2>/dev/null || true)
+    expected_label=$(legacy_session_label "$path" "$branch" 2>/dev/null || true)
+    [ -n "$expected_label" ] && [ "$label" = "$expected_label" ] || return 1
+    tmux set-option -q -t "$target" @supertree_identity "$expected" 2>/dev/null || return 1
+  fi
+  printf '%s' "$target"
+}
+
+claim_tree_session() {
+  claim_tree_session_target "$@" >/dev/null
+}
+
+mark_tree_session() {
+  local sess=$1 repo=$2 branch=$3 path=$4 target
+  target=$(tmux_session_id "$sess") || return 1
+  tmux set-option -q -t "$target" @supertree_label "$(legacy_session_label "$path" "$branch")"
+  tmux set-option -q -t "$target" @supertree_identity "$(tree_session_identity "$path" "$branch")"
+}
+
+known_tree_for_session() {
+  local wanted=$1 repo branch path sess
+  while IFS=$'\t' read -r repo branch path sess; do
+    [ "$sess" = "$wanted" ] || continue
+    printf '%s\t%s\t%s\n' "$repo" "$branch" "$path"
+    return 0
+  done < <(list_trees)
+  return 1
+}
+
+owned_tree_session() {
+  local sess=$1 row repo branch path
+  row=$(known_tree_for_session "$sess" || true)
+  [ -n "$row" ] || return 1
+  IFS=$'\t' read -r repo branch path <<< "$row"
+  claim_tree_session "$sess" "$repo" "$branch" "$path"
+}
+
+owned_tree_session_target() {
+  local sess=$1 row repo branch path
+  row=$(known_tree_for_session "$sess" || true)
+  [ -n "$row" ] || return 1
+  IFS=$'\t' read -r repo branch path <<< "$row"
+  claim_tree_session_target "$sess" "$repo" "$branch" "$path"
+}
+
+kill_owned_tree_session() {
+  local sess=$1 row repo branch path
+  row=$(known_tree_for_session "$sess" || true)
+  [ -n "$row" ] || return 1
+  IFS=$'\t' read -r repo branch path <<< "$row"
+  kill_tree_session "$sess" "$repo" "$branch" "$path"
+}
+
+kill_tree_session() {
+  local sess=$1 repo=$2 branch=$3 path=$4 target
+  target=$(claim_tree_session_target "$sess" "$repo" "$branch" "$path") || return 1
+  tmux kill-session -t "$target"
+}
+
+kill_identified_session() {
+  local sess=$1 expected=$2 actual target
+  [ -n "$expected" ] || return 1
+  target=$(tmux_session_id "$sess") || return 1
+  actual=$(tmux show-options -qv -t "$target" @supertree_identity 2>/dev/null || true)
+  [ "$actual" = "$expected" ] || return 1
+  tmux kill-session -t "$target"
+}
+
 build_session() {
-  local sess=$1 dir=$2 windows type first_name='' initial=1 branch label target
+  local sess=$1 dir=$2 windows type first_name='' initial=1 branch main repo target
   branch=$(git -C "$dir" branch --show-current 2>/dev/null || true)
-  label="$(basename "$(main_worktree "$dir")")/${branch:-(detached)}"
+  branch=${branch:-(detached)}
+  main=$(main_worktree "$dir")
+  repo=$(repo_key "$main")
   if tmux_has_session "$sess" 2>/dev/null; then
-    target=$(tmux_session_target "$sess") || die "tmux session disappeared: $sess"
-    tmux set-option -t "$target" @supertree_label "$label"
+    claim_tree_session "$sess" "$repo" "$branch" "$dir" ||
+      die "tmux session '$sess' is not owned by supertree; refusing to use it"
     return 0
   fi
   windows=$(configured_windows)
@@ -82,7 +181,8 @@ build_session() {
   done <<EOF
 $windows
 EOF
-  tmux set-option -t "$target" @supertree_label "$label"
+  mark_tree_session "$sess" "$repo" "$branch" "$dir"
+  target=$(tmux_session_target "$sess") || die "tmux session disappeared: $sess"
   tmux select-window -t "$target:$first_name"
 }
 
@@ -166,7 +266,7 @@ switch_to_origin() {
 
 evacuate_clients() {
   local sess=$1 ttys tty other target
-  target=$(tmux_session_target "$sess") || return 0
+  target=$(owned_tree_session_target "$sess") || return 1
   ttys=$(tmux list-clients -t "$target" -F '#{client_tty}' 2>/dev/null) || return 0
   [ -n "$ttys" ] || return 0
   while read -r tty; do
@@ -185,9 +285,14 @@ EOF
 }
 
 attach() {
-  local sess=$1 target
+  local sess=$1 dir=$2 branch main repo target
+  branch=$(git -C "$dir" branch --show-current 2>/dev/null || true)
+  branch=${branch:-(detached)}
+  main=$(main_worktree "$dir")
+  repo=$(repo_key "$main")
+  target=$(claim_tree_session_target "$sess" "$repo" "$branch" "$dir") ||
+    die "tmux session '$sess' is not owned by supertree; refusing to attach"
   remember_recent "$sess"
-  target=$(tmux_session_target "$sess") || die "tmux session disappeared: $sess"
   if [ -n "${TMUX:-}" ]; then
     remember_origin "$sess"
     tmux switch-client -t "$target"
@@ -213,7 +318,7 @@ live_sessions() {
   local s
   known_sessions | while read -r s; do
     [ -n "$s" ] || continue
-    tmux_has_session "$s" 2>/dev/null && printf '%s\n' "$s"
+    tmux_has_session "$s" 2>/dev/null && owned_tree_session "$s" && printf '%s\n' "$s"
   done
 }
 
@@ -221,7 +326,7 @@ live_subtree_sessions() {
   local s
   subtree_sessions | while read -r s; do
     [ -n "$s" ] || continue
-    tmux_has_session "$s" 2>/dev/null && printf '%s\n' "$s"
+    tmux_has_session "$s" 2>/dev/null && owned_tree_session "$s" && printf '%s\n' "$s"
   done
 }
 
@@ -230,14 +335,17 @@ ensure_main_fallbacks() {
   list_trees | while IFS=$'\t' read -r repo branch path subtree; do
     main=$(main_worktree "$path")
     [ "$path" != "$main" ] || continue
-    tmux_has_session "$subtree" 2>/dev/null || continue
+    tmux_has_session "$subtree" 2>/dev/null &&
+      claim_tree_session "$subtree" "$repo" "$branch" "$path" || continue
     main_branch=$(git -C "$main" branch --show-current)
     [ -n "$main_branch" ] || main_branch='(detached)'
     main_sess=$(tree_session "$repo" "$main_branch")
-    if ! tmux_has_session "$main_sess" 2>/dev/null; then
+    if tmux_has_session "$main_sess" 2>/dev/null; then
+      claim_tree_session "$main_sess" "$repo" "$main_branch" "$main" ||
+        die "tmux session '$main_sess' is not owned by supertree; refusing to use it"
+    else
       tmux new-session -d -s "$main_sess" -c "$main" -n shell
-      target=$(tmux_session_target "$main_sess") || die "tmux session disappeared: $main_sess"
-      tmux set-option -t "$target" @supertree_label "$(basename "$main")/$main_branch"
+      mark_tree_session "$main_sess" "$repo" "$main_branch" "$main"
     fi
   done
 }
@@ -272,12 +380,12 @@ EOF
     # Killing our own session kills this process, so close it last.
     while IFS= read -r s; do
       evacuate_clients "$s"
-      if [ "$s" = "$current" ]; then close_current=1; else tmux_kill_session "$s"; fi
+      if [ "$s" = "$current" ]; then close_current=1; else kill_owned_tree_session "$s"; fi
     done <<EOF
 $live
 EOF
     info "closed selected tree sessions (worktrees kept)"
-    [ "$close_current" = 0 ] || tmux_kill_session "$current"
+    [ "$close_current" = 0 ] || kill_owned_tree_session "$current"
     return 0
   fi
 
@@ -306,8 +414,10 @@ EOF
   esac
 
   tmux_has_session "$s" 2>/dev/null || { info "$(label_for_session "$s") already closed"; return 0; }
+  owned_tree_session "$s" ||
+    die "tmux session '$s' is not owned by supertree; refusing to close it"
   evacuate_clients "$s"
-  tmux_kill_session "$s"
+  kill_owned_tree_session "$s"
   info "closed $(label_for_session "$s") (worktree kept — 'st resume' brings it back)"
 }
 
@@ -365,7 +475,7 @@ cmd_last() {
     path=$(printf '%s\n' "$trees" | awk -F '\t' -v s="$sess" '$4 == s && !found { print $3; found = 1 }')
     [ -n "$path" ] || continue
     build_session "$sess" "$path"
-    attach "$sess"
+    attach "$sess" "$path"
     return 0
   done < "$ST_STATE/recent"
   info "no other tree opened yet"
