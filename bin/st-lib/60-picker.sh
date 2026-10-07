@@ -49,6 +49,32 @@ picker_rows() {
   done
 }
 
+picker_query_match() {
+  local rows=$1 query=$2
+  ST_PICKER_QUERY=$query awk -F '\t' '
+    BEGIN { query = tolower(ENVIRON["ST_PICKER_QUERY"]) }
+    {
+      row = $0
+      label = $1
+      sub(/[[:space:]]+(closed|done|running|input)$/, "", label)
+      folded_label = tolower(label)
+      branch = folded_label
+      sub(/^[^\/]*\//, "", branch)
+
+      if (folded_label == query && exact_label == "") exact_label = row
+      else if (branch == query && exact_branch == "") exact_branch = row
+      else if (index(folded_label, query) && partial == "") partial = row
+    }
+    END {
+      if (exact_label != "") print exact_label
+      else if (exact_branch != "") print exact_branch
+      else if (partial != "") print partial
+    }
+  ' <<EOF
+$rows
+EOF
+}
+
 # ---------------------------------------------------------------- commands
 
 cmd_go() {
@@ -78,7 +104,7 @@ cmd_go() {
   fi
 
   if [ -n "$query" ]; then
-    sel=$(printf '%s\n' "$rows" | grep -i -- "$query" | head -1) || true
+    sel=$(picker_query_match "$rows" "$query")
     [ -n "$sel" ] || die "no tree matching: $query"
   else
     choices=$rows

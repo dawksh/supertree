@@ -73,6 +73,45 @@ beta_session=$("$ROOT/bin/st" _sessions | grep -x 'demo/beta')
 [ "$(sed -n '1p' "$ST_STATE/recent")" = "$alpha_session" ] || fail 'recent order did not put alpha first'
 [ "$(sed -n '2p' "$ST_STATE/recent")" = "$beta_session" ] || fail 'recent order did not put beta second'
 
+assert_query_session() {
+  local query=$1 rows=$2 expected=$3 actual
+  : > "$ST_TEST_LOG"
+  ST_PICKER_ROWS=$rows "$ROOT/bin/st" go "$query"
+  actual=$(awk '$1 == "attach-session" { print $3 }' "$ST_TEST_LOG" | tail -1)
+  [ "$actual" = "=$expected" ] ||
+    fail "query '$query' selected ${actual#=} instead of $expected"
+}
+
+query_rows=$(printf '%s\t%s\t%s\n' \
+  'demo/feature/a-b  closed' '/tmp/feature-a-b' 'demo/feature/a-b' \
+  'demo/feature-a-b  closed' "$TEST_ROOT/demo" 'demo/feature-a-b')
+assert_query_session feature-a-b "$query_rows" demo/feature-a-b
+
+query_rows=$(printf '%s\t%s\t%s\n' \
+  'demo/dot.name  closed' "$TEST_ROOT/demo" 'sess-dot' \
+  'demo/dot_name  closed' "$TEST_ROOT/demo" 'sess-underscore')
+assert_query_session dot_name "$query_rows" sess-underscore
+
+query_rows=$(printf '%s\t%s\t%s\n' \
+  'demo/regexaxb  closed' "$TEST_ROOT/demo" 'sess-regex-decoy' \
+  'demo/regexa.b  closed' "$TEST_ROOT/demo" 'sess-regex-literal')
+assert_query_session regexa.b "$query_rows" sess-regex-literal
+
+query_rows=$(printf '%s\t%s\t%s\n' \
+  'demo/ends  closed' "$TEST_ROOT/demo" 'sess-end-decoy' \
+  'demo/ends$  closed' "$TEST_ROOT/demo" 'sess-end-literal')
+assert_query_session 'ends$' "$query_rows" sess-end-literal
+
+query_rows=$(printf '%s\t%s\t%s\n' \
+  'demo/unrelated  closed' '/tmp/path-with-needle' 'sess-hidden-decoy' \
+  'demo/visible-needle  closed' "$TEST_ROOT/demo" 'sess-visible-match')
+assert_query_session NEEDLE "$query_rows" sess-visible-match
+
+query_rows=$(printf '%s\t%s\t%s\n' \
+  'other/demo/topic  closed' "$TEST_ROOT/demo" 'sess-branch-exact' \
+  'demo/topic  closed' "$TEST_ROOT/demo" 'sess-label-exact')
+assert_query_session demo/topic "$query_rows" sess-label-exact
+
 list=$("$ROOT/bin/st" ls)
 printf '%s\n' "$list" | grep -Eq '^TREE +SESSION +AGENT +CHANGES +TYPE$' || fail 'list has no grid headings'
 printf '%s\n' "$list" | grep -Eq '^demo/alpha +closed +- +clean +worktree$' || fail 'list did not show a readable tree row'
