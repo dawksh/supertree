@@ -142,7 +142,7 @@ cmd_uninstall() {
     [ -n "$sess" ] || continue
     evacuate_clients "$sess"
     if [ "$sess" = "$current_sess" ]; then close_current=1; continue; fi
-    tmux kill-session -t "=$sess" 2>/dev/null || true
+    tmux_kill_session "$sess" 2>/dev/null || true
   done <<EOF
 $sessions
 EOF
@@ -190,7 +190,7 @@ EOF
   rm -f -- "$self" "$manifest"
   info "uninstalled st"
   if [ "$close_current" = 1 ]; then
-    tmux kill-session -t "=$current_sess" 2>/dev/null || true
+    tmux_kill_session "$current_sess" 2>/dev/null || true
   fi
 }
 

@@ -41,7 +41,7 @@ EOF
 st_self() { command -v st 2>/dev/null || printf '%s' "$HOME/.local/bin/st"; }
 
 create_window() {
-  local sess=$1 dir=$2 type=$3 initial=$4 self name
+  local sess=$1 dir=$2 type=$3 initial=$4 self name target
   self=$(st_self)
   name=$(window_name "$type")
   if [ "$initial" = 1 ]; then
@@ -51,20 +51,22 @@ create_window() {
       shell) tmux new-session -d -s "$sess" -c "$dir" -n "$name";;
     esac
   else
+    target=$(tmux_session_target "$sess") || die "tmux session disappeared: $sess"
     case $type in
-      agent) tmux new-window -d -t "=$sess" -c "$dir" -n "$name" "$self _run _agent";;
-      vim) tmux new-window -d -t "=$sess" -c "$dir" -n "$name" "$self _run nvim";;
-      shell) tmux new-window -d -t "=$sess" -c "$dir" -n "$name";;
+      agent) tmux new-window -d -t "$target" -c "$dir" -n "$name" "$self _run _agent";;
+      vim) tmux new-window -d -t "$target" -c "$dir" -n "$name" "$self _run nvim";;
+      shell) tmux new-window -d -t "$target" -c "$dir" -n "$name";;
     esac
   fi
 }
 
 build_session() {
-  local sess=$1 dir=$2 windows type first_name='' initial=1 branch label
+  local sess=$1 dir=$2 windows type first_name='' initial=1 branch label target
   branch=$(git -C "$dir" branch --show-current 2>/dev/null || true)
   label="$(basename "$(main_worktree "$dir")")/${branch:-(detached)}"
-  if tmux has-session -t "=$sess" 2>/dev/null; then
-    tmux set-option -t "$sess" @supertree_label "$label"
+  if tmux_has_session "$sess" 2>/dev/null; then
+    target=$(tmux_session_target "$sess") || die "tmux session disappeared: $sess"
+    tmux set-option -t "$target" @supertree_label "$label"
     return 0
   fi
   windows=$(configured_windows)
@@ -72,15 +74,16 @@ build_session() {
     [ -n "$type" ] || continue
     [ -n "$first_name" ] || first_name=$(window_name "$type")
     create_window "$sess" "$dir" "$type" "$initial"
+    target=$(tmux_session_target "$sess") || die "tmux session disappeared: $sess"
     if [ "$type" = agent ]; then
-      tmux set-option -t "$sess" @st_agent_window "$(window_name agent)"
+      tmux set-option -t "$target" @st_agent_window "$(window_name agent)"
     fi
     initial=0
   done <<EOF
 $windows
 EOF
-  tmux set-option -t "$sess" @supertree_label "$label"
-  tmux select-window -t "=$sess:$first_name"
+  tmux set-option -t "$target" @supertree_label "$label"
+  tmux select-window -t "$target:$first_name"
 }
 
 remember_recent() {
@@ -137,7 +140,7 @@ pop_live_origin() {
     mv "$tmp" "$file"
 
     [ -n "$candidate" ] && [ "$candidate" != "$cur" ] || continue
-    if tmux has-session -t "=$candidate" 2>/dev/null; then
+    if tmux_has_session "$candidate" 2>/dev/null; then
       printf '%s\n' "$record"
       return 0
     fi
@@ -146,23 +149,25 @@ pop_live_origin() {
 }
 
 switch_to_origin() {
-  local tty=$1 cur=$2 record origin window
+  local tty=$1 cur=$2 record origin window target
   while record=$(pop_live_origin "$tty" "$cur"); do
     origin=${record%%$'\t'*}
     window=''
     case $record in *$'\t'*) window=${record#*$'\t'};; esac
+    target=$(tmux_session_target "$origin") || continue
     if [ -n "$window" ] &&
-       tmux switch-client -c "$tty" -t "=$origin:$window" 2>/dev/null; then
+       tmux switch-client -c "$tty" -t "$target:$window" 2>/dev/null; then
       return 0
     fi
-    tmux switch-client -c "$tty" -t "=$origin" 2>/dev/null && return 0
+    tmux switch-client -c "$tty" -t "$target" 2>/dev/null && return 0
   done
   return 1
 }
 
 evacuate_clients() {
-  local sess=$1 ttys tty other
-  ttys=$(tmux list-clients -t "=$sess" -F '#{client_tty}' 2>/dev/null) || return 0
+  local sess=$1 ttys tty other target
+  target=$(tmux_session_target "$sess") || return 0
+  ttys=$(tmux list-clients -t "$target" -F '#{client_tty}' 2>/dev/null) || return 0
   [ -n "$ttys" ] || return 0
   while read -r tty; do
     [ -n "$tty" ] || continue
@@ -170,20 +175,24 @@ evacuate_clients() {
     # fall back to the most recently used other session
     other=$(tmux list-sessions -F '#{session_last_attached}|#{session_name}' 2>/dev/null |
       sort -rn | cut -d'|' -f2- | grep -vxF -- "$sess" | head -1) || other=""
-    [ -n "$other" ] && tmux switch-client -c "$tty" -t "=$other" 2>/dev/null || true
+    if [ -n "$other" ]; then
+      target=$(tmux_session_target "$other") || continue
+      tmux switch-client -c "$tty" -t "$target" 2>/dev/null || true
+    fi
   done <<EOF
 $ttys
 EOF
 }
 
 attach() {
-  local sess=$1
+  local sess=$1 target
   remember_recent "$sess"
+  target=$(tmux_session_target "$sess") || die "tmux session disappeared: $sess"
   if [ -n "${TMUX:-}" ]; then
     remember_origin "$sess"
-    tmux switch-client -t "=$sess"
+    tmux switch-client -t "$target"
   else
-    tmux attach-session -t "=$sess"
+    tmux attach-session -t "$target"
   fi
 }
 
@@ -204,7 +213,7 @@ live_sessions() {
   local s
   known_sessions | while read -r s; do
     [ -n "$s" ] || continue
-    tmux has-session -t "=$s" 2>/dev/null && printf '%s\n' "$s"
+    tmux_has_session "$s" 2>/dev/null && printf '%s\n' "$s"
   done
 }
 
@@ -212,22 +221,23 @@ live_subtree_sessions() {
   local s
   subtree_sessions | while read -r s; do
     [ -n "$s" ] || continue
-    tmux has-session -t "=$s" 2>/dev/null && printf '%s\n' "$s"
+    tmux_has_session "$s" 2>/dev/null && printf '%s\n' "$s"
   done
 }
 
 ensure_main_fallbacks() {
-  local repo branch path subtree main main_branch main_sess
+  local repo branch path subtree main main_branch main_sess target
   list_trees | while IFS=$'\t' read -r repo branch path subtree; do
     main=$(main_worktree "$path")
     [ "$path" != "$main" ] || continue
-    tmux has-session -t "=$subtree" 2>/dev/null || continue
+    tmux_has_session "$subtree" 2>/dev/null || continue
     main_branch=$(git -C "$main" branch --show-current)
     [ -n "$main_branch" ] || main_branch='(detached)'
     main_sess=$(tree_session "$repo" "$main_branch")
-    if ! tmux has-session -t "=$main_sess" 2>/dev/null; then
+    if ! tmux_has_session "$main_sess" 2>/dev/null; then
       tmux new-session -d -s "$main_sess" -c "$main" -n shell
-      tmux set-option -t "$main_sess" @supertree_label "$(basename "$main")/$main_branch"
+      target=$(tmux_session_target "$main_sess") || die "tmux session disappeared: $main_sess"
+      tmux set-option -t "$target" @supertree_label "$(basename "$main")/$main_branch"
     fi
   done
 }
@@ -262,12 +272,12 @@ EOF
     # Killing our own session kills this process, so close it last.
     while IFS= read -r s; do
       evacuate_clients "$s"
-      if [ "$s" = "$current" ]; then close_current=1; else tmux kill-session -t "=$s"; fi
+      if [ "$s" = "$current" ]; then close_current=1; else tmux_kill_session "$s"; fi
     done <<EOF
 $live
 EOF
     info "closed selected tree sessions (worktrees kept)"
-    [ "$close_current" = 0 ] || tmux kill-session -t "=$current"
+    [ "$close_current" = 0 ] || tmux_kill_session "$current"
     return 0
   fi
 
@@ -295,9 +305,9 @@ EOF
     *) die "this is not a supertree session; refusing to close it";;
   esac
 
-  tmux has-session -t "=$s" 2>/dev/null || { info "$(label_for_session "$s") already closed"; return 0; }
+  tmux_has_session "$s" 2>/dev/null || { info "$(label_for_session "$s") already closed"; return 0; }
   evacuate_clients "$s"
-  tmux kill-session -t "=$s"
+  tmux_kill_session "$s"
   info "closed $(label_for_session "$s") (worktree kept — 'st resume' brings it back)"
 }
 
@@ -318,16 +328,18 @@ cmd_toggle() {
 }
 
 select_window_type() {
-  local type=$1 pane sess name dir
+  local type=$1 pane sess name dir target
   window_enabled "$type" || { info "$type window is not enabled in ST_WINDOWS"; return 0; }
   pane=${TMUX_PANE:-}
   if [ -n "$pane" ]; then sess=$(tmux display-message -p -t "$pane" '#S')
   else sess=$(tmux display-message -p '#S'); fi
   name=$(window_name "$type")
-  tmux select-window -t "=$sess:$name" 2>/dev/null && return 0
+  target=$(tmux_session_target "$sess") || die "tmux session disappeared: $sess"
+  tmux select-window -t "$target:$name" 2>/dev/null && return 0
   dir=$(tmux display-message -p -t "${pane:-$sess}" '#{pane_current_path}')
   create_window "$sess" "$dir" "$type" 0
-  tmux select-window -t "=$sess:$name"
+  target=$(tmux_session_target "$sess") || die "tmux session disappeared: $sess"
+  tmux select-window -t "$target:$name"
 }
 
 cmd_window() {

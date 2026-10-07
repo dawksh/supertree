@@ -88,12 +88,13 @@ tree_index() {
 
 # Sessions opened before readable names keep running under the new name.
 adopt_hashed_session() {
-  local repo=$1 branch=$2 sess=$3 live=$'\n'$4$'\n' hashed
+  local repo=$1 branch=$2 sess=$3 live=$'\n'$4$'\n' hashed target
   case $live in *$'\n'"$repo/"*) ;; *) return 0;; esac
   hashed=$(sess_name "$repo" "$(branch_key "$branch")")
   case $live in *$'\n'"$hashed"$'\n'*) ;; *) return 0;; esac
   case $live in *$'\n'"$sess"$'\n'*) return 0;; esac
-  tmux rename-session -t "=$hashed" "$sess" 2>/dev/null || true
+  target=$(tmux_session_target "$hashed") || return 0
+  tmux rename-session -t "$target" "$sess" 2>/dev/null || true
 }
 
 # Rows: repo key, branch, path, tmux session. Session names stay readable
@@ -134,7 +135,7 @@ list_trees() {
     }' | while IFS=$'\t' read -r repo branch path orphan sess clash; do
     [ "$clash" = 0 ] || sess="$sess-$(identity_hash "$branch" | cut -c1-6)"
     adopt_hashed_session "$repo" "$branch" "$sess" "$live"
-    [ "$orphan" = 0 ] || tmux has-session -t "=$sess" 2>/dev/null || continue
+    [ "$orphan" = 0 ] || tmux_has_session "$sess" 2>/dev/null || continue
     printf '%s\t%s\t%s\t%s\n' "$repo" "$branch" "$path" "$sess"
   done
 }
