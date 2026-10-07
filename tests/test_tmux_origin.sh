@@ -82,6 +82,7 @@ if grep -q '^detach-client ' "$ST_TEST_LOG"; then
 fi
 
 # Closing the saved window degrades to the historical session-level restore.
+printf 'outside\t@7\n' > "$origin_file"
 : > "$ST_TEST_LOG"
 ST_TEST_FAIL_SAVED_WINDOW=1 "$ROOT/bin/st" leave "$ST_TEST_TTY"
 assert_log_contains 'switch-client -c /dev/pts/42 -t =outside:@7'

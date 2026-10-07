@@ -107,33 +107,57 @@ sort_recent() {
 tty_key() { printf '%s' "$1" | tr '/' '-'; }
 
 remember_origin() {
-  local tty cur window
+  local tty cur window record
   tty=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#{client_tty}' 2>/dev/null) || return 0
   cur=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S' 2>/dev/null) || return 0
   window=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#{window_id}' 2>/dev/null || true)
   [ -n "$tty" ] && [ -n "$cur" ] && [ "$cur" != "$1" ] || return 0
   mkdir -p "$ST_STATE/origin"
-  if [ -n "$window" ]; then
-    printf '%s\t%s\n' "$cur" "$window" > "$ST_STATE/origin/$(tty_key "$tty")"
-  else
-    printf '%s\n' "$cur" > "$ST_STATE/origin/$(tty_key "$tty")"
-  fi
+  # Each line is session<TAB>window-id, oldest first. A legacy one-field
+  # origin file is already a valid one-entry history. If tmux cannot report a
+  # window ID, retain the session so leave still has a safe fallback.
+  record=$cur
+  [ -z "$window" ] || record="$record"$'\t'"$window"
+  printf '%s\n' "$record" >> "$ST_STATE/origin/$(tty_key "$tty")"
+}
+
+pop_live_origin() {
+  local tty=$1 cur=$2 file record candidate tmp
+  file="$ST_STATE/origin/$(tty_key "$tty")"
+  [ -f "$file" ] || return 1
+
+  while [ -s "$file" ]; do
+    record=$(tail -n 1 "$file")
+    candidate=${record%%$'\t'*}
+    tmp=$(mktemp "$ST_STATE/origin/.pop.XXXXXX") || return 1
+    if ! sed '$d' "$file" > "$tmp"; then
+      rm -f -- "$tmp"
+      return 1
+    fi
+    mv "$tmp" "$file"
+
+    [ -n "$candidate" ] && [ "$candidate" != "$cur" ] || continue
+    if tmux has-session -t "=$candidate" 2>/dev/null; then
+      printf '%s\n' "$record"
+      return 0
+    fi
+  done
+  return 1
 }
 
 switch_to_origin() {
-  local tty=$1 cur=$2 saved origin window
-  saved=$(cat "$ST_STATE/origin/$(tty_key "$tty")" 2>/dev/null) || return 1
-  origin=${saved%%$'\t'*}
-  window=''
-  case $saved in *$'\t'*) window=${saved#*$'\t'};; esac
-  [ -n "$origin" ] && [ "$origin" != "$cur" ] || return 1
-  tmux has-session -t "=$origin" 2>/dev/null || return 1
-  # Window IDs are stable for the lifetime of a tmux server. If the saved
-  # window has since closed, retain the old session-level fallback behavior.
-  if [ -n "$window" ]; then
-    tmux switch-client -c "$tty" -t "=$origin:$window" 2>/dev/null && return 0
-  fi
-  tmux switch-client -c "$tty" -t "=$origin"
+  local tty=$1 cur=$2 record origin window
+  while record=$(pop_live_origin "$tty" "$cur"); do
+    origin=${record%%$'\t'*}
+    window=''
+    case $record in *$'\t'*) window=${record#*$'\t'};; esac
+    if [ -n "$window" ] &&
+       tmux switch-client -c "$tty" -t "=$origin:$window" 2>/dev/null; then
+      return 0
+    fi
+    tmux switch-client -c "$tty" -t "=$origin" 2>/dev/null && return 0
+  done
+  return 1
 }
 
 evacuate_clients() {
@@ -344,7 +368,7 @@ cmd_leave() {
   [ -n "${TMUX:-}" ] || die "st leave only works inside tmux"
   [ -n "$tty" ] || tty=$(tmux display-message -p '#{client_tty}')
   cur=$(tmux display-message -p -c "$tty" '#S' 2>/dev/null || true)
-  # Go back to the session st was opened from; detach only when there is none.
+  # Unwind nested switches; detach only when no live origin remains.
   switch_to_origin "$tty" "$cur" && return 0
   tmux detach-client -t "$tty"
 }
