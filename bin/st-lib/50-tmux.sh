@@ -107,24 +107,42 @@ sort_recent() {
 tty_key() { printf '%s' "$1" | tr '/' '-'; }
 
 remember_origin() {
-  local tty cur
+  local tty cur window
   tty=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#{client_tty}' 2>/dev/null) || return 0
   cur=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S' 2>/dev/null) || return 0
+  window=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#{window_id}' 2>/dev/null || true)
   [ -n "$tty" ] && [ -n "$cur" ] && [ "$cur" != "$1" ] || return 0
   mkdir -p "$ST_STATE/origin"
-  printf '%s\n' "$cur" > "$ST_STATE/origin/$(tty_key "$tty")"
+  if [ -n "$window" ]; then
+    printf '%s\t%s\n' "$cur" "$window" > "$ST_STATE/origin/$(tty_key "$tty")"
+  else
+    printf '%s\n' "$cur" > "$ST_STATE/origin/$(tty_key "$tty")"
+  fi
+}
+
+switch_to_origin() {
+  local tty=$1 cur=$2 saved origin window
+  saved=$(cat "$ST_STATE/origin/$(tty_key "$tty")" 2>/dev/null) || return 1
+  origin=${saved%%$'\t'*}
+  window=''
+  case $saved in *$'\t'*) window=${saved#*$'\t'};; esac
+  [ -n "$origin" ] && [ "$origin" != "$cur" ] || return 1
+  tmux has-session -t "=$origin" 2>/dev/null || return 1
+  # Window IDs are stable for the lifetime of a tmux server. If the saved
+  # window has since closed, retain the old session-level fallback behavior.
+  if [ -n "$window" ]; then
+    tmux switch-client -c "$tty" -t "=$origin:$window" 2>/dev/null && return 0
+  fi
+  tmux switch-client -c "$tty" -t "=$origin"
 }
 
 evacuate_clients() {
-  local sess=$1 ttys tty origin other
+  local sess=$1 ttys tty other
   ttys=$(tmux list-clients -t "=$sess" -F '#{client_tty}' 2>/dev/null) || return 0
   [ -n "$ttys" ] || return 0
   while read -r tty; do
     [ -n "$tty" ] || continue
-    origin=$(cat "$ST_STATE/origin/$(tty_key "$tty")" 2>/dev/null) || origin=""
-    if [ -n "$origin" ] && [ "$origin" != "$sess" ] && tmux has-session -t "=$origin" 2>/dev/null; then
-      tmux switch-client -c "$tty" -t "=$origin" 2>/dev/null && continue
-    fi
+    switch_to_origin "$tty" "$sess" 2>/dev/null && continue
     # fall back to the most recently used other session
     other=$(tmux list-sessions -F '#{session_last_attached}|#{session_name}' 2>/dev/null |
       sort -rn | cut -d'|' -f2- | grep -vxF -- "$sess" | head -1) || other=""
@@ -322,15 +340,12 @@ cmd_agent() {
 }
 
 cmd_leave() {
-  local tty=${1:-} cur origin
+  local tty=${1:-} cur
   [ -n "${TMUX:-}" ] || die "st leave only works inside tmux"
   [ -n "$tty" ] || tty=$(tmux display-message -p '#{client_tty}')
   cur=$(tmux display-message -p -c "$tty" '#S' 2>/dev/null || true)
-  origin=$(cat "$ST_STATE/origin/$(tty_key "$tty")" 2>/dev/null) || origin=""
   # Go back to the session st was opened from; detach only when there is none.
-  if [ -n "$origin" ] && [ "$origin" != "$cur" ] && tmux has-session -t "=$origin" 2>/dev/null; then
-    tmux switch-client -c "$tty" -t "=$origin" && return 0
-  fi
+  switch_to_origin "$tty" "$cur" && return 0
   tmux detach-client -t "$tty"
 }
 
