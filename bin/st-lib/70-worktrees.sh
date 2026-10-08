@@ -51,7 +51,7 @@ cmd_new() {
     sess=$(tree_session "$repo" "$branch")
     [ -n "$sess" ] || die "cannot find a session name for $branch"
     build_session "$sess" "$dir"
-    attach "$sess"
+    attach "$sess" "$dir"
   else
     info "bare: skipped deps, env and agent"
     printf '%s\n' "$dir"
@@ -73,7 +73,8 @@ cmd_trust() {
 cmd_ls() {
   local repo branch path s live changes agent kind main
   list_trees | while IFS=$'\t' read -r repo branch path s; do
-    if tmux has-session -t "=$s" 2>/dev/null; then live='open'; else live='closed'; fi
+    if tmux_has_session "$s" 2>/dev/null &&
+       claim_tree_session "$s" "$repo" "$branch" "$path"; then live='open'; else live='closed'; fi
     if [ "$live" = open ]; then agent=$(agent_status "$s"); else agent='-'; fi
     if [ -n "$(git -C "$path" status --porcelain 2>/dev/null)" ]; then changes='modified'; else changes='clean'; fi
     main=$(main_worktree "$path")
@@ -124,6 +125,9 @@ cmd_status() {
   else
     die "usage: st status <tree>  (omit tree inside tmux)"
   fi
+  if tmux_has_session "$s" 2>/dev/null && ! owned_tree_session "$s"; then
+    die "tmux session '$s' is not owned by supertree"
+  fi
   printf '%s\t%s\n' "$(label_for_session "$s")" "$(agent_status "$s")"
 }
 
@@ -150,7 +154,8 @@ cmd_rm() {
   old_sess=$(sess_name "$(basename "$main")" "$(slugify "$branch")")
   if [ "$old_sess" != "$sess" ] &&
      [ "$dir" -ef "$(tree_dir "$(basename "$main")" "$(slugify "$branch")")" ] &&
-     tmux has-session -t "=$old_sess" 2>/dev/null; then
+     tmux_has_session "$old_sess" 2>/dev/null &&
+     claim_tree_session "$old_sess" "$repo" "$branch" "$dir"; then
     die "an older session for $branch is still open; close it before removing the tree"
   fi
 
@@ -179,15 +184,19 @@ cmd_rm() {
   if [ -n "${TMUX:-}" ]; then
     current_sess=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S' 2>/dev/null || true)
   fi
-  evacuate_clients "$sess"
-  # Killing our own session kills this process, so close it only after cleanup.
-  if [ "$sess" != "$current_sess" ]; then tmux kill-session -t "=$sess" 2>/dev/null || true; fi
+  if tmux_has_session "$sess" 2>/dev/null && owned_tree_session "$sess"; then
+    evacuate_clients "$sess"
+    # Killing our own session kills this process, so close it only after cleanup.
+    if [ "$sess" != "$current_sess" ]; then kill_owned_tree_session "$sess" 2>/dev/null || true; fi
+  fi
   if [ "$force" = 1 ]; then git -C "$main" worktree remove --force "$dir"
   else git -C "$main" worktree remove "$dir"; fi
   git -C "$main" branch -d "$branch" >/dev/null 2>&1 || info "branch $branch kept (not merged)"
   clear_tree_state "$repo" "$slug" "$sess"
   info "removed $(basename "$main")/$branch"
-  if [ "$sess" = "$current_sess" ]; then tmux kill-session -t "=$sess" 2>/dev/null || true; fi
+  if [ "$sess" = "$current_sess" ]; then
+    kill_tree_session "$sess" "$repo" "$branch" "$main" 2>/dev/null || true
+  fi
 }
 
 clear_tree_state() {
@@ -207,7 +216,7 @@ clear_tree_state() {
 
 cmd_remove_all() {
   local force=0 root dir main branch sess repo slug dirty unpushed current other found tmp j
-  local current_sess='' close_current=0
+  local current_sess='' close_current=0 close_identity='' session_target=''
   local -a dirs=() mains=() branches=() sessions=() kinds=()
   case ${1:-} in --force|-f) force=1; shift;; esac
   [ $# -eq 0 ] || die "usage: st remove all [--force]"
@@ -303,19 +312,32 @@ cmd_remove_all() {
           current=$(branch_worktree "$main" "$branch" || true)
           [ "$current" = "$dir" ] || die "worktree changed; refusing to remove $dir"
         fi
-        evacuate_clients "$sess"
-        if [ "$sess" = "$current_sess" ]; then close_current=1
-        else tmux kill-session -t "=$sess" 2>/dev/null || true; fi
+        if tmux_has_session "$sess" 2>/dev/null && owned_tree_session "$sess"; then
+          evacuate_clients "$sess"
+          if [ "$sess" = "$current_sess" ]; then
+            close_current=1
+            session_target=$(tmux_session_id "$sess") || session_target=''
+            if [ -n "$session_target" ]; then
+              close_identity=$(tmux show-options -qv -t "$session_target" @supertree_identity 2>/dev/null || true)
+            fi
+          else kill_owned_tree_session "$sess" 2>/dev/null || true; fi
+        fi
         if [ "$force" = 1 ]; then git -C "$main" worktree remove --force "$dir"
         else git -C "$main" worktree remove "$dir"; fi
         [ -z "$branch" ] || git -C "$main" branch -d "$branch" >/dev/null 2>&1 ||
           info "branch $branch kept (not merged)"
         clear_tree_state "$repo" "$(branch_key "${branch:-(detached)}")" "$sess"
       else
-        if [ -n "$sess" ]; then
+        if [ -n "$sess" ] && tmux_has_session "$sess" 2>/dev/null &&
+           owned_tree_session "$sess"; then
           evacuate_clients "$sess"
-          if [ "$sess" = "$current_sess" ]; then close_current=1
-          else tmux kill-session -t "=$sess" 2>/dev/null || true; fi
+          if [ "$sess" = "$current_sess" ]; then
+            close_current=1
+            session_target=$(tmux_session_id "$sess") || session_target=''
+            if [ -n "$session_target" ]; then
+              close_identity=$(tmux show-options -qv -t "$session_target" @supertree_identity 2>/dev/null || true)
+            fi
+          else kill_owned_tree_session "$sess" 2>/dev/null || true; fi
         fi
         rm -rf -- "$dir"
         if [ -f "$ST_REPOS" ]; then
@@ -332,7 +354,7 @@ cmd_remove_all() {
     done
   done
   if [ "$close_current" = 1 ]; then
-    tmux kill-session -t "=$current_sess" 2>/dev/null || true
+    kill_identified_session "$current_sess" "$close_identity" 2>/dev/null || true
   fi
 }
 

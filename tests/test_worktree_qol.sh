@@ -11,8 +11,12 @@ export ST_STATE="$TEST_ROOT/state"
 export ST_CONFIG="$TEST_ROOT/config"
 export ST_WORKTREE_ROOT="$TEST_ROOT/worktrees"
 export ST_TEST_LOG="$TEST_ROOT/tmux.log"
+export ST_TMUX_OPTIONS="$TEST_ROOT/tmux-options"
+export ST_TMUX_SESSIONS="$TEST_ROOT/tmux-sessions"
 export ST_TEST_PICKER_INPUT="$TEST_ROOT/picker.txt"
 mkdir -p "$HOME/.local/bin" "$ST_STATE" "$ST_WORKTREE_ROOT"
+: > "$ST_TMUX_SESSIONS"
+: > "$ST_TMUX_OPTIONS"
 printf 'ST_HARNESS=codex\n' > "$ST_CONFIG"
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
@@ -25,12 +29,50 @@ case ${1:-} in
     if [ "${ST_TEST_MAIN_CLOSED:-0}" = 1 ] &&
        [[ $* == *"=$ST_TEST_MAIN_SESSION"* ]]; then exit 1; fi
     [ "${ST_TEST_HAS_SESSIONS:-0}" = 1 ]; exit;;
-  set-option) case $* in *'-t =demo-'*) exit 1;; esac;;
+  set-option)
+    case $* in *'-t =demo-'*) exit 1;; esac
+    args=("$@"); for ((i=1; i<${#args[@]}; i++)); do
+      [ "${args[i]}" = -t ] && sess=${args[i+1]#=}
+      [[ ${args[i]} = @* ]] && { opt=${args[i]}; value=${args[i+1]}; }
+    done
+    case $sess in '$'*) sess=${sess#\$};; esac
+    printf '%s|%s|%s\n' "$sess" "$opt" "$value" >> "$ST_TMUX_OPTIONS";;
   show-options)
     case $* in
       *'@st_agent_window'*) printf 'codex\n';;
       *'@st_agent_state'*) printf '%s\n' "${ST_TEST_AGENT_STATE:-running}";;
+      *)
+        args=("$@"); for ((i=1; i<${#args[@]}; i++)); do
+          [ "${args[i]}" = -t ] && sess=${args[i+1]#=}
+          [[ ${args[i]} = @* ]] && opt=${args[i]}
+        done
+        case $sess in '$'*) sess=${sess#\$};; esac
+        awk -F '[|]' -v s="$sess" -v o="$opt" \
+          '$1 == s && $2 == o { value=$3 } END { if (value != "") print value }' \
+          "$ST_TMUX_OPTIONS" 2>/dev/null;;
     esac;;
+  list-sessions)
+    case $* in
+      *session_id*) ;;
+      *) [ "${ST_TEST_HAS_SESSIONS:-0}" = 1 ] || exit 0;;
+    esac
+    ids=0
+    metadata=0
+    case $* in *session_id*) ids=1;; esac
+    case $* in *supertree_identity*) metadata=1;; esac
+    awk -F '[|]' \
+      -v ids="$ids" \
+      -v metadata="$metadata" '
+      NR == FNR && $2 == "@supertree_identity" { id[$1]=$3; next }
+      NR == FNR && $2 == "@supertree_label" { label[$1]=$3; next }
+      NR == FNR { next }
+      !seen[$0]++ { print ids ? "$" $0 "\t" $0 : (metadata ? $0 "\t" id[$0] "\t" label[$0] : $0) }
+    ' "$ST_TMUX_OPTIONS" "$ST_TMUX_SESSIONS" 2>/dev/null;;
+  new-session)
+    args=("$@"); for ((i=1; i<${#args[@]}; i++)); do
+      [ "${args[i]}" = -s ] && printf '%s\n' "${args[i+1]}" >> "$ST_TMUX_SESSIONS"
+    done
+    true;;
   list-panes)
     if [ "${2:-}" = -a ]; then
       printf '%s\n' "${ST_TEST_PANES:-}"
@@ -73,6 +115,45 @@ beta_session=$("$ROOT/bin/st" _sessions | grep -x 'demo/beta')
 [ "$(sed -n '1p' "$ST_STATE/recent")" = "$alpha_session" ] || fail 'recent order did not put alpha first'
 [ "$(sed -n '2p' "$ST_STATE/recent")" = "$beta_session" ] || fail 'recent order did not put beta second'
 
+assert_query_session() {
+  local query=$1 rows=$2 expected=$3 actual
+  : > "$ST_TEST_LOG"
+  ST_PICKER_ROWS=$rows "$ROOT/bin/st" go "$query"
+  actual=$(awk '$1 == "attach-session" { print $3 }' "$ST_TEST_LOG" | tail -1)
+  [ "$actual" = "\$$expected" ] ||
+    fail "query '$query' selected ${actual#\$} instead of $expected"
+}
+
+query_rows=$(printf '%s\t%s\t%s\n' \
+  'demo/feature/a-b  closed' '/tmp/feature-a-b' 'demo/feature/a-b' \
+  'demo/feature-a-b  closed' "$TEST_ROOT/demo" 'demo/feature-a-b')
+assert_query_session feature-a-b "$query_rows" demo/feature-a-b
+
+query_rows=$(printf '%s\t%s\t%s\n' \
+  'demo/dot.name  closed' "$TEST_ROOT/demo" 'sess-dot' \
+  'demo/dot_name  closed' "$TEST_ROOT/demo" 'sess-underscore')
+assert_query_session dot_name "$query_rows" sess-underscore
+
+query_rows=$(printf '%s\t%s\t%s\n' \
+  'demo/regexaxb  closed' "$TEST_ROOT/demo" 'sess-regex-decoy' \
+  'demo/regexa.b  closed' "$TEST_ROOT/demo" 'sess-regex-literal')
+assert_query_session regexa.b "$query_rows" sess-regex-literal
+
+query_rows=$(printf '%s\t%s\t%s\n' \
+  'demo/ends  closed' "$TEST_ROOT/demo" 'sess-end-decoy' \
+  'demo/ends$  closed' "$TEST_ROOT/demo" 'sess-end-literal')
+assert_query_session 'ends$' "$query_rows" sess-end-literal
+
+query_rows=$(printf '%s\t%s\t%s\n' \
+  'demo/unrelated  closed' '/tmp/path-with-needle' 'sess-hidden-decoy' \
+  'demo/visible-needle  closed' "$TEST_ROOT/demo" 'sess-visible-match')
+assert_query_session NEEDLE "$query_rows" sess-visible-match
+
+query_rows=$(printf '%s\t%s\t%s\n' \
+  'other/demo/topic  closed' "$TEST_ROOT/demo" 'sess-branch-exact' \
+  'demo/topic  closed' "$TEST_ROOT/demo" 'sess-label-exact')
+assert_query_session demo/topic "$query_rows" sess-label-exact
+
 list=$("$ROOT/bin/st" ls)
 printf '%s\n' "$list" | grep -Eq '^TREE +SESSION +AGENT +CHANGES +TYPE$' || fail 'list has no grid headings'
 printf '%s\n' "$list" | grep -Eq '^demo/alpha +closed +- +clean +worktree$' || fail 'list did not show a readable tree row'
@@ -92,7 +173,7 @@ fi
 
 : > "$ST_TEST_LOG"
 ST_TEST_PANES=$(printf '%s\tcodex\t%%1\trunning\tcodex\tbash\n%s\tcodex\t%%2\tdone\tcodex\tbash' "$alpha_session" "$beta_session") \
-  ST_TEST_SCREEN='Working...' ST_TEST_PICK_KEY=escape "$ROOT/bin/st" go --picker
+  ST_TEST_HAS_SESSIONS=1 ST_TEST_SCREEN='Working...' ST_TEST_PICK_KEY=escape "$ROOT/bin/st" go --picker
 grep -E 'demo/alpha +running' "$ST_TEST_PICKER_INPUT" >/dev/null || fail 'picker lost running status'
 grep -E 'demo/beta +done' "$ST_TEST_PICKER_INPUT" >/dev/null || fail 'picker lost done status'
 [ "$(grep -c '^list-panes -a ' "$ST_TEST_LOG")" = 1 ] || fail 'picker did not use one tmux snapshot'
@@ -102,7 +183,7 @@ fi
 
 : > "$ST_TEST_LOG"
 ST_TEST_PANES=$(printf '%s\tcodex\t%%1\tdone\tcodex\tbash' "$alpha_session") \
-  "$ROOT/bin/st" go --popup /dev/ttys999
+  ST_TEST_HAS_SESSIONS=1 "$ROOT/bin/st" go --popup /dev/ttys999
 grep -F 'display-popup -c /dev/ttys999' "$ST_TEST_LOG" >/dev/null || fail 'popup was not opened after preparation'
 grep -F 'ST_PICKER_ROWS=' "$ST_TEST_LOG" >/dev/null || fail 'popup did not receive prepared rows'
 
@@ -125,8 +206,8 @@ ST_TEST_HAS_SESSIONS=1 ST_TEST_AGENT_STATE=done \
 : > "$ST_TEST_LOG"
 ST_TEST_HAS_SESSIONS=1 ST_TEST_MAIN_CLOSED=1 "$ROOT/bin/st" down --subtrees -y
 grep -F "new-session -d -s $ST_TEST_MAIN_SESSION" "$ST_TEST_LOG" >/dev/null || fail 'main fallback was not opened'
-grep -F "kill-session -t =$alpha_session" "$ST_TEST_LOG" >/dev/null || fail 'alpha was not closed'
-grep -F "kill-session -t =$beta_session" "$ST_TEST_LOG" >/dev/null || fail 'beta was not closed'
+grep -F "kill-session -t \$$alpha_session" "$ST_TEST_LOG" >/dev/null || fail 'alpha was not closed'
+grep -F "kill-session -t \$$beta_session" "$ST_TEST_LOG" >/dev/null || fail 'beta was not closed'
 if grep -F "kill-session -t =$ST_TEST_MAIN_SESSION" "$ST_TEST_LOG" >/dev/null; then
   fail 'main session was closed'
 fi

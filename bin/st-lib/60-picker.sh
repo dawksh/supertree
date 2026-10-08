@@ -2,8 +2,21 @@
 # supertree picker module
 
 picker_rows() {
-  local trees panes format name bin width label status path sess pane
+  local trees panes sessions owned format name bin width label status path sess pane repo branch expected actual legacy record
   trees=$(list_trees)
+  sessions=$(tmux list-sessions -F '#{session_name}'$'\t''#{@supertree_identity}'$'\t''#{@supertree_label}' 2>/dev/null || true)
+  owned=$(while IFS=$'\t' read -r repo branch path sess; do
+    record=$(printf '%s\n' "$sessions" | awk -F '\t' -v s="$sess" '$1 == s { print; exit }')
+    [ -n "$record" ] || continue
+    IFS=$'\t' read -r _ actual legacy <<< "$record"
+    expected=$(tree_session_identity "$path" "$branch")
+    if [ "$actual" = "$expected" ]; then
+      printf '%s\n' "$sess"
+    elif [ -z "$actual" ] && [ "$legacy" = "$(legacy_session_label "$path" "$branch")" ] &&
+         claim_tree_session "$sess" "$repo" "$branch" "$path"; then
+      printf '%s\n' "$sess"
+    fi
+  done <<< "$trees")
   format='#{session_name}'$'\t''#{window_name}'$'\t''#{pane_id}'$'\t''#{@st_agent_state}'$'\t''#{@st_agent_window}'$'\t''#{pane_current_command}'
   panes=$(tmux list-panes -a -F "$format" 2>/dev/null) || panes=''
   name=$(harness_window)
@@ -12,8 +25,12 @@ picker_rows() {
 
   printf '%s\n' "$trees" | awk -F '\t' -v default_name="$name" -v bin="$bin" '
     FILENAME == ARGV[1] {
+      owned[$1] = 1
+      next
+    }
+    FILENAME == ARGV[2] {
       s = $1
-      if (s == "") next
+      if (s == "" || !(s in owned)) next
       live[s] = 1
       if ($5 != "") agent_window[s] = $5
       wanted = agent_window[s] != "" ? agent_window[s] : default_name
@@ -41,12 +58,38 @@ picker_rows() {
       if (length(label) > width) width = length(label)
     }
     END { for (i = 1; i <= n; i++) print width "\t" row[i] }
-  ' <(printf '%s\n' "$panes") - | while IFS=$'\t' read -r width label status path sess pane; do
+  ' <(printf '%s\n' "$owned") <(printf '%s\n' "$panes") - | while IFS=$'\t' read -r width label status path sess pane; do
     if [ "$status" = running ] && [ -n "$pane" ] && agent_needs_input "$pane"; then
       status=input
     fi
     printf '%-*s  %s\t%s\t%s\n' "$width" "$label" "$status" "$path" "$sess"
   done
+}
+
+picker_query_match() {
+  local rows=$1 query=$2
+  ST_PICKER_QUERY=$query awk -F '\t' '
+    BEGIN { query = tolower(ENVIRON["ST_PICKER_QUERY"]) }
+    {
+      row = $0
+      label = $1
+      sub(/[[:space:]]+(closed|done|running|input)$/, "", label)
+      folded_label = tolower(label)
+      branch = folded_label
+      sub(/^[^\/]*\//, "", branch)
+
+      if (folded_label == query && exact_label == "") exact_label = row
+      else if (branch == query && exact_branch == "") exact_branch = row
+      else if (index(folded_label, query) && partial == "") partial = row
+    }
+    END {
+      if (exact_label != "") print exact_label
+      else if (exact_branch != "") print exact_branch
+      else if (partial != "") print partial
+    }
+  ' <<EOF
+$rows
+EOF
 }
 
 # ---------------------------------------------------------------- commands
@@ -78,7 +121,7 @@ cmd_go() {
   fi
 
   if [ -n "$query" ]; then
-    sel=$(printf '%s\n' "$rows" | grep -i -- "$query" | head -1) || true
+    sel=$(picker_query_match "$rows" "$query")
     [ -n "$sel" ] || die "no tree matching: $query"
   else
     choices=$rows
@@ -122,7 +165,7 @@ cmd_go() {
   dir=$(printf '%s' "$sel" | cut -f2)
   sess=$(printf '%s' "$sel" | cut -f3)
   build_session "$sess" "$dir"
-  attach "$sess"
+  attach "$sess" "$dir"
 }
 
 cmd_roots() {
