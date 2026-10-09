@@ -19,6 +19,7 @@ export ST_WORKTREE_ROOT="$TEST_ROOT/worktrees"
 export ST_REAL_TMUX="$REAL_TMUX"
 export ST_TEST_SOCKET="$SOCKET"
 export ST_TMUX_LOG="$TEST_ROOT/tmux.log"
+export ST_TEST_PICKER_INPUT="$TEST_ROOT/picker.txt"
 mkdir -p "$HOME/.local/bin" "$ST_STATE" "$ST_WORKTREE_ROOT"
 export PATH="$HOME/.local/bin:$PATH"
 printf 'ST_WINDOWS=shell\n' > "$ST_CONFIG"
@@ -36,6 +37,13 @@ esac
 exec "$ST_REAL_TMUX" -L "$ST_TEST_SOCKET" "$@"
 EOF
 chmod +x "$HOME/.local/bin/tmux"
+
+cat > "$HOME/.local/bin/fzf" <<'EOF'
+#!/usr/bin/env bash
+cat > "$ST_TEST_PICKER_INPUT"
+exit 130
+EOF
+chmod +x "$HOME/.local/bin/fzf"
 
 repo="$TEST_ROOT/demo"
 git init -q "$repo"
@@ -83,6 +91,19 @@ tmux kill-session -t "=$session"
 repo_id=$(printf '%s' "$repo" | shasum -a 256 | awk '{print substr($1,1,32)}')
 branch_id=$(printf '%s' "$branch" | shasum -a 256 | awk '{print substr($1,1,32)}')
 hashed_session="demo-$repo_id/$branch-$branch_id"
+
+# If the readable name is foreign but the legacy hashed session is ours, keep
+# using the owned session instead of letting the collision hide the tree.
+tmux new-session -d -s "$session" -c "$repo" -n foreign
+tmux new-session -d -s "$hashed_session" -c "$repo" -n shell
+tmux set-option -q -t "$hashed_session" @supertree_label "demo/$branch"
+"$ROOT/bin/st" _sessions | grep -Fx "$hashed_session" >/dev/null ||
+  fail 'owned legacy session was hidden by a foreign readable collision'
+tmux has-session -t "=$session" 2>/dev/null || fail 'readable collision was removed'
+tmux has-session -t "=$hashed_session" 2>/dev/null || fail 'owned hashed session was removed'
+tmux kill-session -t "=$session"
+tmux kill-session -t "=$hashed_session"
+
 tmux new-session -d -s "$hashed_session" -c "$repo" -n foreign
 "$ROOT/bin/st" _sessions >/dev/null
 tmux has-session -t "=$hashed_session" 2>/dev/null || fail 'foreign hashed session was renamed'
@@ -91,6 +112,9 @@ tmux kill-session -t "=$hashed_session"
 
 tmux new-session -d -s "$hashed_session" -c "$repo" -n shell
 tmux set-option -q -t "$hashed_session" @supertree_label "demo/$branch"
+"$ROOT/bin/st" go --picker
+grep -E "demo/$branch +done" "$ST_TEST_PICKER_INPUT" >/dev/null ||
+  fail 'picker lost a legacy session while upgrading its name'
 "$ROOT/bin/st" _sessions | grep -Fx "$session" >/dev/null ||
   fail 'legacy hashed session was not adopted under its readable name'
 if tmux has-session -t "=$hashed_session" 2>/dev/null; then fail 'legacy hashed name remained after adoption'; fi

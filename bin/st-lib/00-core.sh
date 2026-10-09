@@ -13,9 +13,26 @@ st_executable() {
   esac
 }
 
+# Picker preparation enables this only inside its command-substitution process.
+# Initializing both values here prevents inherited environment data from being
+# treated as an authoritative tmux snapshot.
+ST_TMUX_SESSION_ID_SNAPSHOT=''
+ST_TMUX_SESSION_ID_SNAPSHOT_ACTIVE=0
+
 # Resolve a readable session name to tmux's opaque, unambiguous session ID.
 tmux_session_id() {
-  local name=$1 id
+  local name=$1 id record snapshot_name
+  if [ "$ST_TMUX_SESSION_ID_SNAPSHOT_ACTIVE" = 1 ]; then
+    while IFS= read -r record; do
+      [ -n "$record" ] || continue
+      snapshot_name=${record#*$'\t'}
+      snapshot_name=${snapshot_name%%$'\t'*}
+      [ "$snapshot_name" = "$name" ] || continue
+      printf '%s' "${record%%$'\t'*}"
+      return 0
+    done <<< "$ST_TMUX_SESSION_ID_SNAPSHOT"
+    return 1
+  fi
   id=$(tmux list-sessions -F '#{session_id}'$'\t''#{session_name}' 2>/dev/null |
     awk -F '\t' -v wanted="$name" '$2 == wanted { print $1; exit }') || return 1
   [ -n "$id" ] || return 1

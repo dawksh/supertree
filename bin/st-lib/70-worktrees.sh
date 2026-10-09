@@ -71,14 +71,23 @@ cmd_trust() {
 }
 
 cmd_ls() {
-  local repo branch path s live changes agent kind main
+  local repo branch path s live changes agent kind root mains=$'\n'
+  if [ -f "$ST_REPOS" ]; then
+    while IFS= read -r root; do
+      [ -d "$root" ] || continue
+      root=$(cd "$root" && pwd -P)
+      mains="$mains$root"$'\n'
+    done < "$ST_REPOS"
+  fi
   list_trees | while IFS=$'\t' read -r repo branch path s; do
     if tmux_has_session "$s" 2>/dev/null &&
        claim_tree_session "$s" "$repo" "$branch" "$path"; then live='open'; else live='closed'; fi
     if [ "$live" = open ]; then agent=$(agent_status "$s"); else agent='-'; fi
     if [ -n "$(git -C "$path" status --porcelain 2>/dev/null)" ]; then changes='modified'; else changes='clean'; fi
-    main=$(main_worktree "$path")
-    if [ "$path" = "$main" ]; then kind='main'; else kind='worktree'; fi
+    case $mains in
+      *$'\n'"$path"$'\n'*) kind='main';;
+      *) kind='worktree';;
+    esac
     printf '%s\t%s\t%s\t%s\t%s\n' "$(tree_label "$repo" "$branch")" "$live" "$agent" "$changes" "$kind"
   done | awk -F '\t' '
     { for (i = 1; i <= 5; i++) { cell[NR,i] = $i; if (length($i) > width[i]) width[i] = length($i) } }
