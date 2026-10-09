@@ -134,6 +134,7 @@ cmd_uninstall() {
   printf 'proceed? [y/N] ' >&2; read -r ans
   case ${ans:-n} in y|Y|yes) ;; *) die "aborted";; esac
 
+  refresh_tree_inventory
   sessions=$(known_sessions)
   if [ -n "${TMUX:-}" ]; then
     current_sess=$(tmux display-message -p '#S' 2>/dev/null || true)

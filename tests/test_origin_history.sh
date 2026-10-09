@@ -63,6 +63,13 @@ case ${command:-} in
       esac
     fi
     ;;
+  list-panes)
+    [ "${last:-}" = '#{pane_start_path}' ] || exit 0
+    case $target in
+      '$2'|"$ST_TEST_TREE_A") printf '%s/repo/branch-a\n' "$ST_WORKTREE_ROOT";;
+      '$3'|"$ST_TEST_TREE_B") printf '%s/repo/branch-b\n' "$ST_WORKTREE_ROOT";;
+    esac
+    ;;
   has-session)
     grep -qxF -- "${target%%:*}" "$ST_TEST_LIVE"
     ;;

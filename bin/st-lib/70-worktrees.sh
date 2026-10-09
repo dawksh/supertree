@@ -48,6 +48,7 @@ cmd_new() {
   idx=$(tree_index "$repo" "$slug" "$(basename "$main")")
   if [ "$bare" = 0 ]; then
     bootstrap "$main" "$dir" "$repo" "$branch" "$idx"
+    refresh_tree_inventory
     sess=$(tree_session "$repo" "$branch")
     [ -n "$sess" ] || die "cannot find a session name for $branch"
     build_session "$sess" "$dir"
@@ -72,7 +73,8 @@ cmd_trust() {
 
 cmd_ls() {
   local repo branch path s live changes agent kind main
-  list_trees | while IFS=$'\t' read -r repo branch path s; do
+  refresh_tree_inventory
+  tree_inventory | while IFS=$'\t' read -r repo branch path s; do
     if tmux_has_session "$s" 2>/dev/null &&
        claim_tree_session "$s" "$repo" "$branch" "$path"; then live='open'; else live='closed'; fi
     if [ "$live" = open ]; then agent=$(agent_status "$s"); else agent='-'; fi
@@ -104,6 +106,7 @@ cmd_ls() {
 
 cmd_status() {
   local s all query
+  refresh_tree_inventory
   if [ $# -gt 0 ]; then
     query=$1
     all=$(known_sessions)
@@ -148,6 +151,7 @@ cmd_rm() {
   slug=$(branch_key "$branch")
   dir=$(branch_worktree "$main" "$branch" || true)
   [ -n "$dir" ] && managed_tree "$main" "$branch" "$dir" || die "no managed worktree for $branch"
+  refresh_tree_inventory
   sess=$(tree_session "$repo" "$branch")
   [ -d "$dir" ] || die "no worktree for $branch at $dir"
   [ "$dir" != "$main" ] || die "cannot remove the main worktree"
@@ -223,6 +227,7 @@ cmd_remove_all() {
   [ -d "$ST_WORKTREE_ROOT" ] || { info "no worktrees under $ST_WORKTREE_ROOT"; return 0; }
   root=$(cd "$ST_WORKTREE_ROOT" && pwd -P)
   [ "$root" != / ] && [ "$root" != "$HOME" ] || die "unsafe worktree root: $root"
+  refresh_tree_inventory
 
   for dir in "$root"/* "$root"/*/*; do
     [ -d "$dir" ] && [ ! -L "$dir" ] && [ ! -L "$dir/.git" ] &&
