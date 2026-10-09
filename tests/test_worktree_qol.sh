@@ -14,6 +14,9 @@ export ST_TEST_LOG="$TEST_ROOT/tmux.log"
 export ST_TMUX_OPTIONS="$TEST_ROOT/tmux-options"
 export ST_TMUX_SESSIONS="$TEST_ROOT/tmux-sessions"
 export ST_TEST_PICKER_INPUT="$TEST_ROOT/picker.txt"
+export ST_TEST_HASH_LOG="$TEST_ROOT/hash.log"
+export ST_TEST_REAL_HASH
+ST_TEST_REAL_HASH=$(command -v shasum || command -v sha256sum)
 mkdir -p "$HOME/.local/bin" "$ST_STATE" "$ST_WORKTREE_ROOT"
 : > "$ST_TMUX_SESSIONS"
 : > "$ST_TMUX_OPTIONS"
@@ -66,7 +69,10 @@ case ${1:-} in
       NR == FNR && $2 == "@supertree_identity" { id[$1]=$3; next }
       NR == FNR && $2 == "@supertree_label" { label[$1]=$3; next }
       NR == FNR { next }
-      !seen[$0]++ { print ids ? "$" $0 "\t" $0 : (metadata ? $0 "\t" id[$0] "\t" label[$0] : $0) }
+      !seen[$0]++ {
+        if (ids && metadata) print "$" $0 "\t" $0 "\t" id[$0] "\t" label[$0]
+        else print ids ? "$" $0 "\t" $0 : (metadata ? $0 "\t" id[$0] "\t" label[$0] : $0)
+      }
     ' "$ST_TMUX_OPTIONS" "$ST_TMUX_SESSIONS" 2>/dev/null;;
   new-session)
     args=("$@"); for ((i=1; i<${#args[@]}; i++)); do
@@ -97,6 +103,17 @@ esac
 EOF
 chmod +x "$HOME/.local/bin/fzf"
 
+cat > "$HOME/.local/bin/shasum" <<'EOF'
+#!/usr/bin/env bash
+printf 'hash\n' >> "$ST_TEST_HASH_LOG"
+case $ST_TEST_REAL_HASH in
+  */shasum) exec "$ST_TEST_REAL_HASH" "$@";;
+  *) [ "${1:-}" != -a ] || shift 2
+     exec "$ST_TEST_REAL_HASH" "$@";;
+esac
+EOF
+chmod +x "$HOME/.local/bin/shasum"
+
 mkdir -p "$TEST_ROOT/demo"
 git -C "$TEST_ROOT/demo" init -q
 git -C "$TEST_ROOT/demo" -c user.name=Test -c user.email=test@example.com commit -q --allow-empty -m init
@@ -105,6 +122,13 @@ git -C "$TEST_ROOT/demo" worktree add -q -b beta "$ST_WORKTREE_ROOT/demo/beta"
 printf '%s\n' "$TEST_ROOT/demo" > "$ST_STATE/repos"
 
 cd "$TEST_ROOT/demo"
+# With no legacy sessions, discovery hashes the repository identity once and
+# must not hash every branch merely to rule legacy names out.
+: > "$ST_TEST_HASH_LOG"
+"$ROOT/bin/st" _sessions >/dev/null
+hash_calls=$(wc -l < "$ST_TEST_HASH_LOG" | tr -d ' ')
+[ "$hash_calls" = 1 ] || fail "tree discovery performed $hash_calls hashes without legacy sessions"
+
 export ST_TEST_MAIN_SESSION
 ST_TEST_MAIN_SESSION=$("$ROOT/bin/st" _sessions | grep -x "demo/$(git branch --show-current)")
 alpha_session=$("$ROOT/bin/st" _sessions | grep -x 'demo/alpha')
@@ -114,6 +138,14 @@ beta_session=$("$ROOT/bin/st" _sessions | grep -x 'demo/beta')
 "$ROOT/bin/st" go alpha
 [ "$(sed -n '1p' "$ST_STATE/recent")" = "$alpha_session" ] || fail 'recent order did not put alpha first'
 [ "$(sed -n '2p' "$ST_STATE/recent")" = "$beta_session" ] || fail 'recent order did not put beta second'
+
+# Direct queries select by inventory only; interactive pane/status data is not
+# displayed and should not delay the switch.
+: > "$ST_TEST_LOG"
+"$ROOT/bin/st" go alpha
+if grep -q '^list-panes -a ' "$ST_TEST_LOG"; then
+  fail 'direct query collected interactive picker pane state'
+fi
 
 assert_query_session() {
   local query=$1 rows=$2 expected=$3 actual
@@ -157,6 +189,8 @@ assert_query_session demo/topic "$query_rows" sess-label-exact
 list=$("$ROOT/bin/st" ls)
 printf '%s\n' "$list" | grep -Eq '^TREE +SESSION +AGENT +CHANGES +TYPE$' || fail 'list has no grid headings'
 printf '%s\n' "$list" | grep -Eq '^demo/alpha +closed +- +clean +worktree$' || fail 'list did not show a readable tree row'
+main_branch=$(git -C "$TEST_ROOT/demo" branch --show-current)
+printf '%s\n' "$list" | grep -Eq "^demo/$main_branch +closed +- +clean +main$" || fail 'list did not identify the main checkout'
 if printf '%s\n' "$list" | grep -Eq '[[:xdigit:]]{32}|/demo-[[:xdigit:]]'; then
   fail 'list exposed internal identity hashes'
 fi
@@ -177,6 +211,8 @@ ST_TEST_PANES=$(printf '%s\tcodex\t%%1\trunning\tcodex\tbash\n%s\tcodex\t%%2\tdo
 grep -E 'demo/alpha +running' "$ST_TEST_PICKER_INPUT" >/dev/null || fail 'picker lost running status'
 grep -E 'demo/beta +done' "$ST_TEST_PICKER_INPUT" >/dev/null || fail 'picker lost done status'
 [ "$(grep -c '^list-panes -a ' "$ST_TEST_LOG")" = 1 ] || fail 'picker did not use one tmux snapshot'
+session_scans=$(grep -c '^list-sessions ' "$ST_TEST_LOG")
+[ "$session_scans" = 2 ] || fail "picker fetched tmux sessions $session_scans times"
 if grep -q '^has-session ' "$ST_TEST_LOG"; then
   fail 'picker queried tmux separately for each tree'
 fi

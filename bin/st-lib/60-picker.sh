@@ -2,13 +2,33 @@
 # supertree picker module
 
 picker_rows() {
-  local trees panes sessions owned format name bin width label status path sess pane repo branch expected actual legacy record
-  trees=$(list_trees)
-  sessions=$(tmux list-sessions -F '#{session_name}'$'\t''#{@supertree_identity}'$'\t''#{@supertree_label}' 2>/dev/null || true)
+  local trees panes sessions session_ids live='' owned format name bin width label status path sess pane repo branch expected actual legacy record candidate metadata session_name ignored
+  session_ids=$(tmux list-sessions -F '#{session_id}'$'\t''#{session_name}' 2>/dev/null || true)
+  ST_TMUX_SESSION_ID_SNAPSHOT=$session_ids
+  ST_TMUX_SESSION_ID_SNAPSHOT_ACTIVE=1
+  while IFS=$'\t' read -r ignored session_name; do
+    [ -n "$session_name" ] && live="$live$session_name"$'\n'
+  done <<< "$session_ids"
+  trees=$(list_trees "$live")
+  # Tree discovery can rename a verified legacy session. Refresh once so the
+  # picker sees its final name and current ownership metadata.
+  sessions=$(tmux list-sessions -F '#{session_id}'$'\t''#{session_name}'$'\t''#{@supertree_identity}'$'\t''#{@supertree_label}' 2>/dev/null || true)
+  ST_TMUX_SESSION_ID_SNAPSHOT=$sessions
+  # Metadata is already in memory. A short shell scan avoids starting one awk
+  # process per tree and preserves empty fields on macOS's Bash 3.
   owned=$(while IFS=$'\t' read -r repo branch path sess; do
-    record=$(printf '%s\n' "$sessions" | awk -F '\t' -v s="$sess" '$1 == s { print; exit }')
+    record=''
+    while IFS= read -r candidate; do
+      metadata=${candidate#*$'\t'}
+      [ "${metadata%%$'\t'*}" = "$sess" ] || continue
+      record=$candidate
+      break
+    done <<< "$sessions"
     [ -n "$record" ] || continue
-    IFS=$'\t' read -r _ actual legacy <<< "$record"
+    metadata=${record#*$'\t'}
+    metadata=${metadata#*$'\t'}
+    actual=${metadata%%$'\t'*}
+    legacy=${metadata#*$'\t'}
     expected=$(tree_session_identity "$path" "$branch")
     if [ "$actual" = "$expected" ]; then
       printf '%s\n' "$sess"
@@ -66,6 +86,16 @@ picker_rows() {
   done
 }
 
+# A direct query never displays status, so avoid the interactive picker's pane
+# scan and screen captures. Session ownership is still checked by build/attach.
+tree_query_rows() {
+  local repo branch path sess
+  while IFS=$'\t' read -r repo branch path sess; do
+    [ -n "$sess" ] || continue
+    printf '%s  closed\t%s\t%s\n' "$(tree_label "$repo" "$branch")" "$path" "$sess"
+  done < <(list_trees)
+}
+
 picker_query_match() {
   local rows=$1 query=$2
   ST_PICKER_QUERY=$query awk -F '\t' '
@@ -106,8 +136,13 @@ cmd_go() {
   done
 
   local rows sel dir sess key branch main choices
-  if [ "${ST_PICKER_ROWS+x}" = x ]; then rows=$ST_PICKER_ROWS
-  else rows=$(picker_rows | sort_recent); fi
+  if [ "${ST_PICKER_ROWS+x}" = x ]; then
+    rows=$ST_PICKER_ROWS
+  elif [ -n "$query" ] && [ "$popup" = 0 ]; then
+    rows=$(tree_query_rows | sort_recent)
+  else
+    rows=$(picker_rows | sort_recent)
+  fi
 
   [ -n "$rows" ] || die "no worktrees known yet — run 'st new <branch>' inside a repo"
 

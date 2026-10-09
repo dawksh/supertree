@@ -90,21 +90,30 @@ tree_index() {
 # legacy session is eligible only when its Supertree label matches this exact
 # tree; a same-name session without ownership metadata is left untouched.
 adopt_hashed_session() {
-  local repo=$1 branch=$2 path=$3 sess=$4 live=$'\n'$5$'\n' hashed target
-  hashed=$(sess_name "$repo" "$(branch_key "$branch")")
+  local repo=$1 branch=$2 path=$3 sess=$4 live=$'\n'$5$'\n' hashed target readable_live=0
   case $live in
     *$'\n'"$sess"$'\n'*)
       if claim_tree_session "$sess" "$repo" "$branch" "$path"; then
         printf '%s' "$sess"
-      elif case $live in *$'\n'"$hashed"$'\n'*) true;; *) false;; esac &&
-           claim_tree_session "$hashed" "$repo" "$branch" "$path"; then
-        # The readable name is foreign. Keep using the legitimate legacy name.
-        printf '%s' "$hashed"
-      else
-        printf '%s' "$sess"
+        return
       fi
-      return;;
+      readable_live=1;;
   esac
+
+  # Legacy names start with the full repository identity. Avoid hashing every
+  # branch when no live session can possibly use that namespace.
+  case $live in *$'\n'"$repo/"*) ;; *) printf '%s' "$sess"; return;; esac
+  hashed=$(sess_name "$repo" "$(branch_key "$branch")")
+  if [ "$readable_live" = 1 ]; then
+    if case $live in *$'\n'"$hashed"$'\n'*) true;; *) false;; esac &&
+       claim_tree_session "$hashed" "$repo" "$branch" "$path"; then
+      # The readable name is foreign. Keep using the legitimate legacy name.
+      printf '%s' "$hashed"
+    else
+      printf '%s' "$sess"
+    fi
+    return
+  fi
   case $live in *$'\n'"$hashed"$'\n'*) ;; *) printf '%s' "$sess"; return;; esac
   if target=$(claim_tree_session_target "$hashed" "$repo" "$branch" "$path") &&
      tmux rename-session -t "$target" "$sess" 2>/dev/null; then
@@ -119,7 +128,13 @@ adopt_hashed_session() {
 list_trees() {
   local r repo branch path sess clash live root
   [ -f "$ST_REPOS" ] || return 0
-  live=$(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+  # Picker preparation can provide the exact live-name snapshot it already
+  # collected, avoiding another tmux server round trip.
+  if [ $# -gt 0 ]; then
+    live=$1
+  else
+    live=$(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+  fi
   root=$(cd "$ST_WORKTREE_ROOT" 2>/dev/null && pwd -P || printf '%s' "$ST_WORKTREE_ROOT")
   while read -r r; do
     [ -d "$r" ] || continue
