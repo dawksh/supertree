@@ -2,22 +2,6 @@
 # supertree repository module
 
 trusted_config_snapshot=''
-ST_TREE_INVENTORY=''
-ST_TREE_INVENTORY_READY=0
-
-tree_inventory() {
-  if [ "$ST_TREE_INVENTORY_READY" = 1 ]; then
-    [ -z "$ST_TREE_INVENTORY" ] || printf '%s\n' "$ST_TREE_INVENTORY"
-  else
-    list_trees
-  fi
-}
-
-refresh_tree_inventory() {
-  refresh_tmux_session_snapshot
-  ST_TREE_INVENTORY=$(list_trees)
-  ST_TREE_INVENTORY_READY=1
-}
 
 main_worktree() {
   git -C "${1:-.}" worktree list --porcelain 2>/dev/null |
@@ -43,7 +27,7 @@ session_for_label() {
       printf '%s' "$sess"
       return 0
     fi
-  done < <(tree_inventory)
+  done < <(list_trees)
   return 1
 }
 
@@ -54,7 +38,7 @@ label_for_session() {
       tree_label "$repo" "$branch"
       return 0
     fi
-  done < <(tree_inventory)
+  done < <(list_trees)
   printf 'unknown tree'
 }
 
@@ -135,8 +119,7 @@ adopt_hashed_session() {
 list_trees() {
   local r repo branch path sess clash live root
   [ -f "$ST_REPOS" ] || return 0
-  [ "$ST_TMUX_SESSION_SNAPSHOT_READY" = 1 ] || refresh_tmux_session_snapshot
-  live=$(tmux_session_names_from_snapshot)
+  live=$(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
   root=$(cd "$ST_WORKTREE_ROOT" 2>/dev/null && pwd -P || printf '%s' "$ST_WORKTREE_ROOT")
   while read -r r; do
     [ -d "$r" ] || continue
@@ -178,6 +161,6 @@ list_trees() {
 }
 
 tree_session() {
-  tree_inventory | awk -F '\t' -v repo="$1" -v branch="$2" \
+  list_trees | awk -F '\t' -v repo="$1" -v branch="$2" \
     '$1 == repo && $2 == branch && !found { print $4; found = 1 }'
 }

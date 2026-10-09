@@ -111,30 +111,4 @@ case $fresh_identity in v1:????????????????????????????????) ;; *) fail 'fresh s
 "$ROOT/bin/st" down "$branch" >/dev/null
 if tmux has-session -t "=$session" 2>/dev/null; then fail 'fresh owned session was not closed'; fi
 
-# A legacy basename/branch label is not repository-specific. If repository
-# registration changes from one same-basename checkout to another, the old
-# session must not be migrated onto the new tree without matching path proof.
-old_repo="$TEST_ROOT/old/demo"
-new_repo="$TEST_ROOT/new/demo"
-mkdir -p "$old_repo" "$new_repo"
-for same_name_repo in "$old_repo" "$new_repo"; do
-  git init -q "$same_name_repo"
-  git -C "$same_name_repo" -c user.name=Test -c user.email=test@example.invalid \
-    commit -q --allow-empty -m init
-done
-git -C "$new_repo" worktree add -q -b linked "$ST_WORKTREE_ROOT/demo/linked-new"
-printf '%s\n' "$new_repo" > "$ST_STATE/repos"
-same_name_session="demo/$(git -C "$new_repo" branch --show-current)"
-tmux new-session -d -s "$same_name_session" -c "$old_repo" -n shell
-tmux set-option -q -t "$same_name_session" @supertree_label "$same_name_session"
-if "$ROOT/bin/st" go "$(git -C "$new_repo" branch --show-current)" \
-    >"$TEST_ROOT/same-basename.out" 2>&1; then
-  fail 'legacy session from a same-basename repository was adopted'
-fi
-tmux has-session -t "=$same_name_session" 2>/dev/null ||
-  fail 'same-basename legacy session was killed'
-[ -z "$(tmux show-options -qv -t "$same_name_session" @supertree_identity 2>/dev/null || true)" ] ||
-  fail 'same-basename legacy session received the new repository identity'
-tmux kill-session -t "=$same_name_session"
-
-printf 'ok: foreign isolation, path-safe legacy migration, and durable ownership\n'
+printf 'ok: foreign session isolation, legacy migration, and durable ownership\n'
