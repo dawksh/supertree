@@ -2,13 +2,19 @@
 # supertree picker module
 
 picker_rows() {
-  local trees panes sessions owned format name bin width label status path sess pane repo branch expected actual legacy record
+  local trees panes sessions live_records owned format name bin width label status path sess pane repo branch expected actual legacy
+  refresh_tmux_session_snapshot
   trees=$(list_trees)
   sessions=$(tmux list-sessions -F '#{session_name}'$'\t''#{@supertree_identity}'$'\t''#{@supertree_label}' 2>/dev/null || true)
-  owned=$(while IFS=$'\t' read -r repo branch path sess; do
-    record=$(printf '%s\n' "$sessions" | awk -F '\t' -v s="$sess" '$1 == s { print; exit }')
-    [ -n "$record" ] || continue
-    IFS=$'\t' read -r _ actual legacy <<< "$record"
+  # Join the two snapshots once. Prefixing optional fields keeps Bash 3's
+  # whitespace IFS handling from collapsing empty identity/label columns.
+  live_records=$(printf '%s\n' "$trees" | awk -F '\t' '
+    FILENAME == ARGV[1] { seen[$1]=1; actual[$1]=$2; legacy[$1]=$3; next }
+    $4 in seen { print $0 "\ta=" actual[$4] "\tl=" legacy[$4] }
+  ' <(printf '%s\n' "$sessions") -)
+  owned=$(while IFS=$'\t' read -r repo branch path sess actual legacy; do
+    actual=${actual#a=}
+    legacy=${legacy#l=}
     expected=$(tree_session_identity "$path" "$branch")
     if [ "$actual" = "$expected" ]; then
       printf '%s\n' "$sess"
@@ -16,7 +22,7 @@ picker_rows() {
          claim_tree_session "$sess" "$repo" "$branch" "$path"; then
       printf '%s\n' "$sess"
     fi
-  done <<< "$trees")
+  done <<< "$live_records")
   format='#{session_name}'$'\t''#{window_name}'$'\t''#{pane_id}'$'\t''#{@st_agent_state}'$'\t''#{@st_agent_window}'$'\t''#{pane_current_command}'
   panes=$(tmux list-panes -a -F "$format" 2>/dev/null) || panes=''
   name=$(harness_window)
@@ -66,6 +72,20 @@ picker_rows() {
   done
 }
 
+# Explicit queries do not display the picker, so avoid collecting pane state or
+# capturing agent screens. build_session/attach still perform final ownership
+# validation for the selected row.
+tree_query_rows() {
+  local repo branch path sess
+  refresh_tree_inventory
+  while IFS=$'\t' read -r repo branch path sess; do
+    [ -n "$sess" ] || continue
+    printf '%s  closed\t%s\t%s\n' "$(tree_label "$repo" "$branch")" "$path" "$sess"
+  done <<EOF
+$(tree_inventory)
+EOF
+}
+
 picker_query_match() {
   local rows=$1 query=$2
   ST_PICKER_QUERY=$query awk -F '\t' '
@@ -106,8 +126,13 @@ cmd_go() {
   done
 
   local rows sel dir sess key branch main choices
-  if [ "${ST_PICKER_ROWS+x}" = x ]; then rows=$ST_PICKER_ROWS
-  else rows=$(picker_rows | sort_recent); fi
+  if [ "${ST_PICKER_ROWS+x}" = x ]; then
+    rows=$ST_PICKER_ROWS
+  elif [ -n "$query" ] && [ "$popup" = 0 ]; then
+    rows=$(tree_query_rows | sort_recent)
+  else
+    rows=$(picker_rows | sort_recent)
+  fi
 
   [ -n "$rows" ] || die "no worktrees known yet — run 'st new <branch>' inside a repo"
 

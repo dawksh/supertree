@@ -115,6 +115,13 @@ beta_session=$("$ROOT/bin/st" _sessions | grep -x 'demo/beta')
 [ "$(sed -n '1p' "$ST_STATE/recent")" = "$alpha_session" ] || fail 'recent order did not put alpha first'
 [ "$(sed -n '2p' "$ST_STATE/recent")" = "$beta_session" ] || fail 'recent order did not put beta second'
 
+# A direct query needs labels and ownership, not interactive pane/status data.
+: > "$ST_TEST_LOG"
+"$ROOT/bin/st" go alpha
+if grep -q '^list-panes -a ' "$ST_TEST_LOG"; then
+  fail 'direct query collected interactive picker pane state'
+fi
+
 assert_query_session() {
   local query=$1 rows=$2 expected=$3 actual
   : > "$ST_TEST_LOG"
@@ -205,6 +212,9 @@ ST_TEST_HAS_SESSIONS=1 ST_TEST_AGENT_STATE=done \
 
 : > "$ST_TEST_LOG"
 ST_TEST_HAS_SESSIONS=1 ST_TEST_MAIN_CLOSED=1 "$ROOT/bin/st" down --subtrees -y
+session_scans=$(grep -c '^list-sessions ' "$ST_TEST_LOG")
+[ "$session_scans" -le 3 ] ||
+  fail "bulk close fetched the full tmux session list $session_scans times"
 grep -F "new-session -d -s $ST_TEST_MAIN_SESSION" "$ST_TEST_LOG" >/dev/null || fail 'main fallback was not opened'
 grep -F "kill-session -t \$$alpha_session" "$ST_TEST_LOG" >/dev/null || fail 'alpha was not closed'
 grep -F "kill-session -t \$$beta_session" "$ST_TEST_LOG" >/dev/null || fail 'beta was not closed'

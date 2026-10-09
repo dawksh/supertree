@@ -79,6 +79,20 @@ legacy_session_label() {
   printf '%s/%s' "$(basename "$main")" "$branch"
 }
 
+# Legacy labels contain only basename/branch, so two repositories with the
+# same basename can share one. The pane start path is repository-specific and
+# was set by every historical Supertree session, making it the extra proof
+# required before upgrading legacy metadata.
+legacy_session_matches_path() {
+  local target=$1 path=$2 pane_path expected actual
+  expected=$(cd "$path" 2>/dev/null && pwd -P) || return 1
+  while IFS= read -r pane_path; do
+    actual=$(cd "$pane_path" 2>/dev/null && pwd -P) || continue
+    [ "$actual" = "$expected" ] && return 0
+  done < <(tmux list-panes -t "$target" -F '#{pane_start_path}' 2>/dev/null)
+  return 1
+}
+
 claim_tree_session_target() {
   local sess=$1 repo=$2 branch=$3 path=$4 expected actual label expected_label target
   target=$(tmux_session_id "$sess") || return 1
@@ -92,6 +106,7 @@ claim_tree_session_target() {
     label=$(tmux show-options -qv -t "$target" @supertree_label 2>/dev/null || true)
     expected_label=$(legacy_session_label "$path" "$branch" 2>/dev/null || true)
     [ -n "$expected_label" ] && [ "$label" = "$expected_label" ] || return 1
+    legacy_session_matches_path "$target" "$path" || return 1
     tmux set-option -q -t "$target" @supertree_identity "$expected" 2>/dev/null || return 1
   fi
   printf '%s' "$target"
@@ -114,7 +129,7 @@ known_tree_for_session() {
     [ "$sess" = "$wanted" ] || continue
     printf '%s\t%s\t%s\n' "$repo" "$branch" "$path"
     return 0
-  done < <(list_trees)
+  done < <(tree_inventory)
   return 1
 }
 
@@ -302,12 +317,12 @@ attach() {
 }
 
 known_sessions() {
-  list_trees | cut -f4
+  tree_inventory | cut -f4
 }
 
 subtree_sessions() {
   local repo branch path sess main
-  list_trees | while IFS=$'\t' read -r repo branch path sess; do
+  tree_inventory | while IFS=$'\t' read -r repo branch path sess; do
     main=$(main_worktree "$path")
     [ "$path" != "$main" ] || continue
     printf '%s\n' "$sess"
@@ -332,7 +347,7 @@ live_subtree_sessions() {
 
 ensure_main_fallbacks() {
   local repo branch path subtree main main_branch main_sess target
-  list_trees | while IFS=$'\t' read -r repo branch path subtree; do
+  tree_inventory | while IFS=$'\t' read -r repo branch path subtree; do
     main=$(main_worktree "$path")
     [ "$path" != "$main" ] || continue
     tmux_has_session "$subtree" 2>/dev/null &&
@@ -360,6 +375,8 @@ cmd_down() {
       *) target=$1; shift;;
     esac
   done
+
+  refresh_tree_inventory
 
   if [ "$target" = --all ] || [ "$target" = --subtrees ]; then
     if [ "$target" = --all ]; then live=$(live_sessions)
@@ -465,7 +482,8 @@ cmd_last() {
   [ -n "${TMUX:-}" ] || die "st last only works inside tmux"
   [ -f "$ST_STATE/recent" ] || { info "no other tree opened yet"; return 0; }
   current=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S' 2>/dev/null || true)
-  trees=$(list_trees)
+  refresh_tree_inventory
+  trees=$(tree_inventory)
   # Record the current tree so the next M-Tab comes straight back.
   if printf '%s\n' "$trees" | cut -f4 | grep -qxF -- "$current"; then
     remember_recent "$current"
