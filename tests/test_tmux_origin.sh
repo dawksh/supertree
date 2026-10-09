@@ -50,10 +50,7 @@ case ${1:-} in
     [ "$option" != @supertree_label ] || printf 'demo/feature\n'
     ;;
   has-session) exit 0;;
-  list-panes)
-    case $* in
-      *'#{pane_start_path}'*) printf '%s/demo/feature\n' "$ST_WORKTREE_ROOT";;
-    esac;;
+  list-panes) exit 0;;
   list-clients)
     [ -n "${ST_TEST_CLIENTS:-}" ] && printf '%s\n' "$ST_TEST_CLIENTS"
     ;;

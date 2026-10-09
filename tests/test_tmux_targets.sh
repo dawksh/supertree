@@ -49,13 +49,7 @@ case ${1:-} in
       *)
         printf 'demo/percent%%x\ndemo/hash#x\ndemo/semi;x\ndemo/quote'"'"'x\n';;
     esac;;
-  list-panes)
-    case $* in
-      *'$42'*) printf '%s/demo/percent-x\n' "$ST_WORKTREE_ROOT";;
-      *'$43'*) printf '%s/demo/hash-x\n' "$ST_WORKTREE_ROOT";;
-      *'$44'*) printf '%s/demo/semi-x\n' "$ST_WORKTREE_ROOT";;
-      *'$45'*) printf '%s/demo/quote-x\n' "$ST_WORKTREE_ROOT";;
-    esac;;
+  list-panes) exit 0;;
   list-clients) exit 0;;
   show-options)
     target=''; option=''
@@ -116,7 +110,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 percent_session=$($ROOT/bin/st _sessions | grep -Fx 'demo/percent%x')
 [ -n "$percent_session" ] || fail 'percent session was not listed'
-tmux new-session -d -s "$percent_session" -c "$ST_WORKTREE_ROOT/demo/percent-x" -n shell
+tmux new-session -d -s "$percent_session" -n shell
 tmux set-option -q -t "$percent_session" @supertree_label 'demo/percent%x'
 tmux new-session -d -s "$percent_session-extra" -n shell
 "$ROOT/bin/st" down "$percent_session"
@@ -128,8 +122,7 @@ tmux has-session -t "=$percent_session-extra" 2>/dev/null ||
 
 for branch in 'hash#x' 'semi;x' "quote'x"; do
   session=$($ROOT/bin/st _sessions | grep -Fx "demo/$branch")
-  path="$ST_WORKTREE_ROOT/demo/${branch//[^A-Za-z0-9]/-}"
-  tmux new-session -d -s "$session" -c "$path" -n shell
+  tmux new-session -d -s "$session" -n shell
   tmux set-option -q -t "$session" @supertree_label "demo/$branch"
   "$ROOT/bin/st" down "$session"
   if tmux has-session -t "=$session" 2>/dev/null; then

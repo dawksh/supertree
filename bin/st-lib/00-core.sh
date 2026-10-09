@@ -13,52 +13,11 @@ st_executable() {
   esac
 }
 
-# A command can validate several sessions. Keep one exact name-to-ID snapshot
-# for its lifetime instead of asking the tmux server for the full list each
-# time. A cache miss is refreshed once so sessions created or renamed during
-# the command are still discoverable.
-ST_TMUX_SESSION_SNAPSHOT=''
-ST_TMUX_SESSION_SNAPSHOT_READY=0
-
-refresh_tmux_session_snapshot() {
-  ST_TMUX_SESSION_SNAPSHOT=$(tmux list-sessions \
-    -F '#{session_id}'$'\t''#{session_name}' 2>/dev/null || true)
-  ST_TMUX_SESSION_SNAPSHOT_READY=1
-}
-
-tmux_session_id_from_snapshot() {
-  local wanted=$1 record name
-  while IFS= read -r record; do
-    [ -n "$record" ] || continue
-    name=${record#*$'\t'}
-    [ "$name" = "$wanted" ] || continue
-    printf '%s' "${record%%$'\t'*}"
-    return 0
-  done <<EOF
-$ST_TMUX_SESSION_SNAPSHOT
-EOF
-  return 1
-}
-
-tmux_session_names_from_snapshot() {
-  local record
-  while IFS= read -r record; do
-    [ -n "$record" ] && printf '%s\n' "${record#*$'\t'}"
-  done <<EOF
-$ST_TMUX_SESSION_SNAPSHOT
-EOF
-  return 0
-}
-
 # Resolve a readable session name to tmux's opaque, unambiguous session ID.
 tmux_session_id() {
   local name=$1 id
-  [ "$ST_TMUX_SESSION_SNAPSHOT_READY" = 1 ] || refresh_tmux_session_snapshot
-  id=$(tmux_session_id_from_snapshot "$name" || true)
-  if [ -z "$id" ]; then
-    refresh_tmux_session_snapshot
-    id=$(tmux_session_id_from_snapshot "$name" || true)
-  fi
+  id=$(tmux list-sessions -F '#{session_id}'$'\t''#{session_name}' 2>/dev/null |
+    awk -F '\t' -v wanted="$name" '$2 == wanted { print $1; exit }') || return 1
   [ -n "$id" ] || return 1
   printf '%s' "$id"
 }
