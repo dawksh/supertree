@@ -10,10 +10,7 @@ export ST_STATE="$TEST_ROOT/state"
 export ST_WORKTREE_ROOT="$TEST_ROOT/trees"
 export ST_CONFIG="$TEST_ROOT/missing-config"
 export ST_WINDOWS=shell
-export ST_TMUX_OPTIONS="$TEST_ROOT/tmux-options"
-export ST_TMUX_SESSIONS="$TEST_ROOT/tmux-sessions"
 mkdir -p "$HOME/.local/bin" "$TEST_ROOT/a/demo" "$TEST_ROOT/b/demo"
-: > "$ST_TMUX_SESSIONS"
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
@@ -23,27 +20,7 @@ for repo in "$TEST_ROOT/a/demo" "$TEST_ROOT/b/demo"; do
     commit -q --allow-empty -m init
 done
 
-printf '%s\n' \
-  '#!/usr/bin/env bash' \
-  '[ "$1" = has-session ] && exit 1' \
-  'if [ "$1" = new-session ]; then' \
-  '  args=("$@"); for ((i=1; i<${#args[@]}; i++)); do' \
-  '    [ "${args[i]}" = -s ] && printf "%s\n" "${args[i+1]}" >> "$ST_TMUX_SESSIONS"' \
-  '  done' \
-  'elif [ "$1" = list-sessions ]; then' \
-  '  awk '\''!seen[$0]++ { print "$" NR "\t" $0 }'\'' "$ST_TMUX_SESSIONS"' \
-  'elif [ "$1" = set-option ]; then' \
-  '  args=("$@"); for ((i=1; i<${#args[@]}; i++)); do' \
-  '    [ "${args[i]}" = -t ] && sess=${args[i+1]#=}' \
-  '    [[ ${args[i]} = @* ]] && { opt=${args[i]}; value=${args[i+1]}; }' \
-  '  done; printf "%s|%s|%s\n" "$sess" "$opt" "$value" >> "$ST_TMUX_OPTIONS"' \
-  'elif [ "$1" = show-options ]; then' \
-  '  args=("$@"); for ((i=1; i<${#args[@]}; i++)); do' \
-  '    [ "${args[i]}" = -t ] && sess=${args[i+1]#=}' \
-  '    [[ ${args[i]} = @* ]] && opt=${args[i]}' \
-  '  done; awk -F "[|]" -v s="$sess" -v o="$opt" '\''$1 == s && $2 == o { value=$3 } END { if (value != "") print value }'\'' "$ST_TMUX_OPTIONS" 2>/dev/null' \
-  'fi' \
-  'exit 0' \
+printf '%s\n' '#!/bin/sh' '[ "$1" = has-session ] && exit 1' 'exit 0' \
   > "$HOME/.local/bin/tmux"
 chmod +x "$HOME/.local/bin/tmux"
 

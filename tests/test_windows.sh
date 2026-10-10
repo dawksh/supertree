@@ -9,12 +9,9 @@ export HOME="$TEST_ROOT/home"
 export ST_STATE="$TEST_ROOT/state"
 export ST_CONFIG="$TEST_ROOT/config"
 export ST_TMUX_LOG="$TEST_ROOT/tmux.log"
-export ST_TMUX_OPTIONS="$TEST_ROOT/tmux-options"
-export ST_TMUX_SESSIONS="$TEST_ROOT/tmux-sessions"
 export ST_TEST_SESSION='supertree/main'
 export ST_TEST_PATH="$ROOT"
 mkdir -p "$HOME/.local/bin" "$ST_STATE"
-: > "$ST_TMUX_SESSIONS"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -36,22 +33,6 @@ printf '%s\n' \
   'printf "%s\n" "$*" >> "$ST_TMUX_LOG"' \
   'case ${1:-} in' \
   '  has-session) exit 1;;' \
-  '  new-session)' \
-  '    args=("$@"); for ((i=1; i<${#args[@]}; i++)); do' \
-  '      [ "${args[i]}" = -s ] && printf "%s\n" "${args[i+1]}" >> "$ST_TMUX_SESSIONS"' \
-  '    done;;' \
-  '  list-sessions)' \
-  '    awk '\''!seen[$0]++ { print "$" NR "\t" $0 }'\'' "$ST_TMUX_SESSIONS";;' \
-  '  set-option)' \
-  '    args=("$@"); for ((i=1; i<${#args[@]}; i++)); do' \
-  '      [ "${args[i]}" = -t ] && sess=${args[i+1]#=}' \
-  '      [[ ${args[i]} = @* ]] && { opt=${args[i]}; value=${args[i+1]}; }' \
-  '    done; printf "%s|%s|%s\n" "$sess" "$opt" "$value" >> "$ST_TMUX_OPTIONS";;' \
-  '  show-options)' \
-  '    args=("$@"); for ((i=1; i<${#args[@]}; i++)); do' \
-  '      [ "${args[i]}" = -t ] && sess=${args[i+1]#=}' \
-  '      [[ ${args[i]} = @* ]] && opt=${args[i]}' \
-  '    done; awk -F "[|]" -v s="$sess" -v o="$opt" '\''$1 == s && $2 == o { value=$3 } END { if (value != "") print value }'\'' "$ST_TMUX_OPTIONS" 2>/dev/null;;' \
   '  display-message)' \
   '    last=${!#}' \
   '    case $last in' \
@@ -93,7 +74,7 @@ run_layout
 assert_log_contains '-n codex'
 assert_log_contains '-n vim'
 assert_log_contains '-n shell'
-assert_log_contains 'select-window -t $1:codex'
+assert_log_contains "select-window -t =$main_session:codex"
 
 # External-editor users can omit vim entirely.
 run_layout 'agent shell'
@@ -107,7 +88,7 @@ assert_log_excludes '-n vim'
 run_layout 'shell agent'
 first_create=$(grep -E '^(new-session|new-window) ' "$ST_TMUX_LOG" | head -1)
 case $first_create in *'-n shell'*) ;; *) fail 'shell was not the first created window';; esac
-assert_log_contains 'select-window -t $1:shell'
+assert_log_contains "select-window -t =$main_session:shell"
 
 # Numbered selection and toggle use configured positions.
 printf 'ST_HARNESS=codex\nST_WINDOWS=%q\n' 'agent shell' > "$ST_CONFIG"
