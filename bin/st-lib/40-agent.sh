@@ -29,11 +29,10 @@ harness_label() {
 }
 
 agent_pane() {
-  local sess=$1 name target
-  target=$(tmux_session_target "$sess") || return 1
-  name=$(tmux show-options -qv -t "$target" @st_agent_window 2>/dev/null) || name=""
+  local sess=$1 name
+  name=$(tmux show-options -qv -t "$sess" @st_agent_window 2>/dev/null) || name=""
   [ -n "$name" ] || name=$(harness_window)
-  tmux list-panes -t "$target:$name" -F '#{pane_id}' 2>/dev/null | head -1
+  tmux list-panes -t "=$sess:$name" -F '#{pane_id}' 2>/dev/null | head -1
 }
 
 agent_needs_input() {
@@ -45,7 +44,7 @@ agent_needs_input() {
 
 agent_status() {
   local sess=$1 pane state command
-  if ! tmux_has_session "$sess" 2>/dev/null; then
+  if ! tmux has-session -t "=$sess" 2>/dev/null; then
     printf 'closed'; return
   fi
   pane=$(agent_pane "$sess")
