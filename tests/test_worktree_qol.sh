@@ -66,9 +66,9 @@ case ${1:-} in
     awk -F '[|]' \
       -v ids="$ids" \
       -v metadata="$metadata" '
-      NR == FNR && $2 == "@supertree_identity" { id[$1]=$3; next }
-      NR == FNR && $2 == "@supertree_label" { label[$1]=$3; next }
-      NR == FNR { next }
+      FILENAME == ARGV[1] && $2 == "@supertree_identity" { id[$1]=$3; next }
+      FILENAME == ARGV[1] && $2 == "@supertree_label" { label[$1]=$3; next }
+      FILENAME == ARGV[1] { next }
       !seen[$0]++ {
         if (ids && metadata) print "$" $0 "\t" $0 "\t" id[$0] "\t" label[$0]
         else print ids ? "$" $0 "\t" $0 : (metadata ? $0 "\t" id[$0] "\t" label[$0] : $0)
