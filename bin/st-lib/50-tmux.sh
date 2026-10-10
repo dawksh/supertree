@@ -41,7 +41,7 @@ EOF
 st_self() { command -v st 2>/dev/null || printf '%s' "$HOME/.local/bin/st"; }
 
 create_window() {
-  local sess=$1 dir=$2 type=$3 initial=$4 self name target
+  local sess=$1 dir=$2 type=$3 initial=$4 target=${5:-} self name
   self=$(st_self)
   name=$(window_name "$type")
   if [ "$initial" = 1 ]; then
@@ -51,7 +51,8 @@ create_window() {
       shell) tmux new-session -d -s "$sess" -c "$dir" -n "$name";;
     esac
   else
-    target=$(tmux_session_target "$sess") || die "tmux session disappeared: $sess"
+    [ -n "$target" ] || target=$(tmux_session_target "$sess") ||
+      die "tmux session disappeared: $sess"
     case $type in
       agent) tmux new-window -d -t "$target" -c "$dir" -n "$name" "$self _run _agent";;
       vim) tmux new-window -d -t "$target" -c "$dir" -n "$name" "$self _run nvim";;
@@ -104,8 +105,10 @@ claim_tree_session() {
 mark_tree_session() {
   local sess=$1 repo=$2 branch=$3 path=$4 target
   target=$(tmux_session_id "$sess") || return 1
-  tmux set-option -q -t "$target" @supertree_label "$(legacy_session_label "$path" "$branch")"
-  tmux set-option -q -t "$target" @supertree_identity "$(tree_session_identity "$path" "$branch")"
+  tmux set-option -q -t "$target" @supertree_label \
+    "$(legacy_session_label "$path" "$branch")" || return 1
+  tmux set-option -q -t "$target" @supertree_identity \
+    "$(tree_session_identity "$path" "$branch")" || return 1
 }
 
 known_tree_for_session() {
@@ -158,7 +161,7 @@ kill_identified_session() {
 }
 
 build_session() {
-  local sess=$1 dir=$2 windows type first_name='' initial=1 branch main repo target
+  local sess=$1 dir=$2 windows type first_name='' initial=1 branch main repo target=''
   branch=$(git -C "$dir" branch --show-current 2>/dev/null || true)
   branch=${branch:-(detached)}
   main=$(main_worktree "$dir")
@@ -172,18 +175,32 @@ build_session() {
   while read -r type; do
     [ -n "$type" ] || continue
     [ -n "$first_name" ] || first_name=$(window_name "$type")
-    create_window "$sess" "$dir" "$type" "$initial"
-    target=$(tmux_session_target "$sess") || die "tmux session disappeared: $sess"
+    if ! create_window "$sess" "$dir" "$type" "$initial" "$target"; then
+      [ -z "$target" ] || tmux kill-session -t "$target" 2>/dev/null || true
+      die "could not create tmux window for $sess"
+    fi
+    if [ "$initial" = 1 ]; then
+      target=$(tmux_session_id "$sess") ||
+        die "tmux session disappeared after creation: $sess"
+    fi
     if [ "$type" = agent ]; then
-      tmux set-option -t "$target" @st_agent_window "$(window_name agent)"
+      if ! tmux set-option -t "$target" @st_agent_window "$(window_name agent)"; then
+        tmux kill-session -t "$target" 2>/dev/null || true
+        die "could not configure tmux session: $sess"
+      fi
     fi
     initial=0
   done <<EOF
 $windows
 EOF
-  mark_tree_session "$sess" "$repo" "$branch" "$dir"
-  target=$(tmux_session_target "$sess") || die "tmux session disappeared: $sess"
-  tmux select-window -t "$target:$first_name"
+  if ! mark_tree_session "$sess" "$repo" "$branch" "$dir"; then
+    tmux kill-session -t "$target" 2>/dev/null || true
+    die "could not mark tmux session ownership: $sess"
+  fi
+  if ! tmux select-window -t "$target:$first_name"; then
+    tmux kill-session -t "$target" 2>/dev/null || true
+    die "could not select the initial tmux window: $sess"
+  fi
 }
 
 remember_recent() {

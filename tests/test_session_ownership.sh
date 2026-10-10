@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TEST_ROOT=$(mktemp -d)
+TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P)
 REAL_TMUX=$(command -v tmux || true)
 [ -n "$REAL_TMUX" ] || { printf 'skip: tmux is not installed\n'; exit 0; }
 SOCKET="st-ownership-$$"
@@ -22,13 +23,17 @@ export ST_TMUX_LOG="$TEST_ROOT/tmux.log"
 export ST_TEST_PICKER_INPUT="$TEST_ROOT/picker.txt"
 mkdir -p "$HOME/.local/bin" "$ST_STATE" "$ST_WORKTREE_ROOT"
 export PATH="$HOME/.local/bin:$PATH"
-printf 'ST_WINDOWS=shell\n' > "$ST_CONFIG"
+printf 'ST_HARNESS=testagent\nST_HARNESS_COMMAND=true\nST_WINDOWS="shell agent"\n' > "$ST_CONFIG"
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
 # Keep tmux state real while making attach/switch non-interactive.
 cat > "$HOME/.local/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
+if [ "${ST_TEST_FAIL_AGENT_OPTION:-0}" = 1 ] &&
+   [ "${1:-}" = set-option ] && [[ $* = *'@st_agent_window'* ]]; then
+  exit 1
+fi
 case ${1:-} in
   attach-session|switch-client)
     printf '%s\n' "$*" >> "$ST_TMUX_LOG"
@@ -132,7 +137,32 @@ if tmux has-session -t "=$session" 2>/dev/null; then fail 'owned legacy session 
 "$ROOT/bin/st" go "$branch"
 fresh_identity=$(tmux show-options -qv -t "$session" @supertree_identity)
 case $fresh_identity in v1:????????????????????????????????) ;; *) fail 'fresh session has no ownership identity';; esac
+[ "$(tmux list-windows -t "=$session" -F '#{window_name}' | wc -l | tr -d ' ')" = 2 ] ||
+  fail 'fresh session did not create both configured windows'
+[ "$(tmux show-options -qv -t "$session" @st_agent_window)" = testagent ] ||
+  fail 'fresh session did not record its agent window'
 "$ROOT/bin/st" down "$branch" >/dev/null
 if tmux has-session -t "=$session" 2>/dev/null; then fail 'fresh owned session was not closed'; fi
+
+# `st new` exercises the same real-tmux path and a failed setup removes only
+# the new incomplete session instead of blocking every subsequent retry.
+"$ROOT/bin/st" new created --repo "$repo"
+created_session=$("$ROOT/bin/st" _sessions | grep '/created$' | head -1)
+[ -n "$created_session" ] || fail 'new tree was not discoverable'
+tmux has-session -t "=$created_session" 2>/dev/null ||
+  fail "new did not create session $created_session (live: $(tmux list-sessions -F '#{session_name}' | tr '\n' ' '))"
+[ "$(tmux list-windows -t "=$created_session" -F '#{window_name}' | wc -l | tr -d ' ')" = 2 ] ||
+  fail 'new did not create both configured windows'
+"$ROOT/bin/st" down created >/dev/null
+
+if ST_TEST_FAIL_AGENT_OPTION=1 "$ROOT/bin/st" new incomplete --repo "$repo" \
+    >"$TEST_ROOT/incomplete.out" 2>&1; then
+  fail 'new succeeded after tmux rejected agent session configuration'
+fi
+incomplete_session=$("$ROOT/bin/st" _sessions | grep '/incomplete$' | head -1)
+[ -n "$incomplete_session" ] || fail 'incomplete tree was not discoverable'
+if tmux has-session -t "=$incomplete_session" 2>/dev/null; then
+  fail 'new left an incomplete tmux session after setup failed'
+fi
 
 printf 'ok: foreign session isolation, legacy migration, and durable ownership\n'

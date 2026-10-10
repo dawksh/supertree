@@ -93,7 +93,7 @@ run_layout
 assert_log_contains '-n codex'
 assert_log_contains '-n vim'
 assert_log_contains '-n shell'
-assert_log_contains "select-window -t =$main_session:codex"
+assert_log_contains 'select-window -t $1:codex'
 
 # External-editor users can omit vim entirely.
 run_layout 'agent shell'
@@ -107,7 +107,7 @@ assert_log_excludes '-n vim'
 run_layout 'shell agent'
 first_create=$(grep -E '^(new-session|new-window) ' "$ST_TMUX_LOG" | head -1)
 case $first_create in *'-n shell'*) ;; *) fail 'shell was not the first created window';; esac
-assert_log_contains "select-window -t =$main_session:shell"
+assert_log_contains 'select-window -t $1:shell'
 
 # Numbered selection and toggle use configured positions.
 printf 'ST_HARNESS=codex\nST_WINDOWS=%q\n' 'agent shell' > "$ST_CONFIG"
