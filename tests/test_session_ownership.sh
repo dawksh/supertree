@@ -23,7 +23,8 @@ export ST_TMUX_LOG="$TEST_ROOT/tmux.log"
 export ST_TEST_PICKER_INPUT="$TEST_ROOT/picker.txt"
 mkdir -p "$HOME/.local/bin" "$ST_STATE" "$ST_WORKTREE_ROOT"
 export PATH="$HOME/.local/bin:$PATH"
-printf 'ST_HARNESS=testagent\nST_HARNESS_COMMAND=true\nST_WINDOWS="shell agent"\n' > "$ST_CONFIG"
+ln -s "$ROOT/bin/st" "$HOME/.local/bin/st"
+printf 'ST_HARNESS=testagent\nST_HARNESS_COMMAND="sleep 30"\nST_WINDOWS="shell agent"\n' > "$ST_CONFIG"
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
@@ -147,7 +148,7 @@ if tmux has-session -t "=$session" 2>/dev/null; then fail 'fresh owned session w
 # `st new` exercises the same real-tmux path and a failed setup removes only
 # the new incomplete session instead of blocking every subsequent retry.
 "$ROOT/bin/st" new created --repo "$repo"
-created_session=$("$ROOT/bin/st" _sessions | grep '/created$' | head -1)
+created_session=$("$ROOT/bin/st" _sessions | grep '/created$')
 [ -n "$created_session" ] || fail 'new tree was not discoverable'
 tmux has-session -t "=$created_session" 2>/dev/null ||
   fail "new did not create session $created_session (live: $(tmux list-sessions -F '#{session_name}' | tr '\n' ' '))"
@@ -159,7 +160,7 @@ if ST_TEST_FAIL_AGENT_OPTION=1 "$ROOT/bin/st" new incomplete --repo "$repo" \
     >"$TEST_ROOT/incomplete.out" 2>&1; then
   fail 'new succeeded after tmux rejected agent session configuration'
 fi
-incomplete_session=$("$ROOT/bin/st" _sessions | grep '/incomplete$' | head -1)
+incomplete_session=$("$ROOT/bin/st" _sessions | grep '/incomplete$')
 [ -n "$incomplete_session" ] || fail 'incomplete tree was not discoverable'
 if tmux has-session -t "=$incomplete_session" 2>/dev/null; then
   fail 'new left an incomplete tmux session after setup failed'
