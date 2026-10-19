@@ -156,7 +156,8 @@ windows_valid() {
   local type seen=' '
   [ -n "$1" ] || return 1
   for type in $1; do
-    case $type in agent|vim|shell) ;; *) return 1;; esac
+    # Custom tab names need ST_TAB_<name>; st checks that when it reads the config.
+    case $type in *[!A-Za-z0-9_]*) return 1;; esac
     case $seen in *" $type "*) return 1;; esac
     seen="$seen$type "
   done

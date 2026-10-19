@@ -190,7 +190,8 @@ st down --all -y                 skip the confirmation
 | `M-e` | toggle between the first two configured windows |
 | `M-Tab` | switch to the tree you were in before; press again to come back |
 | `M-r` | pick any repo you have used `st new` in, enter a branch, and create a tree there — no `cd` needed |
-| `M-1` / `M-2` / `M-3` | select a configured window by position |
+| `M-1` … `M-9` | select a configured window (tab) by position |
+| `M-n` / `M-p` | next / previous tab |
 | `M-q` | go back to the session you ran `st` from (leaves tmux if you started outside it) |
 | `M-Q` (Option-Shift-Q) | leave tmux; keep the current tree session running |
 
@@ -251,7 +252,21 @@ The supported logical names are `agent`, `vim`, and `shell`. `agent` resolves to
 the configured harness name, such as `codex`, so changing `ST_HARNESS` does not
 require changing the window list. At least one unique window is required.
 
-Order controls startup focus, `M-1` through `M-3`, and the pair switched by
+Any other name is a custom tab. Give it a command with `ST_TAB_<name>`; names
+use letters, digits and `_`. The command runs through `sh -c` in the worktree,
+and the tab drops to a shell when it exits:
+
+```sh
+ST_WINDOWS='agent vim shell dev git'
+ST_TAB_dev='npm run dev'
+ST_TAB_git='lazygit'
+```
+
+Tree sessions show their windows as tabs at the top (` 1. claude ● ` ` 2. vim ` ` 3. shell `);
+`●` marks a running agent. The tab bar is set per tree session, so other tmux
+sessions keep your own status line.
+
+Order controls startup focus, `M-1` through `M-9`, and the pair switched by
 `M-e`. Changing the setting affects new sessions; run `st down <tree>` and
 `st resume <tree>` to rebuild an existing session. Re-run the installer once
 after upgrading from v0.3.0 so the positional tmux bindings are installed.

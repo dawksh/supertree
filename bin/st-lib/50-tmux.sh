@@ -1,11 +1,19 @@
 # shellcheck shell=bash
 # supertree tmux module
 
+tab_command() {
+  local var="ST_TAB_$1"
+  printf '%s' "${!var:-}"
+}
+
 window_name() {
   case $1 in
     agent) harness_window;;
     vim|shell) printf '%s' "$1";;
-    *) die "unknown window type '$1' (choose from: agent vim shell)";;
+    *[!A-Za-z0-9_]*) die "invalid window type '$1' (letters, digits and _ only)";;
+    *) [ -n "$(tab_command "$1")" ] ||
+         die "unknown window type '$1' (choose from: agent vim shell, or set ST_TAB_$1)"
+       printf '%s' "$1";;
   esac
 }
 
@@ -13,10 +21,6 @@ configured_windows() {
   local type name seen_types=' ' seen_names=' '
   [ -n "$ST_WINDOWS" ] || die "ST_WINDOWS must contain at least one of: agent vim shell"
   for type in $ST_WINDOWS; do
-    case $type in
-      agent|vim|shell) ;;
-      *) die "unknown window type '$type' in ST_WINDOWS (choose from: agent vim shell)";;
-    esac
     case $seen_types in
       *" $type "*) die "duplicate window type '$type' in ST_WINDOWS";;
     esac
@@ -42,21 +46,42 @@ st_self() { command -v st 2>/dev/null || printf '%s' "$HOME/.local/bin/st"; }
 
 create_window() {
   local sess=$1 dir=$2 type=$3 initial=$4 self name
+  local cmd=()
   self=$(st_self)
   name=$(window_name "$type")
+  case $type in
+    agent) cmd=("$self _run _agent");;
+    vim) cmd=("$self _run nvim");;
+    shell) ;;
+    # Argument form skips tmux's own `sh -c`, so the configured command is parsed once.
+    *) cmd=("$self" _run /bin/sh -c "$(tab_command "$type")");;
+  esac
   if [ "$initial" = 1 ]; then
-    case $type in
-      agent) tmux new-session -d -s "$sess" -c "$dir" -n "$name" "$self _run _agent";;
-      vim) tmux new-session -d -s "$sess" -c "$dir" -n "$name" "$self _run nvim";;
-      shell) tmux new-session -d -s "$sess" -c "$dir" -n "$name";;
-    esac
+    tmux new-session -d -s "$sess" -c "$dir" -n "$name" ${cmd[@]+"${cmd[@]}"}
   else
-    case $type in
-      agent) tmux new-window -d -t "=$sess" -c "$dir" -n "$name" "$self _run _agent";;
-      vim) tmux new-window -d -t "=$sess" -c "$dir" -n "$name" "$self _run nvim";;
-      shell) tmux new-window -d -t "=$sess" -c "$dir" -n "$name";;
-    esac
+    tmux new-window -d -t "=$sess" -c "$dir" -n "$name" ${cmd[@]+"${cmd[@]}"}
   fi
+  style_tab "=$sess:$name" "$(configured_windows | grep -nxF -- "$type" | cut -d: -f1)"
+}
+
+# Tab look is set per session and window so other tmux sessions keep the user's status bar.
+style_session() {
+  tmux set-option -t "$1" status-position top
+  tmux set-option -t "$1" status-justify left
+  tmux set-option -t "$1" status-style 'bg=default'
+  # A second, empty status line spaces the tabs off the panes.
+  tmux set-option -t "$1" status 2
+  tmux set-option -t "$1" 'status-format[1]' ''
+}
+
+style_tab() {
+  local target=$1 slot=$2 label
+  label='#{?@st_slot,#{@st_slot}. ,}#W#{?#{==:#{@st_agent_state},running}, ●,}'
+  tmux set-option -w -t "$target" @st_slot "$slot"
+  tmux set-option -w -t "$target" window-status-separator ' '
+  tmux set-option -w -t "$target" window-status-format "#[fg=colour245,bg=colour236] $label #[default]"
+  tmux set-option -w -t "$target" window-status-current-format "#[fg=colour235,bg=colour252,bold] $label #[default]"
+  tmux set-option -w -t "$target" window-status-current-style default
 }
 
 build_session() {
@@ -79,6 +104,7 @@ build_session() {
   done <<EOF
 $windows
 EOF
+  style_session "$sess"
   tmux set-option -t "$sess" @supertree_label "$label"
   tmux select-window -t "=$sess:$first_name"
 }
