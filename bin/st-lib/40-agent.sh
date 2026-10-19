@@ -80,7 +80,7 @@ cmd_harness() {
   local repo slug marker legacy old_marker bin main branch current_tree
   main=$(main_worktree .)
   repo=$(repo_key "$main")
-  branch=$(git branch --show-current 2>/dev/null || true)
+  branch=$(tree_branch .)
   slug=$(branch_key "${branch:-(detached)}")
   harness_window >/dev/null
   bin=$(harness_bin)

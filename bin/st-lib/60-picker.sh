@@ -62,7 +62,7 @@ cmd_go() {
     esac
   done
 
-  local rows sel dir sess key branch main choices
+  local rows sel dir sess key branch main choices start
   if [ "${ST_PICKER_ROWS+x}" = x ]; then rows=$ST_PICKER_ROWS
   else rows=$(picker_rows | sort_recent); fi
 
@@ -82,12 +82,15 @@ cmd_go() {
     [ -n "$sel" ] || die "no tree matching: $query"
   else
     choices=$rows
+    start=1
     if declare -F cmd_new >/dev/null; then
-      choices=$(printf '%s\n+ new branch…\t\t\n' "$rows")
+      choices=$(printf '+ new branch…\t\t\n%s\n' "$rows")
+      start=2
     fi
+    # Cursor starts on the most recent tree so Enter still reopens it.
     sel=$(printf '%s\n' "$choices" |
       fzf --delimiter=$'\t' --with-nth=1 --height=100% --reverse \
-          --no-sort --sync \
+          --no-sort --sync --bind="load:pos($start)" \
           --border --border-label=' Trees ' \
           --prompt='Find tree › ' --preview-window=hidden \
           --expect=ctrl-d --bind='esc:abort') || return 0
@@ -97,7 +100,7 @@ cmd_go() {
       declare -F cmd_rm >/dev/null || { info "remove module is unavailable"; return 0; }
       case $sel in '+ new branch'*) return 0;; esac
       dir=$(printf '%s' "$sel" | cut -f2)
-      branch=$(git -C "$dir" branch --show-current)
+      branch=$(tree_branch "$dir")
       [ -n "$branch" ] || die "cannot delete a detached worktree from the picker"
       main=$(main_worktree "$dir")
       [ "$dir" != "$main" ] || die "cannot delete the main worktree"
