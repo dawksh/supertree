@@ -104,6 +104,17 @@ sidebar_poke() {
   done
 }
 
+# Mirrors each agent's state onto its tab, so the tab shows it whichever pane is focused.
+sidebar_tab_states() {
+  local default_name sess status win
+  default_name=$(harness_window)
+  printf '%s\n' "$1" | while IFS=$'\t' read -r _ _ status _ sess; do
+    [ -n "$sess" ] && [ "$status" != closed ] || continue
+    win=$(tmux show-options -qv -t "=$sess" @st_agent_window 2>/dev/null) || win=''
+    tmux set-option -wq -t "=$sess:${win:-$default_name}" @st_tab_state "$status" 2>/dev/null || true
+  done
+}
+
 sidebar_poll_start() {
   local pid
   pid=$(cat "$ST_SIDEBAR_DIR/poll.lock/pid" 2>/dev/null) || pid=''
@@ -140,6 +151,7 @@ cmd_sidebar_poll() {
       printf '%s\n' "$rows" > "$tmp"
       mv "$tmp" "$ST_SIDEBAR_DIR/rows"
       sidebar_poke
+      sidebar_tab_states "$rows"
       old=$rows
     fi
     socks=("$ST_SIDEBAR_DIR"/*.sock)
@@ -174,6 +186,7 @@ cmd_sidebar() {
           --bind='j:down,k:up,g:first,G:last' \
           --bind="enter:execute-silent('$self' _sidebar-open {2} {3})" \
           --bind="l:execute-silent('$self' _sidebar-open {2} {3})" \
+          --bind="double-click:execute-silent('$self' _sidebar-open {2} {3})" \
           --bind='esc:execute-silent(tmux select-pane -R),h:execute-silent(tmux select-pane -R),q:execute-silent(tmux select-pane -R)' \
           --bind="ctrl-r:reload('$self' _sidebar-rows)" || sleep 1
   done

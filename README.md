@@ -297,6 +297,9 @@ fe
 
 Branches show only their last `/` segment so names fit the narrow column.
 
+Double-click a tree to switch to it (a single click moves the highlight). The
+agent's tab mirrors its state: `●` running, `◐` waiting for your input.
+
 `M-j` / `M-k` step through open trees without touching the sidebar. Every switch
 lands in the tab's program pane, never in the sidebar. In the sidebar, Enter
 switches to the highlighted tree (`j`/`k` move, `g`/`G` jump to the ends, `l` opens, `h` or `q` go back), `+ new` opens the `M-w` picker,

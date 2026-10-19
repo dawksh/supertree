@@ -76,7 +76,9 @@ style_session() {
 
 style_tab() {
   local target=$1 slot=$2 label
-  label='#{?@st_slot,#{@st_slot}. ,}#W#{?#{==:#{@st_agent_state},running}, ●,}'
+  # @st_tab_state comes from the sidebar refresher (running/input); without it, fall back to the pane state.
+  label='#{?@st_slot,#{@st_slot}. ,}#W'
+  label="$label"'#{?@st_tab_state,#{?#{==:#{@st_tab_state},input}, ◐,#{?#{==:#{@st_tab_state},running}, ●,}},#{?#{==:#{@st_agent_state},running}, ●,}}'
   tmux set-option -w -t "$target" @st_slot "$slot"
   tmux set-option -w -t "$target" window-status-separator ' '
   tmux set-option -w -t "$target" window-status-format "#[fg=colour245,bg=colour236] $label #[default]"
