@@ -153,7 +153,7 @@ select_harness() {
 }
 
 windows_valid() {
-  local type seen=' '
+  local type seen=' ' LC_ALL=C
   [ -n "$1" ] || return 1
   for type in $1; do
     # Custom tab names need ST_TAB_<name>; st checks that when it reads the config.

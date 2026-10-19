@@ -117,6 +117,7 @@ sidebar_tab_states() {
 
 sidebar_poll_start() {
   local pid
+  sidebar_enabled || return 0
   pid=$(cat "$ST_SIDEBAR_DIR/poll.lock/pid" 2>/dev/null) || pid=''
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && return 0
   # run-shell -b detaches the refresher from this pane, so closing the pane leaves it running.
@@ -188,7 +189,8 @@ cmd_sidebar() {
           --bind="l:execute-silent('$self' _sidebar-open {2} {3})" \
           --bind="double-click:execute-silent('$self' _sidebar-open {2} {3})" \
           --bind='esc:execute-silent(tmux select-pane -R),h:execute-silent(tmux select-pane -R),q:execute-silent(tmux select-pane -R)' \
-          --bind="ctrl-r:reload('$self' _sidebar-rows)" || sleep 1
+          --bind="ctrl-r:reload('$self' _sidebar-rows)" \
+          --bind="resize:execute-silent('$self' _sidebar-heal)" || sleep 1
   done
 }
 
@@ -238,6 +240,13 @@ cmd_tree_step() {
 cmd_tree_next() { cmd_tree_step 1; }
 cmd_tree_prev() { cmd_tree_step -1; }
 
+# Runs from the sidebar's own fzf on resize, so width and the refresher recover even if the refresher died.
+cmd_sidebar_heal() {
+  sidebar_poll_start
+  [ "$(tmux display-message -p -t "$TMUX_PANE" '#{pane_width}')" = "$ST_SIDEBAR_WIDTH" ] ||
+    tmux resize-pane -t "$TMUX_PANE" -x "$ST_SIDEBAR_WIDTH"
+}
+
 cmd_sidebar_focus() {
   local pane
   pane=$(window_sidebar '')
@@ -250,6 +259,7 @@ cmd_sidebar_toggle() {
   [ "$ST_SIDEBAR" != 0 ] || { info "sidebar is disabled (ST_SIDEBAR=0)"; return 0; }
   if [ "$(tmux show-options -gqv @st_sidebar_off)" = 1 ]; then
     tmux set-option -gu @st_sidebar_off
+    sidebar_poll_start
     tmux list-windows -a -F '#{window_id}'$'\t''#{@st_tree_dir}' | while IFS=$'\t' read -r win dir; do
       [ -n "$dir" ] && add_sidebar "$win" "$dir"
     done
@@ -267,6 +277,7 @@ st_register_command '_sidebar-poll' cmd_sidebar_poll ''
 st_register_command '_sidebar-open' cmd_sidebar_open ''
 st_register_command '_sidebar-attach' cmd_sidebar_attach ''
 st_register_command '_sidebar-focus' cmd_sidebar_focus ''
+st_register_command '_sidebar-heal' cmd_sidebar_heal ''
 st_register_command '_tree-next' cmd_tree_next ''
 st_register_command '_tree-prev' cmd_tree_prev ''
 st_register_command '_sidebar-toggle' cmd_sidebar_toggle ''

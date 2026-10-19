@@ -7,6 +7,8 @@ tab_command() {
 }
 
 window_name() {
+  # In UTF-8 locales A-Z can match accented letters, which are not valid in ST_TAB_<name>.
+  local LC_ALL=C
   case $1 in
     agent) harness_window;;
     vim|shell) printf '%s' "$1";;
@@ -107,6 +109,7 @@ cmd_split() {
     *) tab=$(tab_command "$win" 2>/dev/null || true)
        [ -z "$tab" ] || cmd=("$self" _run /bin/sh -c "$tab");;
   esac
+  if declare -F sidebar_poll_start >/dev/null; then sidebar_poll_start; fi
   # Pin the sidebar first so the split halves the program pane evenly.
   if declare -F sidebar_fit >/dev/null; then sidebar_fit "$(tmux display-message -p -t "$pane" '#S')"; fi
   tmux split-window -h -t "$pane" -c "$dir" ${cmd[@]+"${cmd[@]}"}
@@ -193,6 +196,8 @@ attach() {
   local sess=$1
   remember_recent "$sess"
   if declare -F focus_content >/dev/null; then focus_content "$sess"; fi
+  # The refresher only starts with a sidebar pane; restart it here in case it died.
+  if declare -F sidebar_poll_start >/dev/null; then sidebar_poll_start; fi
   if [ -n "${TMUX:-}" ]; then
     remember_origin "$sess"
     tmux switch-client -t "=$sess"
