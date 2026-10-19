@@ -84,6 +84,32 @@ style_tab() {
   tmux set-option -w -t "$target" window-status-current-style default
 }
 
+cmd_split() {
+  local pane win dir self tab
+  local cmd=()
+  self=$(st_self)
+  pane=${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}
+  # From a key binding the focused pane may be the sidebar; split the rightmost program pane instead.
+  pane=$(tmux list-panes -t "$pane" -f '#{!=:#{@st_sidebar},1}' -F '#{pane_id}' | tail -1)
+  win=$(tmux display-message -p -t "$pane" '#W')
+  dir=$(tmux display-message -p -t "$pane" '#{pane_current_path}')
+  case $win in
+    "$(harness_window)")
+      # A fresh session, not the resume command: two panes continuing one conversation would collide.
+      case $ST_HARNESS in
+        claude|codex|openrouter) cmd=("$self" _run "$(harness_bin)");;
+        *) cmd=("$self" _run /bin/sh -c "$ST_HARNESS_COMMAND");;
+      esac;;
+    vim) cmd=("$self" _run nvim);;
+    shell) ;;
+    *) tab=$(tab_command "$win" 2>/dev/null || true)
+       [ -z "$tab" ] || cmd=("$self" _run /bin/sh -c "$tab");;
+  esac
+  # Pin the sidebar first so the split halves the program pane evenly.
+  if declare -F sidebar_fit >/dev/null; then sidebar_fit "$(tmux display-message -p -t "$pane" '#S')"; fi
+  tmux split-window -h -t "$pane" -c "$dir" ${cmd[@]+"${cmd[@]}"}
+}
+
 build_session() {
   local sess=$1 dir=$2 windows type first_name='' initial=1 branch label
   branch=$(tree_branch "$dir")
@@ -105,6 +131,7 @@ build_session() {
 $windows
 EOF
   style_session "$sess"
+  if declare -F sidebar_session >/dev/null; then sidebar_session "$sess" "$dir"; fi
   tmux set-option -t "$sess" @supertree_label "$label"
   tmux select-window -t "=$sess:$first_name"
 }
@@ -163,9 +190,11 @@ EOF
 attach() {
   local sess=$1
   remember_recent "$sess"
+  if declare -F focus_content >/dev/null; then focus_content "$sess"; fi
   if [ -n "${TMUX:-}" ]; then
     remember_origin "$sess"
     tmux switch-client -t "=$sess"
+    if declare -F sidebar_fit >/dev/null; then sidebar_fit "$sess"; fi
   else
     tmux attach-session -t "=$sess"
   fi
@@ -365,5 +394,6 @@ st_register_command 'toggle' cmd_toggle ''
 st_register_command 'window' cmd_window ''
 st_register_command 'last' cmd_last 'switch to the previous tree'
 st_register_command 'agent' cmd_agent ''
+st_register_command 'split' cmd_split 'open another copy of this tab side by side'
 st_register_command 'leave' cmd_leave ''
 st_register_command '_sessions' known_sessions ''

@@ -70,6 +70,7 @@ The numbered modules make the boundaries explicit:
 | Module | Responsibility |
 | --- | --- |
 | `00-core` through `50-tmux` | Shared helpers for identity, repository state, bootstrap, agent, and tmux |
+| `55-sidebar` | Tree sidebar panes and their refresher |
 | `60-picker` | Tree picker and `go`/`resume` |
 | `70-worktrees` | Worktree creation, trust, listing, status, and removal |
 | `90-maintenance` | `doctor`, `update`, and `version` |
@@ -192,6 +193,12 @@ st down --all -y                 skip the confirmation
 | `M-r` | pick any repo you have used `st new` in, enter a branch, and create a tree there — no `cd` needed |
 | `M-1` … `M-9` | select a configured window (tab) by position |
 | `M-n` / `M-p` | next / previous tab |
+| `M-j` / `M-k` | next / previous open tree, in sidebar order |
+| `M-h` / `M-l` | move to the pane on the left / right (the sidebar is leftmost) |
+| `M-x` | close the focused pane after a y/n prompt (does nothing on the sidebar) |
+| `M-v` | open another copy of this tab's program side by side (a fresh agent session in the agent tab); `exit` or `prefix x` closes it |
+| `M-s` | focus the tree sidebar; Escape goes back to the tab |
+| `M-B` (Option-Shift-B) | hide or show the sidebar in every tree window |
 | `M-q` | go back to the session you ran `st` from (leaves tmux if you started outside it) |
 | `M-Q` (Option-Shift-Q) | leave tmux; keep the current tree session running |
 
@@ -270,6 +277,47 @@ Order controls startup focus, `M-1` through `M-9`, and the pair switched by
 `M-e`. Changing the setting affects new sessions; run `st down <tree>` and
 `st resume <tree>` to rebuild an existing session. Re-run the installer once
 after upgrading from v0.3.0 so the positional tmux bindings are installed.
+
+## Sidebar
+
+Every tree window gets a narrow pane on the left listing all trees, grouped by
+repository:
+
+```
+webauth
+  · main          closed
+  ● feat-otp      agent running (bold: the tree you are in)
+  ◐ crypto-mon    agent waiting for input
+
+fe
+  ○ old-branch    agent exited
+
++ new
+```
+
+Branches show only their last `/` segment so names fit the narrow column.
+
+`M-j` / `M-k` step through open trees without touching the sidebar. Every switch
+lands in the tab's program pane, never in the sidebar. In the sidebar, Enter
+switches to the highlighted tree (`j`/`k` move, `g`/`G` jump to the ends, `l` opens, `h` or `q` go back), `+ new` opens the `M-w` picker,
+Escape returns to the tab, and Ctrl-R reloads by hand. `M-s` focuses the sidebar
+and `M-B` hides or shows it everywhere.
+
+One background refresher per tmux server keeps every sidebar current. It
+re-reads agent states every 2 seconds and the tree list when sessions open or
+close (or every 30 seconds), then pushes changes to each sidebar over fzf's
+`--listen` socket under `~/.local/state/supertree/sidebar/`. It stops once no
+sidebars are left. It also closes a window whose only remaining pane is its
+sidebar, for example after you `exit` the shell beside it.
+
+```sh
+ST_SIDEBAR=0           # never add sidebars
+ST_SIDEBAR_WIDTH=20    # columns
+```
+
+The sidebar needs `curl` and an fzf recent enough for `--listen`, `--id-nth`
+and `--gutter`. Sidebars are added when a session is built; run `st down <tree>`
+and `st resume <tree>` to add them to sessions opened before upgrading.
 
 ## Agent harnesses
 
