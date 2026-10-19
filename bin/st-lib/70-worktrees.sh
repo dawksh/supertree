@@ -154,6 +154,7 @@ cmd_rm() {
     die "an older session for $branch is still open; close it before removing the tree"
   fi
 
+  ! git_op_in_progress "$dir" || die "$branch is mid rebase or bisect; finish or abort it first"
   dirty=$(git -C "$dir" status --porcelain 2>/dev/null || true)
   if git -C "$dir" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
     unpushed=$(git -C "$dir" log --format=%s '@{u}..' 2>/dev/null || true)
@@ -190,6 +191,13 @@ cmd_rm() {
   if [ "$sess" = "$current_sess" ]; then tmux kill-session -t "=$sess" 2>/dev/null || true; fi
 }
 
+# Removing a worktree drops its rebase state and reflog, losing rebased commits.
+git_op_in_progress() {
+  local git_dir
+  git_dir=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  [ -e "$git_dir/rebase-merge" ] || [ -e "$git_dir/rebase-apply" ] || [ -e "$git_dir/BISECT_START" ]
+}
+
 clear_tree_state() {
   local repo=$1 slug=$2 sess=$3 tmp
   rm -f "$ST_STATE/idx/$repo/$slug" \
@@ -221,7 +229,7 @@ cmd_remove_all() {
     [ "$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)" = "$dir" ] || continue
     main=$(main_worktree "$dir")
     [ -n "$main" ] || continue
-    branch=$(git -C "$dir" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+    branch=$(tree_branch "$dir")
     if [ "$main" = "$dir" ]; then
       # Do not list a nested checkout twice when its parent is a repository.
       case $dir in "$root"/*/*)
@@ -270,6 +278,8 @@ cmd_remove_all() {
         [ "$found" = 1 ] || die "refusing to delete $dir; linked worktree outside removal list: $other"
       done < <(git -C "$dir" worktree list --porcelain | sed -n 's/^worktree //p')
     fi
+    ! git_op_in_progress "$dir" ||
+      die "$(basename "${mains[i]}")/${branches[i]:-(detached)} is mid rebase or bisect; finish or abort it first"
     dirty=$(git -C "$dir" status --porcelain 2>/dev/null || true)
     unpushed=''
     if git -C "$dir" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then

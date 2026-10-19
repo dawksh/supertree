@@ -52,9 +52,46 @@ branch_worktree() {
           printf '%s' "$path"
           return 0
         fi;;
+      detached)
+        if [ "$(tree_branch "$path")" = "$branch" ]; then
+          printf '%s' "$path"
+          return 0
+        fi;;
     esac
   done < <(git -C "$main" worktree list --porcelain)
   return 1
+}
+
+# Rebase, bisect and `checkout <sha>` detach HEAD. Keep naming the tree after
+# its branch so it keeps its session, agent history and picker entry.
+tree_branch() {
+  local dir=$1 name git_dir base ref
+  name=$(git -C "$dir" branch --show-current 2>/dev/null || true)
+  if [ -n "$name" ]; then printf '%s' "$name"; return 0; fi
+  git_dir=$(git -C "$dir" rev-parse --absolute-git-dir 2>/dev/null) || return 0
+  name=$(cat "$git_dir/rebase-merge/head-name" "$git_dir/rebase-apply/head-name" \
+    "$git_dir/BISECT_START" 2>/dev/null | head -1)
+  name=${name#refs/heads/}
+  if [ -n "$name" ] && git -C "$dir" show-ref --verify --quiet "refs/heads/$name"; then
+    printf '%s' "$name"
+    return 0
+  fi
+  # Otherwise match the directory name we created the tree under. Never for
+  # the main checkout, whose directory is named after the repo.
+  [ "$git_dir" != "$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir)" ] || return 0
+  base=$(basename "$dir")
+  while IFS= read -r ref; do
+    [ "$(branch_key "$ref")" = "$base" ] || [ "$(slugify "$ref")" = "$base" ] || continue
+    git -C "$dir" worktree list --porcelain | grep -qxF "branch refs/heads/$ref" && continue
+    printf '%s' "$ref"
+    return 0
+  done < <(git -C "$dir" for-each-ref --format='%(refname)' refs/heads |
+    LC_ALL=C awk -v base="$base" '{
+      sub(/^refs\/heads\//, "")
+      label = $0; gsub(/[^A-Za-z0-9_-]/, "-", label)
+      legacy = $0; gsub(/[\/.: ]/, "-", legacy)
+      if (index(base, substr(label, 1, 48) "-") == 1 || legacy == base) print
+    }')
 }
 
 managed_tree() {
@@ -116,7 +153,10 @@ list_trees() {
       END {
         if (main != "") print main "\t" (k ? 0 : 1)
         for (i = 1; i <= k; i++) print linked[i] "\t0"
-      }'
+      }' | while IFS=$'\t' read -r repo branch path orphan; do
+        [ "$branch" != '(detached)' ] || branch=$(tree_branch "$path")
+        printf '%s\t%s\t%s\t%s\n' "$repo" "${branch:-(detached)}" "$path" "$orphan"
+      done
   done < "$ST_REPOS" | awk -F '\t' '
     {
       row[NR] = $0; branch[NR] = $2; name = $1; sub(/-[^-]*$/, "", name)

@@ -82,8 +82,8 @@ fi
 
 : > "$ST_TEST_LOG"
 ST_TEST_PICK_KEY=escape "$ROOT/bin/st" go --picker
-first=$(sed -n '1p' "$ST_TEST_PICKER_INPUT")
-second=$(sed -n '2p' "$ST_TEST_PICKER_INPUT")
+first=$(sed -n '2p' "$ST_TEST_PICKER_INPUT")
+second=$(sed -n '3p' "$ST_TEST_PICKER_INPUT")
 case $first in *'demo/alpha'*) ;; *) fail 'picker did not start with alpha';; esac
 case $second in *'demo/beta'*) ;; *) fail 'picker did not put beta second';; esac
 if grep -Eq '^(attach-session|switch-client) ' "$ST_TEST_LOG"; then

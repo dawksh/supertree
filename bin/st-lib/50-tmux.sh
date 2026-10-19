@@ -61,7 +61,7 @@ create_window() {
 
 build_session() {
   local sess=$1 dir=$2 windows type first_name='' initial=1 branch label
-  branch=$(git -C "$dir" branch --show-current 2>/dev/null || true)
+  branch=$(tree_branch "$dir")
   label="$(basename "$(main_worktree "$dir")")/${branch:-(detached)}"
   if tmux has-session -t "=$sess" 2>/dev/null; then
     tmux set-option -t "$sess" @supertree_label "$label"
