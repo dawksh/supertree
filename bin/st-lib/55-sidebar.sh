@@ -214,6 +214,8 @@ cmd_sidebar_attach() {
   [ -n "$win" ] || return 0
   dir=$(tmux display-message -p -t "$win" '#{@st_tree_dir}' 2>/dev/null) || return 0
   [ -n "$dir" ] || dir=$(tmux display-message -p -t "$win" '#{pane_current_path}')
+  # Windows opened with prefix c get the same tab and card look; they have no slot number.
+  style_tab "$win" ''
   add_sidebar "$win" "$dir"
 }
 
@@ -225,15 +227,19 @@ focus_content() {
 }
 
 cmd_tree_step() {
-  local step=$1 cur rows next
+  local step=$1 cur rows next dir
   [ -n "${TMUX:-}" ] || die "st _tree-next only works inside tmux"
   [ -s "$ST_SIDEBAR_DIR/rows" ] || { mkdir -p "$ST_SIDEBAR_DIR"; sidebar_snapshot > "$ST_SIDEBAR_DIR/rows"; }
   cur=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S')
-  rows=$(awk -F '\t' '$3 != "closed" { print $5 }' "$ST_SIDEBAR_DIR/rows")
+  rows=$(awk -F '\t' '$3 != "closed" { print $5 "\t" $4 }' "$ST_SIDEBAR_DIR/rows")
   next=$(printf '%s\n' "$rows" | awk -v cur="$cur" -v step="$step" '
-    { s[NR] = $0; if ($0 == cur) at = NR }
+    BEGIN { FS = "\t" }
+    { s[NR] = $0; if ($1 == cur) at = NR }
     END { if (!NR) exit; if (!at) at = step > 0 ? 0 : 1; i = (at - 1 + step + NR) % NR + 1; print s[i] }')
+  dir=${next#*$'\t'}; next=${next%%$'\t'*}
   [ -n "$next" ] && [ "$next" != "$cur" ] || return 0
+  # Through build_session so an older session gets its tabs and sidebar on the way in.
+  build_session "$next" "$dir"
   attach "$next"
 }
 

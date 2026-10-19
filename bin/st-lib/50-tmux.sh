@@ -1,6 +1,8 @@
 # shellcheck shell=bash
 # supertree tmux module
 
+ST_LAYOUT_VERSION=2
+
 tab_command() {
   local var="ST_TAB_$1"
   printf '%s' "${!var:-}"
@@ -71,9 +73,8 @@ style_session() {
   tmux set-option -t "$1" status-position top
   tmux set-option -t "$1" status-justify left
   tmux set-option -t "$1" status-style 'bg=default'
-  # A second, empty status line spaces the tabs off the panes.
-  tmux set-option -t "$1" status 2
-  tmux set-option -t "$1" 'status-format[1]' ''
+  # Pane title rows now space the tabs off the panes; sessions styled earlier had a blank second line.
+  tmux set-option -t "$1" status on
 }
 
 style_tab() {
@@ -86,6 +87,21 @@ style_tab() {
   tmux set-option -w -t "$target" window-status-format "#[fg=colour245,bg=colour236] $label #[default]"
   tmux set-option -w -t "$target" window-status-current-format "#[fg=colour235,bg=colour252,bold] $label #[default]"
   tmux set-option -w -t "$target" window-status-current-style default
+  style_cards "$target"
+}
+
+# tmux has no pane padding: a lighter pane background with blank border lines
+# reads as cards separated by gaps, and the border status row titles each card.
+style_cards() {
+  local target=$1
+  tmux set-option -w -t "$target" pane-border-lines spaces
+  tmux set-option -w -t "$target" pane-border-status top
+  tmux set-option -w -t "$target" pane-border-style 'bg=default'
+  tmux set-option -w -t "$target" pane-active-border-style 'bg=default'
+  tmux set-option -w -t "$target" pane-border-format \
+    '#{?@st_sidebar,,#{?pane_active,#[fg=colour252#,bold],#[fg=colour242]} #W#{?#{e|>:#{window_panes},2}, #{pane_index},} #[default]}'
+  tmux set-option -w -t "$target" window-style 'bg=colour234'
+  tmux set-option -w -t "$target" window-active-style 'bg=colour235'
 }
 
 cmd_split() {
@@ -121,6 +137,8 @@ build_session() {
   label="$(basename "$(main_worktree "$dir")")/${branch:-(detached)}"
   if tmux has-session -t "=$sess" 2>/dev/null; then
     tmux set-option -t "$sess" @supertree_label "$label"
+    # Bump ST_LAYOUT_VERSION when the look changes so open sessions restyle on the next switch.
+    [ "$(tmux show-options -qv -t "=$sess" @st_layout)" = "$ST_LAYOUT_VERSION" ] || upgrade_session "$sess" "$dir"
     return 0
   fi
   windows=$(configured_windows)
@@ -137,8 +155,29 @@ $windows
 EOF
   style_session "$sess"
   if declare -F sidebar_session >/dev/null; then sidebar_session "$sess" "$dir"; fi
+  tmux set-option -t "$sess" @st_layout "$ST_LAYOUT_VERSION"
   tmux set-option -t "$sess" @supertree_label "$label"
   tmux select-window -t "=$sess:$first_name"
+}
+
+# Sessions opened before tabs and sidebars get them in place, without restarting their programs.
+upgrade_session() {
+  local sess=$1 dir=$2 win name type slot
+  style_session "$sess"
+  tmux list-windows -t "=$sess" -F '#{window_id} #{window_name}' | while read -r win name; do
+    slot=0
+    while read -r type; do
+      slot=$((slot + 1))
+      [ "$(window_name "$type")" = "$name" ] && break
+      type=''
+    done <<EOF
+$(configured_windows)
+EOF
+    [ -n "$type" ] || slot=''
+    style_tab "$win" "$slot"
+  done
+  if declare -F sidebar_session >/dev/null; then sidebar_session "$sess" "$dir"; fi
+  tmux set-option -t "$sess" @st_layout "$ST_LAYOUT_VERSION"
 }
 
 remember_recent() {

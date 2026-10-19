@@ -269,6 +269,11 @@ ST_TAB_dev='npm run dev'
 ST_TAB_git='lazygit'
 ```
 
+Each pane is drawn as a card: a slightly lighter background, a gap where the
+border would be, and a title row (` claude `, or ` claude 2 ` once you split).
+The focused card is a shade lighter. tmux has no real padding, so text still
+runs to the card's edge.
+
 Tree sessions show their windows as tabs at the top (` 1. claude ● ` ` 2. vim ` ` 3. shell `);
 `●` marks a running agent. The tab bar is set per tree session, so other tmux
 sessions keep your own status line.
@@ -319,8 +324,9 @@ ST_SIDEBAR_WIDTH=20    # columns
 ```
 
 The sidebar needs `curl` and an fzf recent enough for `--listen`, `--id-nth`
-and `--gutter`. Sidebars are added when a session is built; run `st down <tree>`
-and `st resume <tree>` to add them to sessions opened before upgrading.
+and `--gutter`. Sessions opened before upgrading get their tabs and sidebar the
+first time you switch into them (`st go`, `M-j`/`M-k`, the sidebar or `M-w`);
+their running programs are left as they are.
 
 ## Agent harnesses
 
