@@ -16,12 +16,27 @@ window_sidebar() {
 }
 
 add_sidebar() {
-  local window=$1 dir=$2 pane
+  local window=$1 dir=$2 pane lock holder
   sidebar_enabled || return 0
-  [ -z "$(window_sidebar "$window")" ] || return 0
-  pane=$(tmux split-window -f -hb -d -l "$ST_SIDEBAR_WIDTH" -t "$window" -c "$dir" \
-    -P -F '#{pane_id}' "$(st_self)" _sidebar) || return 0
-  tmux set-option -p -t "$pane" @st_sidebar 1
+  # M-B, the new-window hook and the refresher can all add at once; one per window at a time.
+  lock="$ST_SIDEBAR_DIR/.add-${window#@}"
+  mkdir -p "$ST_SIDEBAR_DIR"
+  if ! mkdir "$lock" 2>/dev/null; then
+    holder=$(cat "$lock/pid" 2>/dev/null) || holder=''
+    [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null && return 0
+    rm -rf "$lock"; mkdir "$lock" 2>/dev/null || return 0
+  fi
+  printf '%s\n' "$$" > "$lock/pid"
+  if [ -z "$(window_sidebar "$window")" ]; then
+    pane=$(tmux split-window -f -hb -d -l "$ST_SIDEBAR_WIDTH" -t "$window" -c "$dir" \
+      -P -F '#{pane_id}' "$(st_self)" _sidebar) &&
+      tmux set-option -p -t "$pane" @st_sidebar 1
+  fi
+  rm -rf "$lock"
+}
+
+sidebar_panes_exist() {
+  tmux list-panes -a -F '#{@st_sidebar}' 2>/dev/null | grep -qx 1
 }
 
 # Sessions start detached at 80 columns; tmux scales panes up on attach, so pin the width back.
@@ -34,11 +49,29 @@ sidebar_fit() {
 }
 
 # Not a pane-exited hook: tmux 3.6 runs that hook from whichever window is current, not the one that exited.
+# Also restores a sidebar closed by hand and drops a duplicate if the new-window hook
+# and this refresher both added one.
 sidebar_sweep() {
-  tmux list-panes -a -F '#{window_id} #{@st_sidebar}' 2>/dev/null | awk '
-    { panes[$1]++; if ($2 == 1) side[$1]++ }
-    END { for (w in panes) if (side[w] == panes[w]) print w }' |
-    while read -r win; do tmux kill-window -t "$win" 2>/dev/null || true; done
+  local kind target sess windows
+  tmux list-panes -a -F '#{window_id}|#{pane_id}|#{@st_sidebar}|#{session_name}|#{session_windows}|#{@st_tree_dir}' 2>/dev/null |
+    awk -F'|' -v restore="$(sidebar_enabled && echo 1)" '
+      { panes[$1]++; sess[$1] = $4; nwin[$1] = $5; tree[$1] = $6
+        if ($3 == 1) { if (side[$1]++) print "extra|" $2 } }
+      END { for (w in panes) {
+        if (side[w] == panes[w]) print "empty|" w "|" sess[w] "|" nwin[w]
+        else if (!side[w] && restore && tree[w] != "") print "restore|" w "|" tree[w]
+      } }' |
+    while IFS='|' read -r kind target sess windows; do
+      case $kind in
+        extra) tmux kill-pane -t "$target" 2>/dev/null || true;;
+        restore) add_sidebar "$target" "$sess";;
+        empty)
+          # Last window of the tree: move clients elsewhere first, or tmux detaches them.
+          # Count live: several windows of one tree can empty out in the same pass.
+          [ "$(tmux display-message -p -t "$target" '#{session_windows}' 2>/dev/null)" != 1 ] || evacuate_clients "$sess"
+          tmux kill-window -t "$target" 2>/dev/null || true;;
+      esac
+    done
 }
 
 # Called once a session's windows exist; later windows get a sidebar from the hook.
@@ -66,11 +99,14 @@ sidebar_snapshot() {
 }
 
 sidebar_rows() {
-  local sess cache="$ST_SIDEBAR_DIR/rows"
+  local sess cache="$ST_SIDEBAR_DIR/rows" tmp
   sess=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S' 2>/dev/null) || sess=''
-  if [ ! -s "$cache" ]; then
+  # A brand-new tree is missing from the refresher's cache; without it the cursor
+  # would start on the header instead of the current tree.
+  if [ ! -s "$cache" ] || ! awk -F '\t' -v s="$sess" '$5 == s { found = 1 } END { exit !found }' "$cache"; then
     mkdir -p "$ST_SIDEBAR_DIR"
-    sidebar_snapshot > "$cache"
+    tmp=$(mktemp "$ST_SIDEBAR_DIR/.rows.XXXXXX")
+    sidebar_snapshot > "$tmp" && mv "$tmp" "$cache"
   fi
   awk -F '\t' -v cur="$sess" '
     !($1 in seen) { seen[$1] = 1; order[++n] = $1 }
@@ -104,13 +140,29 @@ sidebar_poke() {
   done
 }
 
+# Each tree keeps its own sidebar, whose cursor otherwise stays wherever it was last moved.
+sidebar_recenter() {
+  local sess pane sock row rows
+  rows=$(sidebar_rows)
+  for sess in "$@"; do
+    row=$(printf '%s\n' "$rows" | awk -F '\t' -v s="$sess" '$2 == s { print NR; exit }')
+    [ -n "$row" ] || continue
+    tmux list-panes -s -t "=$sess" -F '#{pane_id} #{@st_sidebar}' 2>/dev/null | awk '$2 == 1 { print $1 }' |
+      while read -r pane; do
+        sock="$ST_SIDEBAR_DIR/${pane#%}.sock"
+        [ -S "$sock" ] || continue
+        curl -s -m 1 --unix-socket "$sock" -X POST http://localhost -d "pos($row)" >/dev/null 2>&1 || true
+      done
+  done
+}
+
 # Mirrors each agent's state onto its tab, so the tab shows it whichever pane is focused.
 sidebar_tab_states() {
   local default_name sess status win
   default_name=$(harness_window)
   printf '%s\n' "$1" | while IFS=$'\t' read -r _ _ status _ sess; do
     [ -n "$sess" ] && [ "$status" != closed ] || continue
-    win=$(tmux show-options -qv -t "=$sess" @st_agent_window 2>/dev/null) || win=''
+    win=$(tmux show-options -qv -t "=$sess:" @st_agent_window 2>/dev/null) || win=''
     tmux set-option -wq -t "=$sess:${win:-$default_name}" @st_tab_state "$status" 2>/dev/null || true
   done
 }
@@ -128,7 +180,9 @@ sidebar_poll_start() {
 # when the session list changes or every 30s; agent states refresh every 2s.
 cmd_sidebar_poll() {
   local lock="$ST_SIDEBAR_DIR/poll.lock" pid trees='' live last_live='' ticks=0 idle=0 rows old='' tmp
-  local socks=()
+  # Long-running: under st's errexit one failed step (a tmux race, an unreadable repo)
+  # would end the refresher for good. A failed tick is retried on the next one instead.
+  set +e
   mkdir -p "$ST_SIDEBAR_DIR"
   if ! mkdir "$lock" 2>/dev/null; then
     pid=$(cat "$lock/pid" 2>/dev/null) || pid=''
@@ -155,12 +209,16 @@ cmd_sidebar_poll() {
       sidebar_tab_states "$rows"
       old=$rows
     fi
-    socks=("$ST_SIDEBAR_DIR"/*.sock)
-    if [ -e "${socks[0]}" ]; then idle=0; else idle=$((idle + 1)); fi
+    # Idle means no sidebar panes, not no sockets: a new pane exists before its socket,
+    # and panes whose socket path is too long never get one.
+    if sidebar_panes_exist; then idle=0; else idle=$((idle + 1)); fi
     [ "$idle" -lt 3 ] || break
     ticks=$((ticks + 1))
     sleep 2
   done
+  rm -rf "$lock"
+  # Sidebars added while shutting down saw this refresher still alive and did not start one.
+  if tmux list-sessions >/dev/null 2>&1 && sidebar_panes_exist; then exec "$(st_self)" _sidebar-poll; fi
 }
 
 cmd_sidebar() {
@@ -168,6 +226,8 @@ cmd_sidebar() {
   local listen=()
   [ -n "${TMUX_PANE:-}" ] || die "st _sidebar runs inside a tmux pane"
   declare -F picker_rows >/dev/null || die "sidebar needs the picker module"
+  # Long-running like the refresher: a failed row read should retry, not close the pane.
+  set +e
   self=$(st_self)
   mkdir -p "$ST_SIDEBAR_DIR"
   sock="$ST_SIDEBAR_DIR/${TMUX_PANE#%}.sock"
@@ -231,7 +291,9 @@ cmd_tree_step() {
   [ -n "${TMUX:-}" ] || die "st _tree-next only works inside tmux"
   [ -s "$ST_SIDEBAR_DIR/rows" ] || { mkdir -p "$ST_SIDEBAR_DIR"; sidebar_snapshot > "$ST_SIDEBAR_DIR/rows"; }
   cur=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S')
-  rows=$(awk -F '\t' '$3 != "closed" { print $5 "\t" $4 }' "$ST_SIDEBAR_DIR/rows")
+  # The cache can lag a just-closed tree by a tick; only step to sessions that are live now.
+  rows=$(tmux list-sessions -F '#S' 2>/dev/null | awk -F '\t' 'NR == FNR { live[$0] = 1; next }
+    $3 != "closed" && ($5 in live) { print $5 "\t" $4 }' - "$ST_SIDEBAR_DIR/rows")
   next=$(printf '%s\n' "$rows" | awk -v cur="$cur" -v step="$step" '
     BEGIN { FS = "\t" }
     { s[NR] = $0; if ($1 == cur) at = NR }

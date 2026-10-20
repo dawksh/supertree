@@ -316,7 +316,10 @@ re-reads agent states every 2 seconds and the tree list when sessions open or
 close (or every 30 seconds), then pushes changes to each sidebar over fzf's
 `--listen` socket under `~/.local/state/supertree/sidebar/`. It stops once no
 sidebars are left. It also closes a window whose only remaining pane is its
-sidebar, for example after you `exit` the shell beside it.
+sidebar, for example after you `exit` the shell beside it; if that was the
+tree's last window, you are moved to another session instead of being
+disconnected. A sidebar closed by hand comes back within a few seconds; use
+`M-B` to hide sidebars.
 
 ```sh
 ST_SIDEBAR=0           # never add sidebars
@@ -438,7 +441,9 @@ For `st down` and `st rm`, `st` moves attached clients off a session before
 closing it — back to the session they came from when possible (remembered per
 client tty under `~/.local/state/supertree/origin/`), otherwise to a remaining
 session. `st down --all` can detach clients when it closes the last tmux
-session. Your `detach-on-destroy` setting is left alone.
+session. Tree sessions set `detach-on-destroy off` for themselves, so when the
+last program in a tree exits you land in your most recent session instead of
+leaving tmux; your global `detach-on-destroy` setting is left alone.
 
 **Close subtrees** — `st down --subtrees` closes every linked worktree
 session and leaves each repository's main session open. If a main session is

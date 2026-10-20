@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # supertree tmux module
 
-ST_LAYOUT_VERSION=2
+ST_LAYOUT_VERSION=3
 
 tab_command() {
   local var="ST_TAB_$1"
@@ -75,6 +75,9 @@ style_session() {
   tmux set-option -t "$1" status-style 'bg=default'
   # Pane title rows now space the tabs off the panes; sessions styled earlier had a blank second line.
   tmux set-option -t "$1" status on
+  # When a tree's last program exits, switch to the most recent session instead of
+  # leaving tmux. Session-scoped, so the global setting is untouched.
+  tmux set-option -t "$1" detach-on-destroy off
 }
 
 style_tab() {
@@ -138,7 +141,8 @@ build_session() {
   if tmux has-session -t "=$sess" 2>/dev/null; then
     tmux set-option -t "$sess" @supertree_label "$label"
     # Bump ST_LAYOUT_VERSION when the look changes so open sessions restyle on the next switch.
-    [ "$(tmux show-options -qv -t "=$sess" @st_layout)" = "$ST_LAYOUT_VERSION" ] || upgrade_session "$sess" "$dir"
+    # "=name:" not "=name": tmux 3.6 rejects "=name" as a set/show-options target.
+    [ "$(tmux show-options -qv -t "=$sess:" @st_layout)" = "$ST_LAYOUT_VERSION" ] || upgrade_session "$sess" "$dir"
     return 0
   fi
   windows=$(configured_windows)
@@ -232,15 +236,17 @@ EOF
 }
 
 attach() {
-  local sess=$1
+  local sess=$1 prev
   remember_recent "$sess"
   if declare -F focus_content >/dev/null; then focus_content "$sess"; fi
   # The refresher only starts with a sidebar pane; restart it here in case it died.
   if declare -F sidebar_poll_start >/dev/null; then sidebar_poll_start; fi
   if [ -n "${TMUX:-}" ]; then
+    prev=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S' 2>/dev/null) || prev=''
     remember_origin "$sess"
     tmux switch-client -t "=$sess"
     if declare -F sidebar_fit >/dev/null; then sidebar_fit "$sess"; fi
+    if declare -F sidebar_recenter >/dev/null; then sidebar_recenter "$sess" "$prev"; fi
   else
     tmux attach-session -t "=$sess"
   fi
