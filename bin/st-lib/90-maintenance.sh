@@ -2,10 +2,16 @@
 # supertree maintenance module
 
 cmd_doctor() {
-  local ok=0 b deps='tmux git fzf' agent_bin windows
+  local ok=0 b deps='tmux git fzf' agent_bin windows type tab
   windows=$(configured_windows)
   window_enabled vim && deps="$deps nvim"
   if window_enabled agent; then agent_bin=$(harness_bin); deps="$deps $agent_bin"; fi
+  for type in $windows; do
+    case $type in agent|vim|shell) continue;; esac
+    tab=$(tab_command "$type")
+    deps="$deps ${tab%% *}"
+  done
+  [ "${ST_SIDEBAR:-1}" = 0 ] || deps="$deps curl"
   for b in $deps; do
     if command -v "$b" >/dev/null 2>&1; then printf '  ok    %s\n' "$b"
     else printf '  MISS  %s\n' "$b"; ok=1; fi
@@ -161,7 +167,7 @@ EOF
   rm -f -- "$fragment" "$config"
   [ ! -d "$confdir" ] || rmdir "$confdir" 2>/dev/null || true
   if command -v tmux >/dev/null 2>&1 && tmux list-sessions >/dev/null 2>&1; then
-    for key in M-w M-e M-Tab M-r M-1 M-2 M-3 M-q; do
+    for key in M-w M-e M-Tab M-r M-1 M-2 M-3 M-4 M-5 M-6 M-7 M-8 M-9 M-q M-s M-B M-j M-k M-v; do
       binding=$(tmux list-keys -T root "$key" 2>/dev/null || true)
       case $binding in *"$self"*) tmux unbind-key -n "$key" 2>/dev/null || true;; esac
     done
@@ -169,6 +175,10 @@ EOF
       for key in M-q M-Q; do
         binding=$(tmux list-keys -T root "$key" 2>/dev/null || true)
         case $binding in *'detach-client'*) tmux unbind-key -n "$key" 2>/dev/null || true;; esac
+      done
+      for key in M-n M-p M-h M-l M-x; do
+        binding=$(tmux list-keys -T root "$key" 2>/dev/null || true)
+        case $binding in *'next-window'*|*'previous-window'*|*'select-pane -L'*|*'select-pane -R'*|*'kill-pane'*) tmux unbind-key -n "$key" 2>/dev/null || true;; esac
       done
     fi
     if [ "$(tmux show-options -gv status-left 2>/dev/null || true)" = \

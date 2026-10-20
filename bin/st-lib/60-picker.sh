@@ -3,8 +3,8 @@
 
 picker_rows() {
   local trees panes format name bin width label status path sess pane
-  trees=$(list_trees)
-  format='#{session_name}'$'\t''#{window_name}'$'\t''#{pane_id}'$'\t''#{@st_agent_state}'$'\t''#{@st_agent_window}'$'\t''#{pane_current_command}'
+  if [ $# -gt 0 ]; then trees=$1; else trees=$(list_trees); fi
+  format='#{session_name}'$'\t''#{window_name}'$'\t''#{pane_id}'$'\t''#{@st_agent_state}'$'\t''#{@st_agent_window}'$'\t''#{pane_current_command}'$'\t''#{@st_sidebar}'
   panes=$(tmux list-panes -a -F "$format" 2>/dev/null) || panes=''
   name=$(harness_window)
   bin=$(harness_bin)
@@ -13,7 +13,7 @@ picker_rows() {
   printf '%s\n' "$trees" | awk -F '\t' -v default_name="$name" -v bin="$bin" '
     FILENAME == ARGV[1] {
       s = $1
-      if (s == "") next
+      if (s == "" || $7 == 1) next
       live[s] = 1
       if ($5 != "") agent_window[s] = $5
       wanted = agent_window[s] != "" ? agent_window[s] : default_name

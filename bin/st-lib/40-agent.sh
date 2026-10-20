@@ -32,7 +32,7 @@ agent_pane() {
   local sess=$1 name
   name=$(tmux show-options -qv -t "$sess" @st_agent_window 2>/dev/null) || name=""
   [ -n "$name" ] || name=$(harness_window)
-  tmux list-panes -t "=$sess:$name" -F '#{pane_id}' 2>/dev/null | head -1
+  tmux list-panes -t "=$sess:$name" -f '#{!=:#{@st_sidebar},1}' -F '#{pane_id}' 2>/dev/null | head -1
 }
 
 agent_needs_input() {

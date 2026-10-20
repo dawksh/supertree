@@ -142,6 +142,8 @@ list_trees() {
   root=$(cd "$ST_WORKTREE_ROOT" 2>/dev/null && pwd -P || printf '%s' "$ST_WORKTREE_ROOT")
   while read -r r; do
     [ -d "$r" ] || continue
+    # A moved or broken checkout in the repos list must not fail every listing.
+    git -C "$r" rev-parse --git-dir >/dev/null 2>&1 || continue
     repo=$(repo_key "$r")
     # Skip linked worktrees made by other tools (e.g. Cursor) outside our root.
     # Flag the main checkout as orphaned when no worktree under our root is left.
@@ -166,7 +168,8 @@ list_trees() {
     }
     END {
       for (i = 1; i <= NR; i++) {
-        b = branch[i]; gsub(/[.:]/, "_", b)
+        # tmux reserves . and : in targets and expands # as a format (#h is the hostname).
+        b = branch[i]; gsub(/[.:#]/, "_", b)
         sess[i] = repo_name[i] (repos[repo_name[i]] > 1 ? "-" repo_hash[i] : "") "/" b
         if (!((sess[i], branch[i]) in seen_tree)) { seen_tree[sess[i], branch[i]] = 1; trees[sess[i]]++ }
       }
