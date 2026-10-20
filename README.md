@@ -201,6 +201,7 @@ st down --all -y                 skip the confirmation
 | `M-B` (Option-Shift-B) | hide or show the sidebar in every tree window |
 | `M-q` | go back to the session you ran `st` from (leaves tmux if you started outside it) |
 | `M-Q` (Option-Shift-Q) | leave tmux; keep the current tree session running |
+| `M-/` | popup listing every key (`st keys` prints the same list) |
 
 In the tree picker, press Enter to open a tree, Ctrl-D to delete the selected
 worktree, or Escape to close the picker.
@@ -308,6 +309,7 @@ agent's tab mirrors its state: `●` running, `◐` waiting for your input.
 `M-j` / `M-k` step through open trees without touching the sidebar. Every switch
 lands in the tab's program pane, never in the sidebar. In the sidebar, Enter
 switches to the highlighted tree (`j`/`k` move, `g`/`G` jump to the ends, `l` opens, `h` or `q` go back), `+ new` opens the `M-w` picker,
+`d` deletes the highlighted tree (same checks and y/n prompt as `st rm`, in a popup),
 Escape returns to the tab, and Ctrl-R reloads by hand. `M-s` focuses the sidebar
 and `M-B` hides or shows it everywhere.
 
