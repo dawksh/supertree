@@ -123,6 +123,20 @@ cmd_go() {
   attach "$sess"
 }
 
+# Bare `st`: the tree you are standing in, else the most recently opened one.
+cmd_open() {
+  local here main rows row=''
+  here=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  main=$(main_worktree .) || main=''
+  [ -z "$main" ] || register_repo "$main"
+  rows=$(list_trees | cut -f2-)
+  [ -n "$rows" ] || die "no worktrees known yet — run 'st new <branch>' inside a repo"
+  [ -z "$here" ] || row=$(printf '%s\n' "$rows" | awk -F '\t' -v p="$here" '$2 == p' | head -1)
+  [ -n "$row" ] || row=$(printf '%s\n' "$rows" | sort_recent | head -1)
+  build_session "$(printf '%s' "$row" | cut -f3)" "$(printf '%s' "$row" | cut -f2)"
+  attach "$(printf '%s' "$row" | cut -f3)"
+}
+
 cmd_roots() {
   local popup_client='' rows root label branch self
   case ${1:-} in
@@ -154,6 +168,7 @@ cmd_roots() {
   cmd_new "$branch" --repo "$root"
 }
 
+st_register_command 'open' cmd_open 'open this tree, or the most recent one (bare st)'
 st_register_command 'go' cmd_go 'pick a tree and switch to it' 'go [query]'
 st_register_command 'resume' cmd_go 'reopen a tree and resume its agent' 'resume [query]'
 st_register_command 'roots' cmd_roots 'pick a known repo and create a tree in it'

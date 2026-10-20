@@ -18,7 +18,7 @@ cmd_new() {
   main=$(require_repo "${repo_arg:-.}")
   repo=$(repo_key "$main")
   slug=$(branch_key "$branch")
-  dir=$(tree_dir "$repo" "$slug")
+  dir=$(short_tree_dir "$repo" "$slug")
   [ "$bare" = 1 ] || prepare_repo_config "$main"
   register_repo "$main"
 

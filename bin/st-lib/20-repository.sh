@@ -81,7 +81,8 @@ tree_branch() {
   [ "$git_dir" != "$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir)" ] || return 0
   base=$(basename "$dir")
   while IFS= read -r ref; do
-    [ "$(branch_key "$ref")" = "$base" ] || [ "$(slugify "$ref")" = "$base" ] || continue
+    [ "$(branch_key "$ref")" = "$base" ] || [ "$(short_key "$(branch_key "$ref")")" = "$base" ] ||
+      [ "$(slugify "$ref")" = "$base" ] || continue
     git -C "$dir" worktree list --porcelain | grep -qxF "branch refs/heads/$ref" && continue
     printf '%s' "$ref"
     return 0
@@ -98,6 +99,7 @@ managed_tree() {
   local main=$1 branch=$2 path=$3 repo slug
   repo=$(repo_key "$main")
   slug=$(branch_key "$branch")
+  [ "$path" -ef "$(short_tree_dir "$repo" "$slug")" ] && return 0
   [ "$path" -ef "$(tree_dir "$repo" "$slug")" ] && return 0
   [ "$path" -ef "$(tree_dir "$(basename "$main")" "$(slugify "$branch")")" ]
 }

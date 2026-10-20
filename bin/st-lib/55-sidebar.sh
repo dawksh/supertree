@@ -378,6 +378,7 @@ cmd_sidebar_focus() {
   pane=$(window_sidebar '')
   [ -n "$pane" ] || { info "no sidebar in this window"; return 0; }
   tmux select-pane -t "$pane"
+  sidebar_recenter "$(tmux display-message -p -t "$pane" '#S')"
 }
 
 cmd_sidebar_toggle() {
@@ -387,8 +388,9 @@ cmd_sidebar_toggle() {
     tmux set-option -gu @st_sidebar_off
     sidebar_poll_start
     tmux list-windows -a -F '#{window_id}'$'\t''#{@st_tree_dir}' | while IFS=$'\t' read -r win dir; do
-      [ -n "$dir" ] && add_sidebar "$win" "$dir"
+      [ -z "$dir" ] || add_sidebar "$win" "$dir"
     done
+    [ -z "$(window_sidebar '')" ] || cmd_sidebar_focus
     return 0
   fi
   tmux set-option -g @st_sidebar_off 1

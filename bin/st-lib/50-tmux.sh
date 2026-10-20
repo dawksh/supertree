@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # supertree tmux module
 
-ST_LAYOUT_VERSION=4
+ST_LAYOUT_VERSION=5
 
 tab_command() {
   local var="ST_TAB_$1"
@@ -95,6 +95,8 @@ style_tab() {
 
 # tmux has no pane padding: a lighter pane background with blank border lines
 # reads as cards separated by gaps, and the border status row titles each card.
+# A left scrollbar in the card colour stands in for left padding; its style takes
+# no formats, so focused and unfocused cards share one colour to keep it invisible.
 style_cards() {
   local target=$1
   tmux set-option -w -t "$target" pane-border-lines spaces
@@ -103,8 +105,12 @@ style_cards() {
   tmux set-option -w -t "$target" pane-active-border-style 'bg=default'
   tmux set-option -w -t "$target" pane-border-format \
     '#{?@st_sidebar,,#{?pane_active,#[fg=colour252#,bold],#[fg=colour242]} #{?#{e|>:#{window_panes},2},#{pane_index},} #[default]}'
-  tmux set-option -w -t "$target" window-style 'bg=colour234'
+  tmux set-option -w -t "$target" window-style 'bg=colour235'
   tmux set-option -w -t "$target" window-active-style 'bg=colour235'
+  # Scrollbars are tmux 3.6+; older servers reject the option, so skip the margin there.
+  tmux set-option -w -t "$target" pane-scrollbars on 2>/dev/null || return 0
+  tmux set-option -w -t "$target" pane-scrollbars-position left
+  tmux set-option -w -t "$target" pane-scrollbars-style 'fg=colour235,bg=colour235,width=2,pad=0'
 }
 
 cmd_split() {
