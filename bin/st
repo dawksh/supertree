@@ -124,7 +124,8 @@ st_register_command 'keys' cmd_keys 'show the tmux key bindings'
 st_dispatch() {
   local name=${1:-} i
   case $name in
-    ''|-h|--help|help) usage; return;;
+    '') st_dispatch open; return;;
+    -h|--help|help) usage; return;;
     --version|-V) printf 'st %s\n' "$ST_VERSION"; return;;
   esac
   shift
