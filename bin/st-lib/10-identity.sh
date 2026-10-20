@@ -28,6 +28,11 @@ branch_key() { key_part "$1"; }
 
 tree_dir()  { printf '%s/%s/%s' "$ST_WORKTREE_ROOT" "$1" "$2"; }
 
+# Folder names keep 5 hash chars so paths stay readable; state keys keep the full hash.
+short_key() { printf '%s-%s' "${1%-*}" "$(printf '%s' "${1##*-}" | cut -c1-5)"; }
+
+short_tree_dir() { tree_dir "$(short_key "$1")" "$(short_key "$2")"; }
+
 sess_name() { printf '%s/%s' "$1" "$2"; }
 
 tree_label() { printf '%s/%s' "${1%-*}" "$2"; }
