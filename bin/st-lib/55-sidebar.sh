@@ -30,9 +30,29 @@ add_sidebar() {
   if [ -z "$(window_sidebar "$window")" ]; then
     pane=$(tmux split-window -f -hb -d -l "$ST_SIDEBAR_WIDTH" -t "$window" -c "$dir" \
       -P -F '#{pane_id}' "$(st_self)" _sidebar) &&
-      tmux set-option -p -t "$pane" @st_sidebar 1
+      tmux set-option -p -t "$pane" @st_sidebar 1 \; set-option -p -t "$pane" @st_sidebar_code "$(st_code_id)"
   fi
   rm -rf "$lock"
+}
+
+# A release swaps bin/st; a source install edits the modules beside it. Either changes this.
+st_code_id() {
+  local self
+  self=$(st_self)
+  { readlink "$self" || true; cat "$self" "$st_lib_dir"/*.sh; } 2>/dev/null | cksum
+}
+
+# A sidebar keeps the key bindings it started with, so after an upgrade restart
+# every sidebar stamped with older code. Panes from before stamping have no stamp.
+sidebar_respawn_stale() {
+  local code=$1 self pane
+  self=$(st_self)
+  tmux list-panes -a -F '#{pane_id}|#{@st_sidebar}|#{@st_sidebar_code}' 2>/dev/null |
+    awk -F'|' -v c="$code" '$2 == 1 && $3 != c { print $1 }' |
+    while read -r pane; do
+      tmux set-option -p -t "$pane" @st_sidebar_code "$code" 2>/dev/null &&
+        tmux respawn-pane -k -t "$pane" "$self" _sidebar 2>/dev/null || true
+    done
 }
 
 sidebar_panes_exist() {
@@ -129,6 +149,18 @@ sidebar_rows() {
     }' "$cache"
 }
 
+# Removing a closed tree leaves the session list unchanged, so the refresher would
+# keep showing it until its 30s tree reload. Drop it now and reload on the next tick.
+sidebar_forget() {
+  local sess=$1 cache="$ST_SIDEBAR_DIR/rows" tmp
+  mkdir -p "$ST_SIDEBAR_DIR"
+  : > "$ST_SIDEBAR_DIR/stale"
+  [ -f "$cache" ] || return 0
+  tmp=$(mktemp "$ST_SIDEBAR_DIR/.rows.XXXXXX")
+  awk -F '\t' -v s="$sess" '$5 != s' "$cache" > "$tmp" && mv "$tmp" "$cache"
+  sidebar_poke
+}
+
 sidebar_poke() {
   local sock pane action
   action="reload('$(st_self)' _sidebar-rows)"
@@ -179,7 +211,7 @@ sidebar_poll_start() {
 # One refresher per tmux server. The tree list (git) is slow, so it reloads only
 # when the session list changes or every 30s; agent states refresh every 2s.
 cmd_sidebar_poll() {
-  local lock="$ST_SIDEBAR_DIR/poll.lock" pid trees='' live last_live='' ticks=0 idle=0 rows old='' tmp
+  local lock="$ST_SIDEBAR_DIR/poll.lock" pid trees='' live last_live='' ticks=0 idle=0 rows old='' tmp code
   # Long-running: under st's errexit one failed step (a tmux race, an unreadable repo)
   # would end the refresher for good. A failed tick is retried on the next one instead.
   set +e
@@ -192,11 +224,20 @@ cmd_sidebar_poll() {
   fi
   printf '%s\n' "$$" > "$lock/pid"
   trap 'rm -rf "$lock"' EXIT
+  code=$(st_code_id)
   while :; do
     live=$(tmux list-sessions -F '#S' 2>/dev/null) || break
+    # Upgraded under us: hand over to the new code. exec keeps this pid, which
+    # the new refresher would read as a live holder, so release the lock first.
+    if [ "$(st_code_id)" != "$code" ]; then
+      rm -rf "$lock"; trap - EXIT
+      exec "$(st_self)" _sidebar-poll
+    fi
+    sidebar_respawn_stale "$code"
     sidebar_sweep
     sidebar_fit
-    if [ "$live" != "$last_live" ] || [ $((ticks % 15)) = 0 ]; then
+    if [ "$live" != "$last_live" ] || [ $((ticks % 15)) = 0 ] || [ -e "$ST_SIDEBAR_DIR/stale" ]; then
+      rm -f "$ST_SIDEBAR_DIR/stale"
       trees=$(list_trees)
       last_live=$live
     fi
@@ -248,6 +289,7 @@ cmd_sidebar() {
           --bind="enter:execute-silent('$self' _sidebar-open {2} {3})" \
           --bind="l:execute-silent('$self' _sidebar-open {2} {3})" \
           --bind="double-click:execute-silent('$self' _sidebar-open {2} {3})" \
+          --bind="d:execute-silent('$self' _sidebar-rm {2} {3})" \
           --bind='esc:execute-silent(tmux select-pane -R),h:execute-silent(tmux select-pane -R),q:execute-silent(tmux select-pane -R)' \
           --bind="ctrl-r:reload('$self' _sidebar-rows)" \
           --bind="resize:execute-silent('$self' _sidebar-heal)" || sleep 1
@@ -267,6 +309,22 @@ cmd_sidebar_open() {
   tmux select-pane -t "$TMUX_PANE" -R
   build_session "$sess" "$dir"
   attach "$sess"
+}
+
+# A popup, not this pane: the y/n prompt needs more than the sidebar's width, and
+# removing the current tree kills this pane while the popup keeps running.
+cmd_sidebar_rm() {
+  local sess=${1:-} dir=${2:-} tty
+  case $sess in ''|'#'*|+new) return 0;; esac
+  tty=$(tmux display-message -p -t "$TMUX_PANE" '#{client_tty}')
+  tmux display-popup -c "$tty" -E -w 70 -h 16 -T ' Remove tree ' "$(st_self)" _sidebar-rm-run "$dir"
+}
+
+cmd_sidebar_rm_run() {
+  # die exits; a subshell keeps the popup open long enough to read why.
+  ( remove_tree_at "${1:-}" ) && return 0
+  printf 'press enter to close ' >&2
+  read -r _ || true
 }
 
 cmd_sidebar_attach() {
@@ -344,6 +402,8 @@ st_register_command '_sidebar-rows' sidebar_rows ''
 st_register_command '_sidebar-poll' cmd_sidebar_poll ''
 st_register_command '_sidebar-open' cmd_sidebar_open ''
 st_register_command '_sidebar-attach' cmd_sidebar_attach ''
+st_register_command '_sidebar-rm' cmd_sidebar_rm ''
+st_register_command '_sidebar-rm-run' cmd_sidebar_rm_run ''
 st_register_command '_sidebar-focus' cmd_sidebar_focus ''
 st_register_command '_sidebar-heal' cmd_sidebar_heal ''
 st_register_command '_tree-next' cmd_tree_next ''

@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # supertree tmux module
 
-ST_LAYOUT_VERSION=3
+ST_LAYOUT_VERSION=4
 
 tab_command() {
   local var="ST_TAB_$1"
@@ -102,7 +102,7 @@ style_cards() {
   tmux set-option -w -t "$target" pane-border-style 'bg=default'
   tmux set-option -w -t "$target" pane-active-border-style 'bg=default'
   tmux set-option -w -t "$target" pane-border-format \
-    '#{?@st_sidebar,,#{?pane_active,#[fg=colour252#,bold],#[fg=colour242]} #W#{?#{e|>:#{window_panes},2}, #{pane_index},} #[default]}'
+    '#{?@st_sidebar,,#{?pane_active,#[fg=colour252#,bold],#[fg=colour242]} #{?#{e|>:#{window_panes},2},#{pane_index},} #[default]}'
   tmux set-option -w -t "$target" window-style 'bg=colour234'
   tmux set-option -w -t "$target" window-active-style 'bg=colour235'
 }

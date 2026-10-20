@@ -83,10 +83,15 @@ usage() {
     [ -n "${ST_COMMAND_HELP[i]}" ] || continue
     printf '  %-43s %s\n' "${ST_COMMAND_USAGE[i]}" "${ST_COMMAND_HELP[i]}"
   done
-  cat <<'USAGE'
+  print_keys
+}
+
+print_keys() {
+  cat <<'KEYS'
 keys (inside tmux)
   M-w   tree picker          M-e   toggle first <-> second configured window
   M-Tab switch to the previous tree
+  M-r         pick a known repo and create a tree in it
   M-1 … M-9   select configured window (tab) by position
   M-n / M-p   next / previous tab
   M-j / M-k   next / previous open tree
@@ -96,8 +101,25 @@ keys (inside tmux)
   M-s         focus the tree sidebar   M-B   hide/show the sidebar
   M-q         back to the session st was opened from
   M-Q         leave tmux; keep the tree session running
-USAGE
+  M-/         show these keys
+
+tree picker
+  Enter  open tree           Ctrl-D  delete tree
+
+sidebar
+  Enter / l   open tree      j / k   move      g / G   first / last
+  d           delete tree    Ctrl-R  reload
+  Esc / h / q back to the tab
+KEYS
 }
+
+cmd_keys() {
+  print_keys
+  [ "${1:-}" = --wait ] || return 0
+  printf '\npress any key to close' >&2
+  read -rsn1 _ || true
+}
+st_register_command 'keys' cmd_keys 'show the tmux key bindings'
 
 st_dispatch() {
   local name=${1:-} i

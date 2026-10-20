@@ -62,7 +62,7 @@ cmd_go() {
     esac
   done
 
-  local rows sel dir sess key branch main choices start
+  local rows sel dir sess key choices start
   if [ "${ST_PICKER_ROWS+x}" = x ]; then rows=$ST_PICKER_ROWS
   else rows=$(picker_rows | sort_recent); fi
 
@@ -97,14 +97,9 @@ cmd_go() {
     key=${sel%%$'\n'*}
     sel=${sel#*$'\n'}
     if [ "$key" = ctrl-d ]; then
-      declare -F cmd_rm >/dev/null || { info "remove module is unavailable"; return 0; }
+      declare -F remove_tree_at >/dev/null || { info "remove module is unavailable"; return 0; }
       case $sel in '+ new branch'*) return 0;; esac
-      dir=$(printf '%s' "$sel" | cut -f2)
-      branch=$(tree_branch "$dir")
-      [ -n "$branch" ] || die "cannot delete a detached worktree from the picker"
-      main=$(main_worktree "$dir")
-      [ "$dir" != "$main" ] || die "cannot delete the main worktree"
-      cmd_rm "$branch" --repo "$main"
+      remove_tree_at "$(printf '%s' "$sel" | cut -f2)"
       return
     fi
   fi

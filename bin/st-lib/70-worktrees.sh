@@ -198,6 +198,17 @@ git_op_in_progress() {
   [ -e "$git_dir/rebase-merge" ] || [ -e "$git_dir/rebase-apply" ] || [ -e "$git_dir/BISECT_START" ]
 }
 
+# Picker and sidebar rows carry a tree's path, not its branch.
+remove_tree_at() {
+  local dir=$1 branch main
+  [ -d "$dir" ] || die "already removed: $dir"
+  branch=$(tree_branch "$dir")
+  [ -n "$branch" ] || die "cannot delete a detached worktree"
+  main=$(main_worktree "$dir")
+  [ "$dir" != "$main" ] || die "cannot delete the main worktree"
+  cmd_rm "$branch" --repo "$main"
+}
+
 clear_tree_state() {
   local repo=$1 slug=$2 sess=$3 tmp
   rm -f "$ST_STATE/idx/$repo/$slug" \
@@ -211,6 +222,7 @@ clear_tree_state() {
     grep -vxF -- "$sess" "$ST_STATE/recent" > "$tmp" || true
     mv "$tmp" "$ST_STATE/recent"
   fi
+  if declare -F sidebar_forget >/dev/null; then sidebar_forget "$sess"; fi
 }
 
 cmd_remove_all() {
