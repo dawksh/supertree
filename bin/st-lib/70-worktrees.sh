@@ -155,9 +155,8 @@ cmd_rm() {
   fi
 
   dirty=$(git -C "$dir" status --porcelain 2>/dev/null || true)
-  if git -C "$dir" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
-    unpushed=$(git -C "$dir" log --format=%s '@{u}..' 2>/dev/null || true)
-  elif [ -n "$(git -C "$dir" remote)" ]; then
+  # Not `@{u}..`: trees branched off origin/dev track it, so commits merged in from any remote branch look unpushed.
+  if [ -n "$(git -C "$dir" remote)" ]; then
     unpushed=$(git -C "$dir" log --format=%s HEAD --not --remotes 2>/dev/null || true)
   else
     unpushed=''   # no remote configured, nothing can be "unpushed"
@@ -272,9 +271,7 @@ cmd_remove_all() {
     fi
     dirty=$(git -C "$dir" status --porcelain 2>/dev/null || true)
     unpushed=''
-    if git -C "$dir" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
-      unpushed=$(git -C "$dir" log --format=%s '@{u}..' 2>/dev/null || true)
-    elif [ -n "$(git -C "$dir" remote)" ]; then
+    if [ -n "$(git -C "$dir" remote)" ]; then
       unpushed=$(git -C "$dir" log --format=%s HEAD --not --remotes 2>/dev/null || true)
     fi
     if [ "$force" = 0 ] && [ -n "$dirty$unpushed" ]; then
