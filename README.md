@@ -4,15 +4,25 @@ Work on several branches of the same repo at once, each in its own git worktree
 and configurable tmux session, with your chosen coding agent and terminal tools
 already running.
 
-One key switches between trees, one key flips between your primary windows, and
-two keys leave tmux while keeping the tree running. Closing a tree with `st down`
-lets you reopen the agent in the same conversation.
+Run `st` on its own and you land in a tree: a sidebar listing every tree on the
+left, and your agent, editor and shell as tabs. One key switches between trees,
+one key flips between your primary windows, and two keys leave tmux while keeping
+the tree running. Closing a tree with `st down` lets you reopen the agent in the
+same conversation.
 
 ```
-tmux sessions
-  webauth/main       [codex][vim][shell]
-  webauth/feat-otp   [codex][vim][shell]
-  fe/crypto-monitor  [codex][vim][shell]
+ webauth/feat-otp      1. claude ●   2. vim   3. shell
+┌──────────────────┐ ┌──────────────────────────────────────┐
+│ webauth          │ │                                      │
+│   · main         │ │  claude                              │
+│   ● feat-otp     │ │                                      │
+│   ◐ crypto-mon   │ │                                      │
+│                  │ │                                      │
+│ fe               │ │                                      │
+│   ○ old-branch   │ │                                      │
+│                  │ │                                      │
+│ + new            │ │                                      │
+└──────────────────┘ └──────────────────────────────────────┘
 ```
 
 ---
@@ -138,7 +148,8 @@ cd ~/projects/webauth
 st new feat-otp        # worktree + deps + env + session, drops you in the agent
 # ... work ...
 M-q                    # back to where you ran st; the tree keeps running
-st resume feat-otp     # back in the running tree
+st                     # from anywhere: back into the tree you used last
+M-w                    # jump to any other tree
 st down feat-otp       # close the tree session; agent history stays
 st rm feat-otp         # done with it: session, worktree and branch go away
 ```
@@ -149,10 +160,14 @@ st rm feat-otp         # done with it: session, worktree and branch go away
 
 | command | what it does |
 |---|---|
+| `st` | Open the tree you are standing in. Outside a known tree, open the one you used most recently. Inside a repository `st` has not seen yet, registers it and opens its main checkout. Same as `st open`. |
 | `st new <branch>` | Create the worktree, bootstrap it, build the tmux session, switch to it. Reuses the branch if it already exists, otherwise creates it. |
 | `st trust` | Trust the current contents of this repository's reviewed `.supertree` file. Run again if the file changes. |
 | `st go [query]` | Switch to a tree. No query opens an fzf picker; a query picks the first match. Builds the session first if the tree is closed. |
 | `st resume [query]` | Same as `go`. Named for the case where you closed a tree earlier and want it back. |
+| `st roots` | Pick a known repository, type a branch, and create a tree there (what `M-r` runs). |
+| `st last` | Switch to the tree you were in before (what `M-Tab` runs). |
+| `st split` | Open another copy of this tab's program side by side (what `M-v` runs). |
 | `st down [branch]` | Close a tree's tmux session. Worktree, branch and agent history stay. No branch = the tree you are in. |
 | `st down --all` | Close every tree session. Lists them and asks first. |
 | `st down --subtrees` | Close linked worktree sessions and keep main sessions open. Lists them and asks first. |
@@ -163,6 +178,8 @@ st rm feat-otp         # done with it: session, worktree and branch go away
 | `st update` | Check for the latest release and install it automatically when available. |
 | `st uninstall` | Remove the installed command, Supertree config, tmux source line, and state. |
 | `st doctor` | Check dependencies, `PATH`, the symlink, the `~/.tmux.conf` line. |
+| `st keys` | Print every tmux key binding (`M-/` shows the same list in a popup). |
+| `st help` | List commands and keys. `st --version` prints the installed version. |
 
 ### Flags
 
@@ -176,8 +193,9 @@ st down --all -y                 skip the confirmation
 
 ### Internal
 
-`st window`, `st agent`, `st toggle`, `st go --picker`, `st go --popup`, `st _run`, `st _agent`,
-`st _sessions` are called by the tmux bindings, not by hand.
+`st window`, `st agent`, `st toggle`, `st leave`, `st go --picker`, `st go --popup`,
+`st roots --popup`, `st _run`, `st _agent`, `st _sessions`, `st _tree-next`, `st _tree-prev`
+and the `st _sidebar*` commands are called by the tmux bindings and the sidebar, not by hand.
 
 ---
 
@@ -197,8 +215,8 @@ st down --all -y                 skip the confirmation
 | `M-h` / `M-l` | move to the pane on the left / right (the sidebar is leftmost) |
 | `M-x` | close the focused pane after a y/n prompt (does nothing on the sidebar) |
 | `M-v` | open another copy of this tab's program side by side (a fresh agent session in the agent tab); `exit` or `prefix x` closes it |
-| `M-s` | focus the tree sidebar; Escape goes back to the tab |
-| `M-B` (Option-Shift-B) | hide or show the sidebar in every tree window |
+| `M-s` | focus the tree sidebar with the cursor on the tree you are in; Escape goes back to the tab |
+| `M-B` (Option-Shift-B) | hide or show the sidebar in every tree window; showing it also focuses it |
 | `M-q` | go back to the session you ran `st` from (leaves tmux if you started outside it) |
 | `M-Q` (Option-Shift-Q) | leave tmux; keep the current tree session running |
 | `M-/` | popup listing every key (`st keys` prints the same list) |
@@ -221,15 +239,18 @@ best effort check of the pane; custom agents may need their own prompt pattern.
 
 ```
 ~/projects/webauth                        main checkout
-~/projects/.worktrees/webauth-<repo-id>/feat-otp-<branch-id>  worktree
-tmux session "webauth/feat-otp"                                windows: codex, vim, shell
+~/projects/.worktrees/webauth-2a305/feat-otp-53fa2  worktree
+tmux session "webauth/feat-otp"                     windows: codex, vim, shell
 ```
 
-The IDs in worktree paths are stable hashes of the main checkout path and the
-exact branch name. They keep branches such as `feat/a-b` and `feat-a-b`, and
-repositories with the same directory name, separate. Existing worktrees made
-with the old path layout are reused when Git confirms the exact repository and
-branch. Session names stay readable as `<repo>/<branch>`; a short hash is added
+The 5-character IDs in worktree paths are the start of stable hashes of the main
+checkout path and the exact branch name. They keep branches such as `feat/a-b`
+and `feat-a-b`, and repositories with the same directory name, separate, while
+keeping the path short enough to read in your prompt and in the agent's footer.
+Trees created before this change keep their full 32-character paths and keep
+working; so do worktrees from the even older path layout, when Git confirms the
+exact repository and branch. State files (`idx`, `seen`, `trust`) still use the
+full hash, so nothing is lost. Session names stay readable as `<repo>/<branch>`; a short hash is added
 only when two trees would otherwise get the same name. Sessions opened under the
 older hashed names are renamed the next time supertree lists trees. Windows are addressed
 by **name**, not index, so your `base-index` setting is irrelevant.
@@ -271,9 +292,11 @@ ST_TAB_git='lazygit'
 ```
 
 Each pane is drawn as a card: a slightly lighter background, a gap where the
-border would be, and a title row (` claude `, or ` claude 2 ` once you split).
-The focused card is a shade lighter. tmux has no real padding, so text still
-runs to the card's edge.
+border would be, and a title row (` claude `, or ` claude 2 ` once you split)
+that is brighter on the focused card. tmux has no real padding, so a 2-column
+scrollbar in the card colour gives shells and agents a left margin. tmux hides
+scrollbars for full-screen programs (vim, fzf, the sidebar), so those keep their
+own edges. The margin needs tmux 3.6 or newer; older versions skip it.
 
 Tree sessions show their windows as tabs at the top (` 1. claude ● ` ` 2. vim ` ` 3. shell `);
 `●` marks a running agent. The tab bar is set per tree session, so other tmux
@@ -311,7 +334,9 @@ lands in the tab's program pane, never in the sidebar. In the sidebar, Enter
 switches to the highlighted tree (`j`/`k` move, `g`/`G` jump to the ends, `l` opens, `h` or `q` go back), `+ new` opens the `M-w` picker,
 `d` deletes the highlighted tree (same checks and y/n prompt as `st rm`, in a popup),
 Escape returns to the tab, and Ctrl-R reloads by hand. `M-s` focuses the sidebar
-and `M-B` hides or shows it everywhere.
+and moves its cursor back to the tree you are in. `M-B` hides or shows it
+everywhere; when it shows the sidebar it also focuses the one in the current
+window.
 
 One background refresher per tmux server keeps every sidebar current. It
 re-reads agent states every 2 seconds and the tree list when sessions open or
@@ -374,7 +399,7 @@ one invocation.
 1. **Pre-create** — for a new branch, runs `ST_PRE_CREATE` in the main checkout
    and picks the start point: `--from`, else `ST_BASE_BRANCH`, else current HEAD.
    If the hook fails, no worktree is created.
-2. **Worktree** — `git worktree add` under `~/projects/.worktrees/<repo>/<slug>`.
+2. **Worktree** — `git worktree add` under `~/projects/.worktrees/<repo>-<id>/<branch>-<id>`.
 3. **Deps** — symlinks each `ST_LINK_DIRS` entry from the main checkout, but only
    when the lockfile is byte-identical. If it differs, runs `ST_INSTALL_CMD`
    instead, so a branch that changed dependencies never silently runs main's
@@ -484,14 +509,16 @@ the `st` symlink, not the checkout.
 
 | path | holds |
 |---|---|
-| `~/projects/.worktrees/<repo-id>/<branch-id>` | new worktrees (old paths remain usable) |
-| `~/.local/state/supertree/repos` | repos `st` knows about (appended by `st new`) |
+| `~/projects/.worktrees/<repo>-<id>/<branch>-<id>` | new worktrees, 5-character IDs (old paths remain usable) |
+| `~/.local/state/supertree/repos` | repos `st` knows about (appended by `st new` and bare `st`) |
+| `~/.local/state/supertree/recent` | trees in the order you last opened them; bare `st` and `M-w` read it |
+| `~/.local/state/supertree/sidebar/` | sidebar row cache, refresher lock, and one fzf socket per sidebar |
 | `~/.local/state/supertree/idx/<repo-id>/<branch-id>` | that tree's `ST_TREE_INDEX` |
 | `~/.local/state/supertree/seen/<repo-id>/<branch-id>.<harness>` | marker meaning that agent has run here, drives continuation |
 | `~/.local/state/supertree/trust/<repo-id>` | hash of the reviewed `.supertree` contents |
 | `~/.local/state/supertree/origin/<tty>` | which session a client came from, so closing a tree returns it there |
 
-A repo only shows up in `st go` / `st ls` after its first `st new`. Override the
+A repo only shows up in `st go` / `st ls` after its first `st new` or bare `st`. Override the
 worktree root with `ST_WORKTREE_ROOT`, the state dir with `ST_STATE`.
 
 ---
@@ -506,7 +533,7 @@ quick test: if those work, these do.
 tmux client. Harmless from scripts; from a real pane it switches normally.
 
 **A tree is missing from the picker** — its repo was never registered. Run
-`st new` once in that repo, or add the main checkout path to
+`st` or `st new` once in that repo, or add the main checkout path to
 `~/.local/state/supertree/repos`.
 
 **`st new` ran a full install instead of linking** — the main checkout's lockfile
