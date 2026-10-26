@@ -89,11 +89,12 @@ fi
 cat > "$config" <<'CONFIG'
 main=/tmp/evil dir=x branch=y
 ST_LINK_DIRS=('node mods')
-ST_COPY_GLOBS=('*.copy')
+ST_COPY_GLOBS=('*.copy' 'spaced name.txt')
 write_marker() { printf '%s\n' "$ST_TREE_BRANCH" > "$1"; }
 ST_POST_CREATE='write_marker "it'\''s \"quoted\".txt"'
 CONFIG
 printf 'copied\n' > "$TEST_ROOT/a/demo/my file.copy"
+printf 'spaced\n' > "$TEST_ROOT/a/demo/spaced name.txt"
 mkdir "$TEST_ROOT/a/demo/node mods"
 ( cd "$TEST_ROOT/a/demo" && "$ROOT/bin/st" trust ) >/dev/null
 ( cd "$TEST_ROOT/a/demo" && "$ROOT/bin/st" new cfg/scoped ) >/dev/null 2>&1 ||
@@ -103,6 +104,8 @@ scoped_dir=$(git -C "$TEST_ROOT/a/demo" worktree list --porcelain |
 [ -n "$scoped_dir" ] || fail 'config locals broke worktree creation'
 [ "$(cat "$scoped_dir/my file.copy" 2>/dev/null)" = copied ] ||
   fail 'ST_COPY_GLOBS did not read back from the config'
+[ "$(cat "$scoped_dir/spaced name.txt" 2>/dev/null)" = spaced ] ||
+  fail 'ST_COPY_GLOBS entry with a space was split into words'
 [ -L "$scoped_dir/node mods" ] || fail 'ST_LINK_DIRS entry with a space did not read back'
 [ "$(cat "$scoped_dir/it's \"quoted\".txt" 2>/dev/null)" = cfg/scoped ] ||
   fail 'post-create hook with quotes did not run in the tree with the real branch'
@@ -136,5 +139,18 @@ indexes=$(cat "$TEST_ROOT/idx-out"/* | sort -n)
 [ "$(printf '%s\n' "$indexes" | tr '\n' ' ')" = '1 2 3 4 5 6 7 8 9 10 ' ] ||
   fail "concurrent tree_index gave duplicate or missing indexes: $(printf '%s' "$indexes" | tr '\n' ' ')"
 [ ! -e "$ST_STATE/idx/.lock" ] || fail 'tree_index left its lock dir behind'
+
+# An empty or junk-filled index folder must not abort under set -e with the lock held.
+mkdir -p "$ST_STATE/idx/emptyrepo" "$ST_STATE/idx/junkrepo"
+printf 'junk\n08\n' > "$ST_STATE/idx/junkrepo/old"
+for repo in emptyrepo junkrepo; do
+  bash -c 'set -euo pipefail
+    . "$1/bin/st-lib/00-core.sh"; . "$1/bin/st-lib/20-repository.sh"
+    tree_index "$2" first missing-old' _ "$ROOT" "$repo" > "$TEST_ROOT/idx-$repo" 2>&1 ||
+    fail "tree_index failed on the $repo folder: $(cat "$TEST_ROOT/idx-$repo")"
+  [ ! -e "$ST_STATE/idx/.lock" ] || fail "tree_index kept its lock after the $repo folder"
+done
+[ "$(cat "$TEST_ROOT/idx-emptyrepo")" = 1 ] || fail 'empty index folder did not start at 1'
+[ "$(cat "$TEST_ROOT/idx-junkrepo")" = 9 ] || fail 'junk index file was not skipped'
 
 printf 'ok: unique worktree identity, safe removal, and config trust\n'

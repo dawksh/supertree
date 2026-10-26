@@ -110,4 +110,45 @@ ST_STATE="$tmux_state" ST_WORKTREE_ROOT="$TEST_ROOT" "$ROOT/bin/st" go multi-age
 grep -F -- '-n codex' "$ST_TMUX_LOG" >/dev/null || fail 'session did not create a codex window'
 grep -F -- '_run _agent' "$ST_TMUX_LOG" >/dev/null || fail 'session did not use the generic agent launcher'
 
-printf 'ok: harness launch, continuation, and tmux window selection\n'
+# agent_statuses reads one tmux snapshot and captures only running panes' screens.
+screens="$TEST_ROOT/screens"
+mkdir -p "$screens"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'printf "%s\n" "$*" >> "$ST_TMUX_LOG"' \
+  'case ${1:-} in' \
+  '  list-panes) printf "%s\n" "$ST_TEST_PANES";;' \
+  '  capture-pane) cat "$ST_TEST_SCREENS/${4#%}" 2>/dev/null || printf "Working...\n";;' \
+  'esac' > "$HOME/.local/bin/tmux"
+printf '› \n' > "$screens/6"
+printf '❯ \n' > "$screens/7"
+printf 'Overwrite? [y/N]\n' > "$screens/8"
+panes=$(printf '%s\n' \
+  $'plain\tclaude\t%1\t\t\tbash\t' \
+  $'harness\tclaude\t%2\t\t\tclaude\t' \
+  $'node\tclaude\t%3\t\t\tnode\t' \
+  $'bun\tclaude\t%4\t\t\tbun\t' \
+  $'finished\tclaude\t%5\tdone\t\tclaude\t' \
+  $'chevron\tclaude\t%6\trunning\t\tclaude\t' \
+  $'arrow\tclaude\t%7\trunning\t\tclaude\t' \
+  $'confirm\tclaude\t%8\trunning\t\tclaude\t' \
+  $'custom\tclaude\t%9\tdone\tagent\tclaude\t' \
+  $'custom\tagent\t%10\trunning\tagent\tnode\t' \
+  $'side\tclaude\t%11\t\t\tbash\t1' \
+  $'side\tclaude\t%12\trunning\t\tclaude\t' \
+  $'nowindow\tshell\t%13\trunning\t\tbash\t')
+: > "$ST_TMUX_LOG"
+statuses=$(ST_TEST_PANES=$panes ST_TEST_SCREENS=$screens ST_HARNESS=claude ST_HARNESS_COMMAND='' \
+  PATH="$HOME/.local/bin:$PATH" bash -c 'set -euo pipefail
+    st_register_command() { :; }
+    . "$1/bin/st-lib/00-core.sh"; . "$1/bin/st-lib/40-agent.sh"
+    agent_statuses' _ "$ROOT") || fail 'agent_statuses failed'
+expected=$(printf '%s\t%s\n' plain done harness running node running bun running finished done \
+  chevron input arrow input confirm input custom running side running nowindow done)
+[ "$statuses" = "$expected" ] || fail "agent_statuses gave [$statuses], expected [$expected]"
+[ "$(grep -c '^list-panes -a ' "$ST_TMUX_LOG")" = 1 ] || fail 'agent_statuses did not use one list-panes -a call'
+[ "$(grep -c '^list-panes' "$ST_TMUX_LOG")" = 1 ] || fail 'agent_statuses listed panes per session'
+captured=$(sed -n 's/^capture-pane -p -t \(%[0-9]*\) .*/\1/p' "$ST_TMUX_LOG" | tr '\n' ' ')
+[ "$captured" = '%2 %3 %4 %6 %7 %8 %10 %12 ' ] || fail "screens captured for non-running panes: [$captured]"
+
+printf 'ok: harness launch, continuation, tmux window selection, and agent statuses\n'

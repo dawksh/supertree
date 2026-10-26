@@ -68,11 +68,13 @@ bootstrap() {
   fi
 
   for g in ${ST_COPY_GLOBS[@]+"${ST_COPY_GLOBS[@]}"}; do
-    for f in "$main"/$g; do
-      [ -e "$f" ] || continue
-      cp -R "$f" "$dir/"
-      info "copied $(basename "$f")"
-    done
+    # Empty IFS: $g still expands as a glob but a space in it no longer splits it.
+    ( IFS=
+      for f in "$main"/$g; do
+        [ -e "$f" ] || continue
+        cp -R "$f" "$dir/"
+        info "copied $(basename "$f")"
+      done )
   done
 
   if [ -n "$ST_POST_CREATE" ]; then

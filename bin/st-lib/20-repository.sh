@@ -20,6 +20,16 @@ register_repo() {
   grep -qxF "$1" "$ST_REPOS" 2>/dev/null || printf '%s\n' "$1" >> "$ST_REPOS"
 }
 
+# Resolved like git's own worktree paths, so list_trees rows compare equal
+# even when a repos entry runs through a symlink (macOS /var -> /private/var).
+main_checkouts() {
+  local r
+  [ -f "$ST_REPOS" ] || return 0
+  while IFS= read -r r; do
+    (cd "$r" >/dev/null 2>&1 && pwd -P) || true
+  done < "$ST_REPOS"
+}
+
 trees_or_list() {
   if [ $# -gt 0 ]; then printf '%s\n' "$1"; else list_trees; fi
 }
@@ -144,7 +154,9 @@ tree_index() {
     sleep 0.1
   done
   if [ ! -f "$f" ]; then
-    n=$(cat "$ST_STATE/idx/$repo"/* "$ST_STATE/idx/$old_repo"/* 2>/dev/null | sort -n | tail -1 || true)
+    # Only whole numbers count: anything else would abort the arithmetic with the lock held.
+    n=$(cat "$ST_STATE/idx/$repo"/* "$ST_STATE/idx/$old_repo"/* 2>/dev/null |
+      awk '/^[0-9]+$/ && $1 + 0 > max { max = $1 + 0 } END { print max + 0 }' || true)
     printf '%s\n' "$(( ${n:-0} + 1 ))" > "$f" || { rmdir "$lock"; die "cannot write $f"; }
   fi
   rmdir "$lock"

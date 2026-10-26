@@ -287,7 +287,7 @@ known_sessions() {
 
 subtree_sessions() {
   local repos repo branch path sess
-  repos=$(cat "$ST_REPOS" 2>/dev/null || true)
+  repos=$(main_checkouts)
   while IFS=$'\t' read -r repo branch path sess; do
     [ -n "$path" ] || continue
     case $'\n'"$repos"$'\n' in *$'\n'"$path"$'\n'*) continue;; esac
@@ -304,16 +304,16 @@ live_only() {
 }
 
 ensure_main_fallbacks() {
-  local trees=$1 repo branch path subtree main main_row main_branch main_sess
+  local trees=$1 repos repo branch path subtree main main_row main_branch main_sess
+  repos=$(main_checkouts)
   while IFS=$'\t' read -r repo branch path subtree; do
     [ -n "$path" ] || continue
-    main=$(main_worktree "$path")
-    [ "$path" != "$main" ] || continue
+    case $'\n'"$repos"$'\n' in *$'\n'"$path"$'\n'*) continue;; esac
     tmux has-session -t "=$subtree" 2>/dev/null || continue
-    main_row=$(printf '%s\n' "$trees" |
-      awk -F '\t' -v repo="$repo" -v path="$main" '$1 == repo && $3 == path { print $2 "\t" $4; exit }')
-    main_branch=${main_row%%$'\t'*}
-    main_sess=${main_row#*$'\t'}
+    main_row=$(printf '%s\n' "$trees" | ST_MAINS=$repos awk -F '\t' -v repo="$repo" '
+      BEGIN { n = split(ENVIRON["ST_MAINS"], m, "\n"); for (i = 1; i <= n; i++) is_main[m[i]] = 1 }
+      $1 == repo && ($3 in is_main) { print $2 "\t" $3 "\t" $4; exit }')
+    IFS=$'\t' read -r main_branch main main_sess <<< "$main_row"
     [ -n "$main_sess" ] || continue
     adopt_hashed_session "$repo" "$main_branch" "$main_sess"
     if ! tmux has-session -t "=$main_sess" 2>/dev/null; then

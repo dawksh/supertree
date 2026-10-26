@@ -79,7 +79,7 @@ cmd_trust() {
 
 cmd_ls() {
   local repo branch path s live changes agent kind repos statuses
-  repos=$(cat "$ST_REPOS" 2>/dev/null || true)
+  repos=$(main_checkouts)
   statuses=$(agent_statuses)
   list_trees | while IFS=$'\t' read -r repo branch path s; do
     agent=$(printf '%s\n' "$statuses" | awk -F '\t' -v s="$s" '$1 == s { print $2; exit }')

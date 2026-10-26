@@ -120,7 +120,7 @@ sidebar_snapshot() {
 
 sidebar_rows() {
   local sess cache="$ST_SIDEBAR_DIR/rows" tmp
-  sess=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S' 2>/dev/null) || sess=''
+  sess=$(current_session)
   # A brand-new tree is missing from the refresher's cache; without it the cursor
   # would start on the header instead of the current tree.
   if [ ! -s "$cache" ] || ! awk -F '\t' -v s="$sess" '$5 == s { found = 1 } END { exit !found }' "$cache"; then
@@ -348,7 +348,7 @@ cmd_tree_step() {
   local step=$1 cur rows next dir
   [ -n "${TMUX:-}" ] || die "st _tree-next only works inside tmux"
   [ -s "$ST_SIDEBAR_DIR/rows" ] || { mkdir -p "$ST_SIDEBAR_DIR"; sidebar_snapshot > "$ST_SIDEBAR_DIR/rows"; }
-  cur=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S')
+  cur=$(current_session)
   # The cache can lag a just-closed tree by a tick; only step to sessions that are live now.
   rows=$(tmux list-sessions -F '#S' 2>/dev/null | awk -F '\t' 'NR == FNR { live[$0] = 1; next }
     $3 != "closed" && ($5 in live) { print $5 "\t" $4 }' - "$ST_SIDEBAR_DIR/rows")

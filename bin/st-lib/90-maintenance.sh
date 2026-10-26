@@ -162,9 +162,7 @@ cmd_uninstall() {
   case ${ans:-n} in y|Y|yes) ;; *) die "aborted";; esac
 
   sessions=$(known_sessions)
-  if [ -n "${TMUX:-}" ]; then
-    current_sess=$(tmux display-message -p '#S' 2>/dev/null || true)
-  fi
+  [ -z "${TMUX:-}" ] || current_sess=$(current_session)
   while IFS= read -r sess; do
     [ -n "$sess" ] || continue
     evacuate_clients "$sess"

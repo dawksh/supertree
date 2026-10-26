@@ -91,6 +91,11 @@ printf '%s\n' "$list" | grep -Eq '^demo/beta +open +done +clean +worktree$' || f
 if grep -q '^has-session ' "$ST_TEST_LOG"; then fail 'list queried tmux separately for each tree'; fi
 ST_TEST_SCREEN='› ' ST_TEST_PANES=$(printf '%s\tcodex\t%%1\trunning\tcodex\tbash' "$alpha_session") \
   "$ROOT/bin/st" ls | grep -Eq '^demo/alpha +open +input +clean +worktree$' || fail 'list lost input status'
+# Empty @st_agent_state and @st_agent_window leave consecutive tabs in the snapshot.
+list=$(ST_TEST_SCREEN='Working...' ST_TEST_PANES=$(printf '%s\tcodex\t%%1\t\t\tcodex\n%s\tcodex\t%%2\t\t\tbash' \
+  "$alpha_session" "$beta_session") "$ROOT/bin/st" ls)
+printf '%s\n' "$list" | grep -Eq '^demo/alpha +open +running +clean +worktree$' || fail 'list lost untracked running agent'
+printf '%s\n' "$list" | grep -Eq '^demo/beta +open +done +clean +worktree$' || fail 'list showed an untracked shell as running'
 
 : > "$ST_TEST_LOG"
 ST_TEST_PICK_KEY=escape "$ROOT/bin/st" go --picker
