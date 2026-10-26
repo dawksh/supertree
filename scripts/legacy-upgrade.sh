@@ -9,6 +9,8 @@ case $ST_VERSION in
   dev|'') printf 'st: the upgrade command is missing its release version\n' >&2; exit 1;;
   *[!A-Za-z0-9._-]*) printf 'st: invalid release version\n' >&2; exit 1;;
 esac
+command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 ||
+  { printf 'st: sha256sum or shasum is required\n' >&2; exit 1; }
 
 self=$0
 case $self in */*) ;; *) self=$(command -v -- "$self");; esac
@@ -22,6 +24,13 @@ trap "$cleanup" EXIT
 
 curl -fsSL "$release_root/releases/download/$ST_VERSION/st.tar.gz" -o "$tmp/st.tar.gz" ||
   { printf 'st: could not download modular release %s\n' "$ST_VERSION" >&2; exit 1; }
+curl -fsSL "$release_root/releases/download/$ST_VERSION/SHA256SUMS" -o "$tmp/SHA256SUMS" ||
+  { printf 'st: could not download checksums for %s\n' "$ST_VERSION" >&2; exit 1; }
+expected_sum=$(awk '$2 == "st.tar.gz" { print $1 }' "$tmp/SHA256SUMS")
+if command -v sha256sum >/dev/null 2>&1; then actual_sum=$(sha256sum "$tmp/st.tar.gz")
+else actual_sum=$(shasum -a 256 "$tmp/st.tar.gz"); fi
+[ -n "$expected_sum" ] && [ "$expected_sum" = "${actual_sum%% *}" ] ||
+  { printf 'st: modular release %s does not match its published checksum; nothing was changed\n' "$ST_VERSION" >&2; exit 1; }
 tar -tzf "$tmp/st.tar.gz" | awk '
   $0 == "st" || $0 == "st-lib/" || $0 ~ /^st-lib\/[A-Za-z0-9_.-]+\.sh$/ { next }
   { exit 1 }

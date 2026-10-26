@@ -2,51 +2,22 @@
 # supertree picker module
 
 picker_rows() {
-  local trees panes format name bin width label status path sess pane
+  local trees statuses
   if [ $# -gt 0 ]; then trees=$1; else trees=$(list_trees); fi
-  format='#{session_name}'$'\t''#{window_name}'$'\t''#{pane_id}'$'\t''#{@st_agent_state}'$'\t''#{@st_agent_window}'$'\t''#{pane_current_command}'$'\t''#{@st_sidebar}'
-  panes=$(tmux list-panes -a -F "$format" 2>/dev/null) || panes=''
-  name=$(harness_window)
-  bin=$(harness_bin)
-  bin=${bin##*/}
-
-  printf '%s\n' "$trees" | awk -F '\t' -v default_name="$name" -v bin="$bin" '
-    FILENAME == ARGV[1] {
-      s = $1
-      if (s == "" || $7 == 1) next
-      live[s] = 1
-      if ($5 != "") agent_window[s] = $5
-      wanted = agent_window[s] != "" ? agent_window[s] : default_name
-      if ($2 == wanted && !(s in agent_pane)) {
-        agent_pane[s] = $3
-        agent_state[s] = $4
-        agent_command[s] = $6
-      }
-      next
-    }
+  statuses=$(agent_statuses)
+  printf '%s\n' "$trees" | awk -F '\t' '
+    FILENAME == ARGV[1] { if ($1 != "") status_of[$1] = $2; next }
     $0 != "" {
       s = $4
       repo_label = $1
       sub(/-[^-]*$/, "", repo_label)
       label = repo_label "/" $2
-      if (!(s in live)) { status = "closed" }
-      else {
-        status = "done"
-        if (s in agent_pane && (agent_state[s] == "running" ||
-            (agent_state[s] == "" && (agent_command[s] == bin ||
-             agent_command[s] == "node" || agent_command[s] == "bun"))))
-          status = "running"
-      }
-      n++; row[n] = label "\t" status "\t" $3 "\t" s "\t" agent_pane[s]
+      n++; labels[n] = label
+      row[n] = ((s in status_of) ? status_of[s] : "closed") "\t" $3 "\t" s
       if (length(label) > width) width = length(label)
     }
-    END { for (i = 1; i <= n; i++) print width "\t" row[i] }
-  ' <(printf '%s\n' "$panes") - | while IFS=$'\t' read -r width label status path sess pane; do
-    if [ "$status" = running ] && [ -n "$pane" ] && agent_needs_input "$pane"; then
-      status=input
-    fi
-    printf '%-*s  %s\t%s\t%s\n' "$width" "$label" "$status" "$path" "$sess"
-  done
+    END { for (i = 1; i <= n; i++) printf "%-" width "s  %s\n", labels[i], row[i] }
+  ' <(printf '%s\n' "$statuses") -
 }
 
 # ---------------------------------------------------------------- commands
@@ -72,15 +43,18 @@ cmd_go() {
     [ -n "$popup_client" ] || die "no tmux client for tree picker"
     local self
     self=$(st_executable)
-    tmux display-popup -c "$popup_client" -d "$PWD" -E -w 80% -h 70% \
-      -e "ST_PICKER_ROWS=$rows" "$self go --picker"
+    tmux display-popup -c "$popup_client" -d "$PWD" -EE -w 80% -h 70% \
+      -e "ST_PICKER_ROWS=$rows" "$(printf '%q go --picker' "$self")"
     return
   fi
 
   if [ -n "$query" ]; then
-    sel=$(printf '%s\n' "$rows" | grep -i -- "$query" | head -1) || true
+    sel=$(printf '%s\n' "$rows" | ST_QUERY=$query awk -F '\t' '
+      { split($1, cols, " ") }
+      index(tolower(cols[1]), tolower(ENVIRON["ST_QUERY"])) { print; exit }')
     [ -n "$sel" ] || die "no tree matching: $query"
   else
+    command -v fzf >/dev/null || die "fzf is required for the tree picker"
     choices=$rows
     start=1
     if declare -F cmd_new >/dev/null; then
@@ -106,10 +80,14 @@ cmd_go() {
 
   case $sel in
     '+ new branch'*)
-      local b r
+      local b r root
       printf 'branch: ' >&2; read -r b
       [ -n "$b" ] || return 0
-      r=$(sort -u "$ST_REPOS")
+      r=$(sort -u "$ST_REPOS" | while IFS= read -r root; do
+        [ -d "$root" ] || continue
+        printf '%s\n' "$root"
+      done)
+      [ -n "$r" ] || die "no roots known yet — run 'st new <branch>' inside a repo"
       if [ "$(printf '%s\n' "$r" | wc -l)" -gt 1 ]; then
         r=$(printf '%s\n' "$r" | fzf --prompt='repo> ' --height=100% --reverse) || return 0
       fi
@@ -154,10 +132,11 @@ cmd_roots() {
 
   if [ -n "$popup_client" ]; then
     self=$(st_executable)
-    tmux display-popup -c "$popup_client" -E -w 80% -h 70% "$self roots"
+    tmux display-popup -c "$popup_client" -EE -w 80% -h 70% "$(printf '%q roots' "$self")"
     return
   fi
 
+  command -v fzf >/dev/null || die "fzf is required for the root picker"
   root=$(printf '%s\n' "$rows" |
     fzf --delimiter=$'\t' --with-nth=1 --height=100% --reverse \
         --border --border-label=' Roots ' --prompt='Find root › ' \

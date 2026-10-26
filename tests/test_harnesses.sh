@@ -15,6 +15,7 @@ for command in claude codex opencode aider; do
   printf '%s\n' \
     '#!/bin/sh' \
     'printf "%s|%s\n" "$(basename "$0")" "$*" >> "$ST_TEST_LOG"' \
+    '[ "$*" != "${ST_TEST_FAIL_ARGS-none}" ]' \
     > "$HOME/.local/bin/$command"
   chmod +x "$HOME/.local/bin/$command"
 done
@@ -57,6 +58,36 @@ printf 'ST_HARNESS=claude\n' > "$ST_CONFIG"
 : > "$ST_TEST_LOG"
 ST_HARNESS=codex ST_STATE="$TEST_ROOT/override-state" "$ROOT/bin/st" _agent
 assert_log 'codex|'
+
+# A failed `claude --continue` falls through instead of starting a new session.
+printf 'ST_HARNESS=claude\n' > "$ST_CONFIG"
+: > "$ST_TEST_LOG"
+ST_STATE="$TEST_ROOT/claude-fail-state" "$ROOT/bin/st" _agent
+out=$(ST_TEST_FAIL_ARGS=--continue ST_STATE="$TEST_ROOT/claude-fail-state" \
+  "$ROOT/bin/st" _agent 2>&1) || fail 'failed claude --continue made st _agent fail'
+assert_log "$(printf '%s\n%s' 'claude|' 'claude|--continue')"
+case $out in *"run 'claude' to start fresh"*) ;; *) fail "missing start-fresh hint: [$out]";; esac
+
+# Outside a git repository the pane's harness refuses, writes no markers,
+# and still drops into the shell.
+outside="$TEST_ROOT/not-a-repo"
+mkdir -p "$outside"
+printf '%s\n' '#!/bin/sh' 'printf "shell|%s\n" "$*" >> "$ST_TEST_LOG"' > "$TEST_ROOT/shell"
+chmod +x "$TEST_ROOT/shell"
+: > "$ST_TEST_LOG"
+out=$(cd "$outside" && GIT_CEILING_DIRECTORIES="$TEST_ROOT" SHELL="$TEST_ROOT/shell" \
+  ST_STATE="$TEST_ROOT/nogit-state" "$ROOT/bin/st" _run _agent 2>&1) ||
+  fail 'st _run _agent failed outside a git repository'
+case $out in *'not inside a git repository'*) ;; *) fail "unexpected outside-repo output: [$out]";; esac
+[ ! -e "$TEST_ROOT/nogit-state/seen" ] || fail 'markers were written outside a git repository'
+assert_log 'shell|-i'
+
+if out=$(cd "$outside" && GIT_CEILING_DIRECTORIES="$TEST_ROOT" \
+  ST_STATE="$TEST_ROOT/nogit-state" "$ROOT/bin/st" _agent 2>&1); then
+  fail 'st _agent succeeded outside a git repository'
+fi
+case $out in *'not inside a git repository'*) ;; *) fail "direct st _agent outside a repo: [$out]";; esac
+[ ! -e "$TEST_ROOT/nogit-state/seen" ] || fail 'direct st _agent wrote markers outside a git repository'
 
 # Session construction names the first window after the configured harness.
 export ST_TMUX_LOG="$TEST_ROOT/tmux.log"

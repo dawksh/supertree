@@ -1,8 +1,15 @@
 # shellcheck shell=bash
 # supertree maintenance module
 
+installed_tmux_conf() {
+  local tmux_conf=${TMUX_CONF:-} manifest
+  manifest="$(st_executable).install"
+  [ -n "$tmux_conf" ] || [ ! -f "$manifest" ] || tmux_conf=$(sed -n '2p' "$manifest")
+  printf '%s' "${tmux_conf:-$HOME/.tmux.conf}"
+}
+
 cmd_doctor() {
-  local ok=0 b deps='tmux git fzf' agent_bin windows type tab
+  local ok=0 b deps='tmux git fzf' agent_bin windows type tab tmux_conf
   windows=$(configured_windows)
   window_enabled vim && deps="$deps nvim"
   if window_enabled agent; then agent_bin=$(harness_bin); deps="$deps $agent_bin"; fi
@@ -19,8 +26,9 @@ cmd_doctor() {
   local self; self=$(command -v st 2>/dev/null) || self=""
   if [ -n "$self" ]; then printf '  ok    st on PATH (%s)\n' "$self"
   else printf '  MISS  st not on PATH\n'; ok=1; fi
-  if grep -q 'supertree.conf' "$HOME/.tmux.conf" 2>/dev/null; then printf '  ok    ~/.tmux.conf sources supertree.conf\n'
-  else printf '  MISS  ~/.tmux.conf does not source supertree.conf\n'; ok=1; fi
+  tmux_conf=$(installed_tmux_conf)
+  if grep -q 'supertree.conf' "$tmux_conf" 2>/dev/null; then printf '  ok    %s sources supertree.conf\n' "$tmux_conf"
+  else printf '  MISS  %s does not source supertree.conf\n' "$tmux_conf"; ok=1; fi
   printf '  --    worktree root %s\n' "$ST_WORKTREE_ROOT"
   printf '  --    repos known   %s\n' "$( [ -f "$ST_REPOS" ] && wc -l < "$ST_REPOS" | tr -d ' ' || echo 0)"
   printf '  --    harness       %s (%s)\n' "$(harness_label)" "$ST_HARNESS"
@@ -33,8 +41,11 @@ cmd_update() {
   [ $# -eq 0 ] || die "usage: st update"
   command -v curl >/dev/null 2>&1 || die "curl is required to update st"
   command -v tar >/dev/null 2>&1 || die "tar is required to update st"
+  command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 ||
+    die "sha256sum or shasum is required to update st"
 
   local release_root latest_url latest self prefix tmp candidate staged staged_lib cleanup previous_lib
+  local expected_sum actual_sum
   release_root=${ST_RELEASE_ROOT:-https://github.com/dawksh/supertree}
   latest_url=$(curl -fsS -o /dev/null -w '%{redirect_url}' "$release_root/releases/latest") ||
     die "could not check for updates"
@@ -62,6 +73,13 @@ cmd_update() {
 
   curl -fsSL "$release_root/releases/download/$latest/st.tar.gz" -o "$tmp/st.tar.gz" ||
     die "could not download st $latest"
+  curl -fsSL "$release_root/releases/download/$latest/SHA256SUMS" -o "$tmp/SHA256SUMS" ||
+    die "could not download checksums for st $latest"
+  expected_sum=$(awk '$2 == "st.tar.gz" { print $1 }' "$tmp/SHA256SUMS")
+  if command -v sha256sum >/dev/null 2>&1; then actual_sum=$(sha256sum "$tmp/st.tar.gz")
+  else actual_sum=$(shasum -a 256 "$tmp/st.tar.gz"); fi
+  [ -n "$expected_sum" ] && [ "$expected_sum" = "${actual_sum%% *}" ] ||
+    die "st $latest does not match its published checksum; nothing was changed"
   tar -tzf "$tmp/st.tar.gz" | awk '
     $0 == "st" || $0 == "st-lib/" || $0 ~ /^st-lib\/[A-Za-z0-9_.-]+\.sh$/ { next }
     { exit 1 }
@@ -103,6 +121,9 @@ cmd_update() {
     die "could not replace $self"
   fi
   [ -z "$previous_lib" ] || rm -rf "$previous_lib"
+  if [ -d "$prefix/st-lib-$ST_VERSION" ] && [ ! -L "$prefix/st-lib-$ST_VERSION" ]; then
+    rm -rf -- "$prefix/st-lib-$ST_VERSION"
+  fi
   info "updated st $ST_VERSION -> $latest"
 }
 
@@ -111,6 +132,7 @@ cmd_version() { printf "st %s\n" "$ST_VERSION"; }
 cmd_uninstall() {
   [ $# -eq 0 ] || die "usage: st uninstall"
   local self confdir tmux_conf fragment config staged sessions sess manifest key binding module_dir
+  local fragment_keys=''
   local had_fragment=0 current_sess='' close_current=0
   self=$(st_executable)
   [ -L "$self" ] || [ "$ST_VERSION" != dev ] ||
@@ -118,16 +140,15 @@ cmd_uninstall() {
   [ "$(basename "$self")" = st ] || die "unexpected executable path: $self"
   manifest="$self.install"
   confdir=${ST_CONFDIR:-}
-  tmux_conf=${TMUX_CONF:-}
-  if [ -f "$manifest" ]; then
-    [ -n "$confdir" ] || confdir=$(sed -n '1p' "$manifest")
-    [ -n "$tmux_conf" ] || tmux_conf=$(sed -n '2p' "$manifest")
-  fi
+  [ -n "$confdir" ] || [ ! -f "$manifest" ] || confdir=$(sed -n '1p' "$manifest")
   confdir=${confdir:-$HOME/.config/supertree}
-  tmux_conf=${tmux_conf:-$HOME/.tmux.conf}
+  tmux_conf=$(installed_tmux_conf)
   fragment="$confdir/supertree.conf"
-  [ ! -f "$fragment" ] || had_fragment=1
-  config=${_env_config:-$confdir/config}
+  if [ -f "$fragment" ]; then
+    had_fragment=1
+    fragment_keys=$(awk '$1 == "bind" && $2 == "-n" { print $3 }' "$fragment")
+  fi
+  config=${ST_CONFIG_FROM_ENV:-$confdir/config}
   if [ -d "$ST_STATE" ]; then
     local state_real
     state_real=$(cd "$ST_STATE" && pwd -P)
@@ -167,16 +188,16 @@ EOF
   rm -f -- "$fragment" "$config"
   [ ! -d "$confdir" ] || rmdir "$confdir" 2>/dev/null || true
   if command -v tmux >/dev/null 2>&1 && tmux list-sessions >/dev/null 2>&1; then
-    for key in M-w M-e M-Tab M-r M-1 M-2 M-3 M-4 M-5 M-6 M-7 M-8 M-9 M-q M-s M-B M-j M-k M-v; do
+    for key in M-w M-e M-Tab M-r M-1 M-2 M-3 M-4 M-5 M-6 M-7 M-8 M-9 M-q M-s M-B M-j M-k M-v M-/ $fragment_keys; do
       binding=$(tmux list-keys -T root "$key" 2>/dev/null || true)
       case $binding in *"$self"*) tmux unbind-key -n "$key" 2>/dev/null || true;; esac
     done
     if [ "$had_fragment" = 1 ]; then
-      for key in M-q M-Q; do
+      for key in M-q M-Q $fragment_keys; do
         binding=$(tmux list-keys -T root "$key" 2>/dev/null || true)
         case $binding in *'detach-client'*) tmux unbind-key -n "$key" 2>/dev/null || true;; esac
       done
-      for key in M-n M-p M-h M-l M-x; do
+      for key in M-n M-p M-h M-l M-x $fragment_keys; do
         binding=$(tmux list-keys -T root "$key" 2>/dev/null || true)
         case $binding in *'next-window'*|*'previous-window'*|*'select-pane -L'*|*'select-pane -R'*|*'kill-pane'*) tmux unbind-key -n "$key" 2>/dev/null || true;; esac
       done

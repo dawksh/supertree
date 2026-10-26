@@ -28,20 +28,42 @@ assert_log_excludes() {
   fi
 }
 
-printf '%s\n' \
-  '#!/usr/bin/env bash' \
-  'printf "%s\n" "$*" >> "$ST_TMUX_LOG"' \
-  'case ${1:-} in' \
-  '  has-session) exit 1;;' \
-  '  display-message)' \
-  '    last=${!#}' \
-  '    case $last in' \
-  '      "#W") printf "%s\n" "${ST_TEST_CURRENT_WINDOW:-codex}";;' \
-  '      "#S") printf "%s\n" "$ST_TEST_SESSION";;' \
-  '      "#{pane_current_path}") printf "%s\n" "$ST_TEST_PATH";;' \
-  '    esac;;' \
-  'esac' \
-  'exit 0' > "$HOME/.local/bin/tmux"
+# Stub tmux. ST_TEST_LIVE lists open sessions; ST_TEST_PLAIN_SESSIONS lists
+# sessions without a supertree label; ST_TEST_RACE_FLAG makes new-session lose
+# a race to a concurrent creator.
+cat > "$HOME/.local/bin/tmux" <<'STUB'
+#!/usr/bin/env bash
+printf "%s\n" "$*" >> "$ST_TMUX_LOG"
+target='' prev=''
+for arg in "$@"; do [ "$prev" = -t ] && target=$arg; prev=$arg; done
+target=${target#=}
+target=${target%%:*}
+is_live() { case " ${ST_TEST_LIVE:-} " in *" $1 "*) return 0;; esac; return 1; }
+case ${1:-} in
+  has-session)
+    [ -n "${ST_TEST_RACE_FLAG:-}" ] && [ -f "$ST_TEST_RACE_FLAG" ] && exit 0
+    is_live "$target" && exit 0
+    exit 1;;
+  new-session)
+    if [ -n "${ST_TEST_RACE_FLAG:-}" ]; then : > "$ST_TEST_RACE_FLAG"; exit 1; fi;;
+  list-sessions)
+    for s in ${ST_TEST_LIVE:-}; do printf "%s\n" "$s"; done;;
+  show-options)
+    case " ${ST_TEST_PLAIN_SESSIONS:-} " in
+      *" $target "*) ;;
+      *) printf "%s\n" "${ST_TEST_LABEL-supertree/main}";;
+    esac;;
+  display-message)
+    last=${!#}
+    case $last in
+      "#W") printf "%s\n" "${ST_TEST_CURRENT_WINDOW:-codex}";;
+      "#S") printf "%s\n" "$ST_TEST_SESSION";;
+      "#{pane_current_path}") printf "%s\n" "$ST_TEST_PATH";;
+      "#{client_tty}") printf "%s\n" "${ST_TEST_TTY:-}";;
+    esac;;
+esac
+exit 0
+STUB
 chmod +x "$HOME/.local/bin/tmux"
 
 fixture="$TEST_ROOT/supertree"
@@ -113,4 +135,101 @@ for invalid in 'agent nope' 'agent agent' ''; do
   fi
 done
 
-printf 'ok: configurable window layouts, shortcuts, and dependencies\n'
+# Set-option targets use the exact `=sess:` form.
+run_layout
+assert_log_contains "set-option -t =$main_session: @supertree_label"
+assert_log_contains "set-option -t =$main_session: @st_agent_window"
+assert_log_excludes "set-option -t $main_session "
+
+# The launch command quotes the st path, so a path with a space still runs.
+mkdir -p "$TEST_ROOT/with space"
+ln -s "$ROOT/bin/st" "$TEST_ROOT/with space/st"
+printf 'ST_HARNESS=codex\n' > "$ST_CONFIG"
+: > "$ST_TMUX_LOG"
+PATH="$TEST_ROOT/with space:$PATH" "$ROOT/bin/st" go main
+assert_log_contains "$(printf '%q' "$TEST_ROOT/with space/st") _run _agent"
+assert_log_contains "$(printf '%q' "$TEST_ROOT/with space/st") _run nvim"
+
+# Window shortcuts refuse outside a supertree session and create nothing.
+printf 'ST_HARNESS=codex\n' > "$ST_CONFIG"
+for args in 'window 1' 'toggle' 'agent'; do
+  : > "$ST_TMUX_LOG"
+  # shellcheck disable=SC2086
+  out=$(ST_TEST_LABEL='' "$ROOT/bin/st" $args 2>&1) || fail "st $args failed outside a tree session"
+  case $out in *'not a supertree session'*) ;; *) fail "st $args did not refuse: [$out]";; esac
+  assert_log_excludes 'new-window'
+  assert_log_excludes 'select-window'
+done
+
+# A concurrent `st go` that creates the session first counts as success.
+printf 'ST_HARNESS=codex\n' > "$ST_CONFIG"
+: > "$ST_TMUX_LOG"
+ST_TEST_RACE_FLAG="$TEST_ROOT/race" "$ROOT/bin/st" go main ||
+  fail 'losing the session-creation race was treated as failure'
+assert_log_contains "set-option -t =$main_session: @supertree_label"
+assert_log_contains "attach-session -t =$main_session"
+assert_log_excludes 'new-window'
+rm -f "$TEST_ROOT/race"
+
+# The origin is recorded only from a non-tree session; tree hops keep it.
+feature_session=$("$ROOT/bin/st" _sessions | grep -x 'supertree/feature' | head -1)
+[ -n "$feature_session" ] || fail 'feature session was not listed'
+tty=/dev/ttys042
+origin_file="$ST_STATE/origin/$(printf '%s' "$tty" | tr '/' '-')"
+rm -rf "$ST_STATE/origin"
+TMUX=fake ST_TEST_TTY=$tty ST_TEST_SESSION=work ST_TEST_PLAIN_SESSIONS=work \
+  "$ROOT/bin/st" go feature
+[ "$(cat "$origin_file" 2>/dev/null)" = work ] || fail 'origin was not recorded from a non-tree session'
+TMUX=fake ST_TEST_TTY=$tty ST_TEST_SESSION="$feature_session" "$ROOT/bin/st" go main
+[ "$(cat "$origin_file")" = work ] || fail 'hopping between trees overwrote the origin'
+rm -rf "$ST_STATE/origin"
+TMUX=fake ST_TEST_TTY=$tty ST_TEST_SESSION="$feature_session" "$ROOT/bin/st" go main
+[ ! -e "$origin_file" ] || fail 'a tree session was recorded as the origin'
+
+# Leaving returns to the origin and forgets it.
+mkdir -p "$ST_STATE/origin"
+printf 'work\n' > "$origin_file"
+: > "$ST_TMUX_LOG"
+TMUX=fake ST_TEST_LIVE=work ST_TEST_SESSION="$main_session" "$ROOT/bin/st" leave "$tty"
+assert_log_contains "switch-client -c $tty -t =work"
+[ ! -e "$origin_file" ] || fail 'st leave kept the origin file'
+
+# Modules share one namespace; a reused helper name silently replaces the other.
+duplicates=$(cat "$ROOT"/bin/st-lib/*.sh |
+  sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)() *{.*/\1/p' | sort | uniq -d)
+[ -z "$duplicates" ] || fail "helpers defined more than once: $duplicates"
+
+# `st down <name>` closes the matching tree, by label or by partial name.
+for name in supertree/feature feature; do
+  : > "$ST_TMUX_LOG"
+  ST_TEST_LIVE="$main_session $feature_session" "$ROOT/bin/st" down "$name" ||
+    fail "st down $name failed"
+  assert_log_contains "kill-session -t =$feature_session"
+  assert_log_excludes "kill-session -t =$main_session"
+done
+: > "$ST_TMUX_LOG"
+out=$("$ROOT/bin/st" down feature 2>&1) || fail 'st down on a closed tree failed'
+case $out in *'supertree/feature already closed'*) ;; *) fail "unexpected down output: [$out]";; esac
+assert_log_excludes 'kill-session'
+
+# --all/--subtrees still close open trees when the last known tree is closed.
+git -C "$fixture" worktree add -q -b zlast \
+  "$(cd "$HOME/projects/.worktrees" && pwd -P)/supertree/zlast"
+last_session=$("$ROOT/bin/st" _sessions | tail -1)
+[ "$last_session" = 'supertree/zlast' ] || fail "unexpected last tree: [$last_session]"
+
+: > "$ST_TMUX_LOG"
+ST_TEST_LIVE="$main_session" "$ROOT/bin/st" down --all -y 2>/dev/null ||
+  fail 'st down --all failed'
+assert_log_contains "kill-session -t =$main_session"
+assert_log_excludes "kill-session -t =$last_session"
+
+: > "$ST_TMUX_LOG"
+ST_TEST_LIVE="$feature_session" "$ROOT/bin/st" down --subtrees -y 2>/dev/null ||
+  fail 'st down --subtrees failed'
+assert_log_contains "kill-session -t =$feature_session"
+assert_log_contains "new-session -d -s $main_session"
+assert_log_excludes "kill-session -t =$main_session"
+assert_log_excludes "kill-session -t =$last_session"
+
+printf 'ok: window layouts, shortcuts, origins, races, and st down\n'

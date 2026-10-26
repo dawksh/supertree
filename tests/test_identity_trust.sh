@@ -85,4 +85,56 @@ if ( cd "$TEST_ROOT/a/demo" && "$ROOT/bin/st" new changed ) >/dev/null 2>&1; the
   fail 'changed repository config executed without renewed trust'
 fi
 
+# A trusted config cannot redirect bootstrap by assigning its locals.
+cat > "$config" <<'CONFIG'
+main=/tmp/evil dir=x branch=y
+ST_LINK_DIRS=('node mods')
+ST_COPY_GLOBS=('*.copy')
+write_marker() { printf '%s\n' "$ST_TREE_BRANCH" > "$1"; }
+ST_POST_CREATE='write_marker "it'\''s \"quoted\".txt"'
+CONFIG
+printf 'copied\n' > "$TEST_ROOT/a/demo/my file.copy"
+mkdir "$TEST_ROOT/a/demo/node mods"
+( cd "$TEST_ROOT/a/demo" && "$ROOT/bin/st" trust ) >/dev/null
+( cd "$TEST_ROOT/a/demo" && "$ROOT/bin/st" new cfg/scoped ) >/dev/null 2>&1 ||
+  fail 'st new failed with a config that assigns main/dir/branch'
+scoped_dir=$(git -C "$TEST_ROOT/a/demo" worktree list --porcelain |
+  awk '/^worktree /{p=substr($0,10)} /^branch refs\/heads\/cfg\/scoped$/{print p}')
+[ -n "$scoped_dir" ] || fail 'config locals broke worktree creation'
+[ "$(cat "$scoped_dir/my file.copy" 2>/dev/null)" = copied ] ||
+  fail 'ST_COPY_GLOBS did not read back from the config'
+[ -L "$scoped_dir/node mods" ] || fail 'ST_LINK_DIRS entry with a space did not read back'
+[ "$(cat "$scoped_dir/it's \"quoted\".txt" 2>/dev/null)" = cfg/scoped ] ||
+  fail 'post-create hook with quotes did not run in the tree with the real branch'
+[ ! -e "$TEST_ROOT/a/demo/x" ] && [ ! -e "$scoped_dir/x" ] ||
+  fail 'config dir=x redirected bootstrap'
+
+# Worktrees whose directory was deleted (git marks them prunable) are not listed.
+kept=$(new_bare "$TEST_ROOT/b/demo" prune-kept)
+gone=$(new_bare "$TEST_ROOT/b/demo" prune-gone)
+"$ROOT/bin/st" _sessions | grep -q '/prune-gone$' || fail 'new tree missing from sessions'
+rm -rf "$gone"
+git -C "$TEST_ROOT/b/demo" worktree list --porcelain | grep -q '^prunable' ||
+  fail 'git did not report the deleted worktree as prunable'
+sessions=$("$ROOT/bin/st" _sessions)
+if printf '%s\n' "$sessions" | grep -q '/prune-gone$'; then
+  fail 'a prunable worktree was still listed'
+fi
+printf '%s\n' "$sessions" | grep -q '/prune-kept$' || fail 'a live worktree was dropped'
+[ -d "$kept" ] || fail 'kept worktree vanished'
+
+# Concurrent index allocation hands out unique numbers and releases the lock.
+# Called through $(...) as cmd_new does: errexit is off there, as in st.
+mkdir -p "$TEST_ROOT/idx-out"
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  bash -c 'set -euo pipefail
+    . "$1/bin/st-lib/00-core.sh"; . "$1/bin/st-lib/20-repository.sh"
+    idx=$(tree_index lockrepo "slug-$2" lockold); printf "%s\n" "$idx"' _ "$ROOT" "$i" > "$TEST_ROOT/idx-out/$i" &
+done
+wait
+indexes=$(cat "$TEST_ROOT/idx-out"/* | sort -n)
+[ "$(printf '%s\n' "$indexes" | tr '\n' ' ')" = '1 2 3 4 5 6 7 8 9 10 ' ] ||
+  fail "concurrent tree_index gave duplicate or missing indexes: $(printf '%s' "$indexes" | tr '\n' ' ')"
+[ ! -e "$ST_STATE/idx/.lock" ] || fail 'tree_index left its lock dir behind'
+
 printf 'ok: unique worktree identity, safe removal, and config trust\n'

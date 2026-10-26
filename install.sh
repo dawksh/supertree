@@ -10,6 +10,7 @@
 #   ST_YES=1            answer yes to every prompt (non-interactive installs)
 #   ST_HARNESS=codex     choose claude, codex, or openrouter without a prompt
 #   ST_WINDOWS='agent shell'  choose and order tmux windows
+# tmux keys are read from ST_KEY_* in the config (see README "Keys")
 set -euo pipefail
 
 PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"
@@ -27,6 +28,8 @@ WINDOWS_OVERRIDE=${ST_WINDOWS:-}
 
 command -v curl >/dev/null 2>&1 || { printf 'st: curl is required\n' >&2; exit 1; }
 command -v tar >/dev/null 2>&1 || { printf 'st: tar is required\n' >&2; exit 1; }
+command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 ||
+  { printf 'st: sha256sum or shasum is required\n' >&2; exit 1; }
 
 if [ "$VERSION" = latest ]; then
   latest_url=$(curl -fsS -o /dev/null -w '%{redirect_url}' "$RELEASE_ROOT/releases/latest") || {
@@ -195,11 +198,11 @@ write_config() {
         -v write_harness="$CONFIG_HARNESS_NEEDS_WRITE" -v write_windows="$CONFIG_WINDOWS_NEEDS_WRITE" '
       BEGIN { harness_written=0; windows_written=0 }
       /^ST_HARNESS=/ && write_harness { if (!harness_written) print "ST_HARNESS=" harness; harness_written=1; next }
-      /^ST_WINDOWS=/ && write_windows { if (!windows_written) print "ST_WINDOWS=\"" windows "\""; windows_written=1; next }
+      /^ST_WINDOWS=/ && write_windows { if (!windows_written) print "ST_WINDOWS=\047" windows "\047"; windows_written=1; next }
       { print }
       END {
         if (write_harness && !harness_written) print "ST_HARNESS=" harness
-        if (write_windows && !windows_written) print "ST_WINDOWS=\"" windows "\""
+        if (write_windows && !windows_written) print "ST_WINDOWS=\047" windows "\047"
       }
     ' "$CONFIG" > "$staged"
     install -m 0644 "$staged" "$CONFIG"
@@ -217,6 +220,59 @@ write_config() {
   fi
 }
 
+# ---------------------------------------------------------------- bindings
+
+# The path passes through tmux's double-quote parsing, format expansion, and
+# /bin/sh -c, so quote for sh first, then escape for tmux.
+tmux_shell_word() {
+  local q="'" escaped_q="'\\''" word
+  word="'${1//$q/$escaped_q}'"
+  word=${word//\\/\\\\}
+  word=${word//\"/\\\"}
+  word=${word//\$/\\\$}
+  printf '%s' "${word//#/##}"
+}
+
+render_bindings() {
+  local keys key pair st_word script
+  case $PREFIX in *$'\n'*) die "ST_PREFIX must not contain a newline";; esac
+  keys=$( ( [ ! -f "$CONFIG" ] || . "$CONFIG"
+    for pair in "M-w=${ST_KEY_PICKER:-M-w}" "M-e=${ST_KEY_TOGGLE:-M-e}" \
+      "M-Tab=${ST_KEY_LAST:-M-Tab}" "M-r=${ST_KEY_ROOTS:-M-r}" \
+      "M-1=${ST_KEY_WINDOW_1:-M-1}" "M-2=${ST_KEY_WINDOW_2:-M-2}" "M-3=${ST_KEY_WINDOW_3:-M-3}" \
+      "M-4=${ST_KEY_WINDOW_4:-M-4}" "M-5=${ST_KEY_WINDOW_5:-M-5}" "M-6=${ST_KEY_WINDOW_6:-M-6}" \
+      "M-7=${ST_KEY_WINDOW_7:-M-7}" "M-8=${ST_KEY_WINDOW_8:-M-8}" "M-9=${ST_KEY_WINDOW_9:-M-9}" \
+      "M-n=${ST_KEY_NEXT_TAB:-M-n}" "M-p=${ST_KEY_PREV_TAB:-M-p}" \
+      "M-s=${ST_KEY_SIDEBAR:-M-s}" "M-B=${ST_KEY_SIDEBAR_TOGGLE:-M-B}" \
+      "M-h=${ST_KEY_PANE_LEFT:-M-h}" "M-l=${ST_KEY_PANE_RIGHT:-M-l}" \
+      "M-x=${ST_KEY_CLOSE_PANE:-M-x}" "M-v=${ST_KEY_SPLIT:-M-v}" \
+      "M-j=${ST_KEY_NEXT_TREE:-M-j}" "M-k=${ST_KEY_PREV_TREE:-M-k}" "M-/=${ST_KEY_HELP:-M-/}" \
+      "M-q=${ST_KEY_LEAVE:-M-q}" "M-Q=${ST_KEY_DETACH:-M-Q}"; do
+      key=${pair#*=}
+      case $key in (''|*[!A-Za-z0-9_/-]*) die "invalid key binding in $CONFIG: $key";; esac
+      printf '%s ' "$pair"
+    done ) )
+  st_word=$(tmux_shell_word "$PREFIX/st" | sed 's/[\\&|]/\\&/g')
+  script="s|~/.local/bin/st|$st_word|g"
+  for pair in $keys; do
+    key=${pair#*=}
+    # Mark rewritten lines so swapped keys are not rewritten twice.
+    script="$script
+s|^bind -n ${pair%%=*} |bind -n @st@$key |"
+  done
+  sed "$script
+s|^bind -n @st@|bind -n |" "$tmpdir/supertree.conf" > "$CONFDIR/supertree.conf"
+}
+
+verify_asset() { # downloaded file name
+  local expected actual
+  expected=$(awk -v name="$1" '$2 == name { print $1 }' "$tmpdir/SHA256SUMS")
+  if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum "$tmpdir/$1")
+  else actual=$(shasum -a 256 "$tmpdir/$1"); fi
+  [ -n "$expected" ] && [ "$expected" = "${actual%% *}" ] ||
+    die "$1 from $VERSION does not match its published checksum; nothing was changed"
+}
+
 # ------------------------------------------------------------ dependencies
 
 DEPS="tmux git fzf"
@@ -226,10 +282,10 @@ dep_why() {
     tmux)   echo "required for sessions and windows";;
     git)    echo "required for worktrees";;
     fzf)    echo "tree picker (M-w)";;
-    nvim)   echo "editor window (M-2)";;
-    claude) echo "selected agent harness (M-1)";;
-    codex) echo "selected agent harness (M-1)";;
-    opencode) echo "OpenRouter agent harness (M-1)";;
+    nvim)   echo "editor for the vim window";;
+    claude) echo "selected agent harness (agent window)";;
+    codex) echo "selected agent harness (agent window)";;
+    opencode) echo "OpenRouter agent harness (agent window)";;
   esac
 }
 
@@ -355,6 +411,9 @@ step "03" "Install" "Putting supertree in the right places."
 
 curl -fsSL "$BASE/st.tar.gz"     -o "$tmpdir/st.tar.gz"     || die "could not download st from $BASE"
 curl -fsSL "$BASE/supertree.conf" -o "$tmpdir/supertree.conf" || die "could not download supertree.conf from $BASE"
+curl -fsSL "$BASE/SHA256SUMS"     -o "$tmpdir/SHA256SUMS"     || die "could not download checksums from $BASE"
+verify_asset st.tar.gz
+verify_asset supertree.conf
 tar -tzf "$tmpdir/st.tar.gz" | awk '
   $0 == "st" || $0 == "st-lib/" || $0 ~ /^st-lib\/[A-Za-z0-9_.-]+\.sh$/ { next }
   { exit 1 }
@@ -375,6 +434,9 @@ sed "s|^ST_VERSION='dev'$|ST_VERSION='$VERSION'|" "$tmpdir/package/st" > "$tmpdi
 grep -qx "ST_VERSION='$VERSION'" "$tmpdir/stamped" || die "downloaded st has invalid version metadata"
 
 mkdir -p "$PREFIX" "$CONFDIR"
+previous_version=''
+[ ! -f "$PREFIX/st" ] ||
+  previous_version=$(sed -n "s/^ST_VERSION='\([A-Za-z0-9._-]*\)'$/\1/p" "$PREFIX/st" | head -1)
 staged_command=$(mktemp "$PREFIX/.st.install.XXXXXX")
 staged_modules=$(mktemp -d "$PREFIX/.st-lib.install.XXXXXX")
 install -m 0755 "$tmpdir/stamped" "$staged_command"
@@ -395,11 +457,15 @@ if ! mv -f "$staged_command" "$PREFIX/st"; then
   die "could not install st command"
 fi
 [ -z "$previous_modules" ] || rm -rf "$previous_modules"
+if [ -n "$previous_version" ] && [ "$previous_version" != "$VERSION" ] &&
+  [ -d "$PREFIX/st-lib-$previous_version" ] && [ ! -L "$PREFIX/st-lib-$previous_version" ]; then
+  rm -rf -- "$PREFIX/st-lib-$previous_version"
+fi
 # Keep custom install paths for st uninstall.
 printf '%s\n%s\n' "$CONFDIR" "$TMUX_CONF" > "$PREFIX/st.install"
 row "command" "${GRN}✔${R}" "$PREFIX/st"
 
-sed "s|~/.local/bin/st|$PREFIX/st|g" "$tmpdir/supertree.conf" > "$CONFDIR/supertree.conf"
+render_bindings
 row "bindings" "${GRN}✔${R}" "$CONFDIR/supertree.conf"
 
 write_config

@@ -20,26 +20,43 @@ register_repo() {
   grep -qxF "$1" "$ST_REPOS" 2>/dev/null || printf '%s\n' "$1" >> "$ST_REPOS"
 }
 
+trees_or_list() {
+  if [ $# -gt 0 ]; then printf '%s\n' "$1"; else list_trees; fi
+}
+
 session_for_label() {
-  local wanted=$1 repo branch path sess
-  while IFS=$'\t' read -r repo branch path sess; do
-    if [ "$(tree_label "$repo" "$branch")" = "$wanted" ]; then
-      printf '%s' "$sess"
-      return 0
-    fi
-  done < <(list_trees)
-  return 1
+  local trees
+  trees=$(trees_or_list "${@:2}")
+  ST_LABEL=$1 awk -F '\t' '
+    { r = $1; sub(/-[^-]*$/, "", r) }
+    r "/" $2 == ENVIRON["ST_LABEL"] { print $4; found = 1; exit }
+    END { exit !found }' <<< "$trees"
 }
 
 label_for_session() {
-  local wanted=$1 repo branch path sess
-  while IFS=$'\t' read -r repo branch path sess; do
-    if [ "$sess" = "$wanted" ]; then
-      tree_label "$repo" "$branch"
-      return 0
-    fi
-  done < <(list_trees)
-  printf 'unknown tree'
+  local trees
+  trees=$(trees_or_list "${@:2}")
+  ST_SESSION=$1 awk -F '\t' '
+    $4 == ENVIRON["ST_SESSION"] { r = $1; sub(/-[^-]*$/, "", r); print r "/" $2; found = 1; exit }
+    END { if (!found) printf "unknown tree" }' <<< "$trees"
+}
+
+# Exact label, then exact session name, then the picker's rule: the first
+# label containing the query, ignoring case.
+resolve_session() {
+  local trees
+  trees=$(trees_or_list "${@:2}")
+  ST_QUERY=$1 awk -F '\t' '
+    { label = $1; sub(/-[^-]*$/, "", label); label = label "/" $2; q = ENVIRON["ST_QUERY"] }
+    label == q { print $4; exact = 1; exit }
+    $4 == q && by_name == "" { by_name = $4 }
+    partial == "" && index(tolower(label), tolower(q)) { partial = $4 }
+    END {
+      if (exact) exit 0
+      if (by_name == "") by_name = partial
+      if (by_name == "") exit 1
+      print by_name
+    }' <<< "$trees"
 }
 
 branch_worktree() {
@@ -117,30 +134,38 @@ prepare_repo_config() {
 }
 
 tree_index() {
-  local repo=$1 slug=$2 old_repo=$3 f="$ST_STATE/idx/$1/$2" n
+  local repo=$1 slug=$2 old_repo=$3 f="$ST_STATE/idx/$1/$2" lock="$ST_STATE/idx/.lock" n tries=0
   if [ -f "$f" ]; then cat "$f"; return; fi
   mkdir -p "$ST_STATE/idx/$repo"
-  n=$(cat "$ST_STATE/idx/$repo"/* "$ST_STATE/idx/$old_repo"/* 2>/dev/null | sort -n | tail -1)
-  n=$(( ${n:-0} + 1 ))
-  printf '%s\n' "$n" | tee "$f"
+  # mkdir is atomic, so two concurrent 'st new' runs cannot take the same index.
+  until mkdir "$lock" 2>/dev/null; do
+    tries=$((tries + 1))
+    [ "$tries" -lt 50 ] || die "index lock is held; remove $lock if no other st is running"
+    sleep 0.1
+  done
+  if [ ! -f "$f" ]; then
+    n=$(cat "$ST_STATE/idx/$repo"/* "$ST_STATE/idx/$old_repo"/* 2>/dev/null | sort -n | tail -1 || true)
+    printf '%s\n' "$(( ${n:-0} + 1 ))" > "$f" || { rmdir "$lock"; die "cannot write $f"; }
+  fi
+  rmdir "$lock"
+  cat "$f"
 }
 
 # Sessions opened before readable names keep running under the new name.
 adopt_hashed_session() {
-  local repo=$1 branch=$2 sess=$3 live=$'\n'$4$'\n' hashed
-  case $live in *$'\n'"$repo/"*) ;; *) return 0;; esac
+  local repo=$1 branch=$2 sess=$3 hashed
   hashed=$(sess_name "$repo" "$(branch_key "$branch")")
-  case $live in *$'\n'"$hashed"$'\n'*) ;; *) return 0;; esac
-  case $live in *$'\n'"$sess"$'\n'*) return 0;; esac
+  [ "$hashed" != "$sess" ] || return 0
+  tmux has-session -t "=$hashed" 2>/dev/null || return 0
+  ! tmux has-session -t "=$sess" 2>/dev/null || return 0
   tmux rename-session -t "=$hashed" "$sess" 2>/dev/null || true
 }
 
 # Rows: repo key, branch, path, tmux session. Session names stay readable
 # (repo/branch); a short hash is added only where two trees would collide.
 list_trees() {
-  local r repo branch path sess clash live root
+  local r repo branch path sess clash root
   [ -f "$ST_REPOS" ] || return 0
-  live=$(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
   root=$(cd "$ST_WORKTREE_ROOT" 2>/dev/null && pwd -P || printf '%s' "$ST_WORKTREE_ROOT")
   while read -r r; do
     [ -d "$r" ] || continue
@@ -149,12 +174,16 @@ list_trees() {
     repo=$(repo_key "$r")
     # Skip linked worktrees made by other tools (e.g. Cursor) outside our root.
     # Flag the main checkout as orphaned when no worktree under our root is left.
+    # Rows wait for the record end: "prunable" (dir deleted) comes after "branch".
+    # https://git-scm.com/docs/git-worktree#_porcelain_format
     git -C "$r" worktree list --porcelain 2>/dev/null | awk -v repo="$repo" -v root="$root/" '
-      /^worktree /{p=substr($0,10); n++; keep = n == 1 || index(p, root) == 1; row = ""}
+      function flush() { if (row != "") { if (n == 1) main = row; else linked[++k] = row }; row = "" }
+      /^worktree /{flush(); p=substr($0,10); n++; keep = n == 1 || index(p, root) == 1}
       keep && /^branch /{b=$2; sub("refs/heads/","",b); row = repo"\t"b"\t"p}
       keep && /^detached$/{row = repo"\t(detached)\t"p}
-      row != "" { if (n == 1) main = row; else linked[++k] = row; row = "" }
+      /^prunable/{row = ""}
       END {
+        flush()
         if (main != "") print main "\t" (k ? 0 : 1)
         for (i = 1; i <= k; i++) print linked[i] "\t0"
       }' | while IFS=$'\t' read -r repo branch path orphan; do
@@ -178,13 +207,14 @@ list_trees() {
       for (i = 1; i <= NR; i++) print row[i] "\t" sess[i] "\t" (trees[sess[i]] > 1)
     }' | while IFS=$'\t' read -r repo branch path orphan sess clash; do
     [ "$clash" = 0 ] || sess="$sess-$(identity_hash "$branch" | cut -c1-6)"
-    adopt_hashed_session "$repo" "$branch" "$sess" "$live"
     [ "$orphan" = 0 ] || tmux has-session -t "=$sess" 2>/dev/null || continue
     printf '%s\t%s\t%s\t%s\n' "$repo" "$branch" "$path" "$sess"
   done
 }
 
 tree_session() {
-  list_trees | awk -F '\t' -v repo="$1" -v branch="$2" \
-    '$1 == repo && $2 == branch && !found { print $4; found = 1 }'
+  local trees
+  trees=$(trees_or_list "${@:3}")
+  awk -F '\t' -v repo="$1" -v branch="$2" \
+    '$1 == repo && $2 == branch && !found { print $4; found = 1 }' <<< "$trees"
 }

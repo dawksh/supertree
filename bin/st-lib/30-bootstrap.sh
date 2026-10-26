@@ -28,9 +28,18 @@ bootstrap() {
   local -a ST_LOCKFILES=(package-lock.json yarn.lock pnpm-lock.yaml bun.lockb)
   local ST_INSTALL_CMD='npm ci'
   local ST_POST_CREATE=''
+  local config
 
-  # shellcheck disable=SC1091
-  [ -n "$trusted_config_snapshot" ] && . "$trusted_config_snapshot"
+  # Sourced in a subshell so the config cannot overwrite this function's locals;
+  # the hooks re-source it to keep any helpers it defines.
+  if [ -n "$trusted_config_snapshot" ]; then
+    config=$(
+      # shellcheck disable=SC1090
+      . "$trusted_config_snapshot" >&2
+      declare -p ST_LINK_DIRS ST_COPY_GLOBS ST_LOCKFILES ST_INSTALL_CMD ST_POST_CREATE
+    ) || die "failed to load $main/.supertree"
+    eval "$config"
+  fi
 
   # macOS bash 3.2 treats an empty array as unbound under set -u, hence ${a[@]+...}.
   local locks_match=1 needs_install=0 l d g f
@@ -52,7 +61,10 @@ bootstrap() {
 
   if [ "$needs_install" = 1 ] && [ -n "$ST_INSTALL_CMD" ]; then
     info "lockfile differs from main, running: $ST_INSTALL_CMD"
-    ( cd "$dir" && eval "$ST_INSTALL_CMD" )
+    ( cd "$dir"
+      # shellcheck disable=SC1090
+      [ -z "$trusted_config_snapshot" ] || . "$trusted_config_snapshot"
+      eval "$ST_INSTALL_CMD" )
   fi
 
   for g in ${ST_COPY_GLOBS[@]+"${ST_COPY_GLOBS[@]}"}; do
@@ -67,6 +79,8 @@ bootstrap() {
     info "post-create hook"
     ( cd "$dir"
       export ST_TREE_DIR="$dir" ST_TREE_BRANCH="$branch" ST_TREE_INDEX="$idx"
+      # shellcheck disable=SC1090
+      . "$trusted_config_snapshot"
       eval "$ST_POST_CREATE" )
   fi
 }

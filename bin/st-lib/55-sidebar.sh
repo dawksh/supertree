@@ -98,14 +98,14 @@ sidebar_sweep() {
 sidebar_session() {
   local sess=$1 dir=$2 self win
   self=$(st_self)
-  tmux set-option -t "$sess" @st_tree_dir "$dir"
+  tmux set-option -t "=$sess:" @st_tree_dir "$dir"
   for win in $(tmux list-windows -t "=$sess" -F '#{window_id}'); do
     add_sidebar "$win" "$dir"
   done
   # Pad the tree label to the sidebar's width so the tabs start above the program panes.
   # tmux 3.6 pads on the right for a positive width, the reverse of its man page.
-  tmux set-option -t "$sess" status-left-length $((ST_SIDEBAR_WIDTH + 1))
-  tmux set-option -t "$sess" status-left \
+  tmux set-option -t "=$sess:" status-left-length $((ST_SIDEBAR_WIDTH + 1))
+  tmux set-option -t "=$sess:" status-left \
     "#{?@st_sidebar_off, #{@supertree_label} ,#[fg=colour245]#{p$((ST_SIDEBAR_WIDTH + 1)):#{=/$((ST_SIDEBAR_WIDTH - 1))/…: #{@supertree_label}}}#[default]}"
   tmux set-hook -t "$sess" after-new-window "run-shell \"'$self' _sidebar-attach '#{window_id}'\""
 }
@@ -205,7 +205,7 @@ sidebar_poll_start() {
   pid=$(cat "$ST_SIDEBAR_DIR/poll.lock/pid" 2>/dev/null) || pid=''
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && return 0
   # run-shell -b detaches the refresher from this pane, so closing the pane leaves it running.
-  tmux run-shell -b "'$(st_self)' _sidebar-poll >/dev/null 2>&1"
+  tmux run-shell -b "$(printf '%q _sidebar-poll' "$(st_self)") >/dev/null 2>&1"
 }
 
 # One refresher per tmux server. The tree list (git) is slow, so it reloads only
@@ -302,7 +302,7 @@ cmd_sidebar_open() {
     ''|'#'*) return 0;;
     +new)
       tty=$(tmux display-message -p -t "$TMUX_PANE" '#{client_tty}')
-      tmux run-shell -b "'$(st_self)' go --popup '$tty'"
+      tmux run-shell -b "$(printf '%q go --popup %q' "$(st_self)" "$tty")"
       return 0;;
   esac
   # Leave focus on the tab so coming back to this tree lands in the program, not the list.

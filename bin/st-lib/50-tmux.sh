@@ -39,45 +39,51 @@ configured_windows() {
 }
 
 window_enabled() {
-  local wanted=$1 type
+  local wanted=$1 windows=${2:-} type
+  [ -n "$windows" ] || windows=$(configured_windows)
   while read -r type; do [ "$type" = "$wanted" ] && return 0; done <<EOF
-$(configured_windows)
+$windows
 EOF
   return 1
 }
 
 st_self() { command -v st 2>/dev/null || printf '%s' "$HOME/.local/bin/st"; }
 
+is_tree_session() {
+  [ -n "$(tmux show-options -qv -t "=$1:" @supertree_label 2>/dev/null)" ]
+}
+
 create_window() {
-  local sess=$1 dir=$2 type=$3 initial=$4 self name
+  local sess=$1 dir=$2 type=$3 initial=$4 self name run
   local cmd=()
   self=$(st_self)
   name=$(window_name "$type")
+  printf -v run '%q _run' "$self"
   case $type in
-    agent) cmd=("$self _run _agent");;
-    vim) cmd=("$self _run nvim");;
+    agent) cmd=("$run _agent");;
+    vim) cmd=("$run nvim");;
     shell) ;;
     # Argument form skips tmux's own `sh -c`, so the configured command is parsed once.
     *) cmd=("$self" _run /bin/sh -c "$(tab_command "$type")");;
   esac
   if [ "$initial" = 1 ]; then
-    tmux new-session -d -s "$sess" -c "$dir" -n "$name" ${cmd[@]+"${cmd[@]}"}
+    tmux new-session -d -s "$sess" -c "$dir" -n "$name" ${cmd[@]+"${cmd[@]}"} || return 1
   else
-    tmux new-window -d -t "=$sess" -c "$dir" -n "$name" ${cmd[@]+"${cmd[@]}"}
+    tmux new-window -d -t "=$sess" -c "$dir" -n "$name" ${cmd[@]+"${cmd[@]}"} || return 1
   fi
   style_tab "=$sess:$name" "$(configured_windows | grep -nxF -- "$type" | cut -d: -f1)"
 }
 
 # Tab look is set per session and window so other tmux sessions keep the user's status bar.
 style_session() {
-  tmux set-option -t "$1" status-position top
-  tmux set-option -t "$1" status-justify left
-  tmux set-option -t "$1" status-style 'bg=default'
+  tmux set-option -t "=$1:" status-position top
+  tmux set-option -t "=$1:" status-justify left
+  tmux set-option -t "=$1:" status-style 'bg=default'
   # Pane title rows now space the tabs off the panes; sessions styled earlier had a blank second line.
-  tmux set-option -t "$1" status on
+  tmux set-option -t "=$1:" status on
   # When a tree's last program exits, switch to the most recent session instead of
   # leaving tmux. Session-scoped, so the global setting is untouched.
-  tmux set-option -t "$1" detach-on-destroy off
+  tmux set-option -t "=$1:" detach-on-destroy off
 }
 
 style_tab() {
@@ -120,6 +126,7 @@ cmd_split() {
   pane=${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}
   # From a key binding the focused pane may be the sidebar; split the rightmost program pane instead.
   pane=$(tmux list-panes -t "$pane" -f '#{!=:#{@st_sidebar},1}' -F '#{pane_id}' | tail -1)
+  is_tree_session "$(tmux display-message -p -t "$pane" '#S')" || { info "not a supertree session"; return 0; }
   win=$(tmux display-message -p -t "$pane" '#W')
   dir=$(tmux display-message -p -t "$pane" '#{pane_current_path}')
   case $win in
@@ -141,11 +148,13 @@ cmd_split() {
 }
 
 build_session() {
-  local sess=$1 dir=$2 windows type first_name='' initial=1 branch label
+  local sess=$1 dir=$2 windows type first_name='' initial=1 branch main label
   branch=$(tree_branch "$dir")
-  label="$(basename "$(main_worktree "$dir")")/${branch:-(detached)}"
+  main=$(main_worktree "$dir") || main=''
+  label="$(basename "$main")/${branch:-(detached)}"
+  [ -z "$main" ] || adopt_hashed_session "$(repo_key "$main")" "${branch:-(detached)}" "$sess"
   if tmux has-session -t "=$sess" 2>/dev/null; then
-    tmux set-option -t "$sess" @supertree_label "$label"
+    tmux set-option -t "=$sess:" @supertree_label "$label"
     # Bump ST_LAYOUT_VERSION when the look changes so open sessions restyle on the next switch.
     # "=name:" not "=name": tmux 3.6 rejects "=name" as a set/show-options target.
     [ "$(tmux show-options -qv -t "=$sess:" @st_layout)" = "$ST_LAYOUT_VERSION" ] || upgrade_session "$sess" "$dir"
@@ -155,9 +164,14 @@ build_session() {
   while read -r type; do
     [ -n "$type" ] || continue
     [ -n "$first_name" ] || first_name=$(window_name "$type")
-    create_window "$sess" "$dir" "$type" "$initial"
+    if ! create_window "$sess" "$dir" "$type" "$initial"; then
+      # A concurrent `st go` on the same tree created the session first.
+      [ "$initial" = 1 ] && tmux has-session -t "=$sess" 2>/dev/null || return 1
+      tmux set-option -t "=$sess:" @supertree_label "$label"
+      return 0
+    fi
     if [ "$type" = agent ]; then
-      tmux set-option -t "$sess" @st_agent_window "$(window_name agent)"
+      tmux set-option -t "=$sess:" @st_agent_window "$(window_name agent)"
     fi
     initial=0
   done <<EOF
@@ -165,8 +179,8 @@ $windows
 EOF
   style_session "$sess"
   if declare -F sidebar_session >/dev/null; then sidebar_session "$sess" "$dir"; fi
-  tmux set-option -t "$sess" @st_layout "$ST_LAYOUT_VERSION"
-  tmux set-option -t "$sess" @supertree_label "$label"
+  tmux set-option -t "=$sess:" @st_layout "$ST_LAYOUT_VERSION"
+  tmux set-option -t "=$sess:" @supertree_label "$label"
   tmux select-window -t "=$sess:$first_name"
 }
 
@@ -187,21 +201,23 @@ EOF
     style_tab "$win" "$slot"
   done
   if declare -F sidebar_session >/dev/null; then sidebar_session "$sess" "$dir"; fi
-  tmux set-option -t "$sess" @st_layout "$ST_LAYOUT_VERSION"
+  tmux set-option -t "=$sess:" @st_layout "$ST_LAYOUT_VERSION"
 }
 
-remember_recent() {
-  local sess=$1 tmp
+rewrite_recent() {
+  local sess=$1 put_first=$2 tmp
   mkdir -p "$ST_STATE"
   tmp=$(mktemp "$ST_STATE/.recent.XXXXXX")
   {
-    printf '%s\n' "$sess"
+    [ "$put_first" = 0 ] || printf '%s\n' "$sess"
     if [ -f "$ST_STATE/recent" ]; then
       grep -vxF -- "$sess" "$ST_STATE/recent" || true
     fi
   } > "$tmp"
   mv "$tmp" "$ST_STATE/recent"
 }
+
+remember_recent() { rewrite_recent "$1" 1; }
 
 sort_recent() {
   local recent="$ST_STATE/recent"
@@ -213,24 +229,31 @@ sort_recent() {
 
 tty_key() { printf '%s' "$1" | tr '/' '-'; }
 
+current_session() {
+  tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S' 2>/dev/null || true
+}
+
 remember_origin() {
   local tty cur
   tty=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#{client_tty}' 2>/dev/null) || return 0
-  cur=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S' 2>/dev/null) || return 0
+  cur=$(current_session)
   [ -n "$tty" ] && [ -n "$cur" ] && [ "$cur" != "$1" ] || return 0
+  # Hops between trees keep the first non-tree origin, so M-q leaves supertree.
+  ! is_tree_session "$cur" || return 0
   mkdir -p "$ST_STATE/origin"
   printf '%s\n' "$cur" > "$ST_STATE/origin/$(tty_key "$tty")"
 }
 
 evacuate_clients() {
-  local sess=$1 ttys tty origin other
+  local sess=$1 ttys tty origin origin_file other
   ttys=$(tmux list-clients -t "=$sess" -F '#{client_tty}' 2>/dev/null) || return 0
   [ -n "$ttys" ] || return 0
   while read -r tty; do
     [ -n "$tty" ] || continue
-    origin=$(cat "$ST_STATE/origin/$(tty_key "$tty")" 2>/dev/null) || origin=""
+    origin_file="$ST_STATE/origin/$(tty_key "$tty")"
+    origin=$(cat "$origin_file" 2>/dev/null) || origin=""
     if [ -n "$origin" ] && [ "$origin" != "$sess" ] && tmux has-session -t "=$origin" 2>/dev/null; then
-      tmux switch-client -c "$tty" -t "=$origin" 2>/dev/null && continue
+      tmux switch-client -c "$tty" -t "=$origin" 2>/dev/null && { rm -f "$origin_file"; continue; }
     fi
     # fall back to the most recently used other session
     other=$(tmux list-sessions -F '#{session_last_attached}|#{session_name}' 2>/dev/null |
@@ -248,7 +271,7 @@ attach() {
   # The refresher only starts with a sidebar pane; restart it here in case it died.
   if declare -F sidebar_poll_start >/dev/null; then sidebar_poll_start; fi
   if [ -n "${TMUX:-}" ]; then
-    prev=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S' 2>/dev/null) || prev=''
+    prev=$(current_session)
     remember_origin "$sess"
     tmux switch-client -t "=$sess"
     if declare -F sidebar_fit >/dev/null; then sidebar_fit "$sess"; fi
@@ -263,48 +286,47 @@ known_sessions() {
 }
 
 subtree_sessions() {
-  local repo branch path sess main
-  list_trees | while IFS=$'\t' read -r repo branch path sess; do
-    main=$(main_worktree "$path")
-    [ "$path" != "$main" ] || continue
+  local repos repo branch path sess
+  repos=$(cat "$ST_REPOS" 2>/dev/null || true)
+  while IFS=$'\t' read -r repo branch path sess; do
+    [ -n "$path" ] || continue
+    case $'\n'"$repos"$'\n' in *$'\n'"$path"$'\n'*) continue;; esac
     printf '%s\n' "$sess"
   done
 }
 
-live_sessions() {
+live_only() {
   local s
-  known_sessions | while read -r s; do
+  while read -r s; do
     [ -n "$s" ] || continue
-    tmux has-session -t "=$s" 2>/dev/null && printf '%s\n' "$s"
-  done
-}
-
-live_subtree_sessions() {
-  local s
-  subtree_sessions | while read -r s; do
-    [ -n "$s" ] || continue
-    tmux has-session -t "=$s" 2>/dev/null && printf '%s\n' "$s"
+    if tmux has-session -t "=$s" 2>/dev/null; then printf '%s\n' "$s"; fi
   done
 }
 
 ensure_main_fallbacks() {
-  local repo branch path subtree main main_branch main_sess
-  list_trees | while IFS=$'\t' read -r repo branch path subtree; do
+  local trees=$1 repo branch path subtree main main_row main_branch main_sess
+  while IFS=$'\t' read -r repo branch path subtree; do
+    [ -n "$path" ] || continue
     main=$(main_worktree "$path")
     [ "$path" != "$main" ] || continue
     tmux has-session -t "=$subtree" 2>/dev/null || continue
-    main_branch=$(git -C "$main" branch --show-current)
-    [ -n "$main_branch" ] || main_branch='(detached)'
-    main_sess=$(tree_session "$repo" "$main_branch")
+    main_row=$(printf '%s\n' "$trees" |
+      awk -F '\t' -v repo="$repo" -v path="$main" '$1 == repo && $3 == path { print $2 "\t" $4; exit }')
+    main_branch=${main_row%%$'\t'*}
+    main_sess=${main_row#*$'\t'}
+    [ -n "$main_sess" ] || continue
+    adopt_hashed_session "$repo" "$main_branch" "$main_sess"
     if ! tmux has-session -t "=$main_sess" 2>/dev/null; then
       tmux new-session -d -s "$main_sess" -c "$main" -n shell
-      tmux set-option -t "$main_sess" @supertree_label "$(basename "$main")/$main_branch"
+      tmux set-option -t "=$main_sess:" @supertree_label "$(basename "$main")/$main_branch"
     fi
-  done
+  done <<EOF
+$trees
+EOF
 }
 
 cmd_down() {
-  local yes=0 target="" s live current='' close_current=0
+  local yes=0 target="" s live trees label current='' close_current=0
   while [ $# -gt 0 ]; do
     case $1 in
       -y|--yes) yes=1; shift;;
@@ -314,22 +336,21 @@ cmd_down() {
     esac
   done
 
+  trees=$(list_trees)
   if [ "$target" = --all ] || [ "$target" = --subtrees ]; then
-    if [ "$target" = --all ]; then live=$(live_sessions)
-    else live=$(live_subtree_sessions); fi
+    if [ "$target" = --all ]; then live=$(printf '%s\n' "$trees" | cut -f4 | live_only)
+    else live=$(printf '%s\n' "$trees" | subtree_sessions | live_only); fi
     [ -n "$live" ] || { info "no matching tree sessions open"; return 0; }
     printf 'will close:\n' >&2
-    while IFS= read -r s; do printf '  %s\n' "$(label_for_session "$s")" >&2; done <<EOF
+    while IFS= read -r s; do printf '  %s\n' "$(label_for_session "$s" "$trees")" >&2; done <<EOF
 $live
 EOF
     if [ "$yes" = 0 ]; then
       printf 'unsaved editor buffers are lost. proceed? [y/N] ' >&2; read -r ans
       case ${ans:-n} in y|Y|yes) ;; *) die "aborted";; esac
     fi
-    [ "$target" != --subtrees ] || ensure_main_fallbacks
-    if [ -n "${TMUX:-}" ]; then
-      current=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S' 2>/dev/null || true)
-    fi
+    [ "$target" != --subtrees ] || ensure_main_fallbacks "$trees"
+    [ -z "${TMUX:-}" ] || current=$(current_session)
     # Killing our own session kills this process, so close it last.
     while IFS= read -r s; do
       evacuate_clients "$s"
@@ -343,19 +364,12 @@ EOF
   fi
 
   local all
-  all=$(known_sessions)
+  all=$(printf '%s\n' "$trees" | cut -f4)
 
   if [ -n "$target" ]; then
-    s=$(session_for_label "$target" || true)
-    if [ -z "$s" ]; then
-      case $'\n'"$all"$'\n' in
-        *$'\n'"$target"$'\n'*) s=$target;;
-        *) s=$(printf '%s\n' "$all" | grep -i -- "$target" | head -1) || true;;
-      esac
-    fi
-    [ -n "$s" ] || die "no tree matching: $target"
+    s=$(resolve_session "$target" "$trees") || die "no tree matching: $target"
   elif [ -n "${TMUX:-}" ]; then
-    s=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S')
+    s=$(current_session)
   else
     die "usage: st down [branch|--all]  (no branch only works inside a tree session)"
   fi
@@ -366,34 +380,36 @@ EOF
     *) die "this is not a supertree session; refusing to close it";;
   esac
 
-  tmux has-session -t "=$s" 2>/dev/null || { info "$(label_for_session "$s") already closed"; return 0; }
+  label=$(label_for_session "$s" "$trees")
+  tmux has-session -t "=$s" 2>/dev/null || { info "$label already closed"; return 0; }
   evacuate_clients "$s"
   tmux kill-session -t "=$s"
-  info "closed $(label_for_session "$s") (worktree kept — 'st resume' brings it back)"
+  info "closed $label (worktree kept — 'st resume' brings it back)"
 }
 
 cmd_toggle() {
-  local pane cur first second first_name target
+  local pane cur windows first second first_name target
   pane=${TMUX_PANE:-}
   if [ -n "$pane" ]; then
     cur=$(tmux display-message -p -t "$pane" '#W')
   else
     cur=$(tmux display-message -p '#W')
   fi
-  first=$(configured_windows | sed -n '1p')
-  second=$(configured_windows | sed -n '2p')
+  windows=$(configured_windows)
+  first=$(printf '%s\n' "$windows" | sed -n '1p')
+  second=$(printf '%s\n' "$windows" | sed -n '2p')
   [ -n "$second" ] || { info "toggle needs at least two configured windows"; return 0; }
   first_name=$(window_name "$first")
   if [ "$cur" = "$first_name" ]; then target=$second; else target=$first; fi
-  select_window_type "$target"
+  select_window_type "$target" "$windows"
 }
 
 select_window_type() {
-  local type=$1 pane sess name dir
-  window_enabled "$type" || { info "$type window is not enabled in ST_WINDOWS"; return 0; }
+  local type=$1 windows=${2:-} pane sess name dir
+  window_enabled "$type" "$windows" || { info "$type window is not enabled in ST_WINDOWS"; return 0; }
   pane=${TMUX_PANE:-}
-  if [ -n "$pane" ]; then sess=$(tmux display-message -p -t "$pane" '#S')
-  else sess=$(tmux display-message -p '#S'); fi
+  sess=$(current_session)
+  is_tree_session "$sess" || { info "not a supertree session"; return 0; }
   name=$(window_name "$type")
   tmux select-window -t "=$sess:$name" 2>/dev/null && return 0
   dir=$(tmux display-message -p -t "${pane:-$sess}" '#{pane_current_path}')
@@ -402,18 +418,19 @@ select_window_type() {
 }
 
 cmd_window() {
-  local slot=${1:-} type
+  local slot=${1:-} windows type
   case $slot in ''|*[!0-9]*|0) die "usage: st window <positive slot>";; esac
-  type=$(configured_windows | sed -n "${slot}p")
+  windows=$(configured_windows)
+  type=$(printf '%s\n' "$windows" | sed -n "${slot}p")
   [ -n "$type" ] || { info "no window configured for slot $slot"; return 0; }
-  select_window_type "$type"
+  select_window_type "$type" "$windows"
 }
 
 cmd_last() {
   local current trees sess path
   [ -n "${TMUX:-}" ] || die "st last only works inside tmux"
   [ -f "$ST_STATE/recent" ] || { info "no other tree opened yet"; return 0; }
-  current=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S' 2>/dev/null || true)
+  current=$(current_session)
   trees=$(list_trees)
   # Record the current tree so the next M-Tab comes straight back.
   if printf '%s\n' "$trees" | cut -f4 | grep -qxF -- "$current"; then
@@ -435,11 +452,13 @@ cmd_agent() {
 }
 
 cmd_leave() {
-  local tty=${1:-} cur origin
+  local tty=${1:-} cur origin origin_file
   [ -n "${TMUX:-}" ] || die "st leave only works inside tmux"
   [ -n "$tty" ] || tty=$(tmux display-message -p '#{client_tty}')
   cur=$(tmux display-message -p -c "$tty" '#S' 2>/dev/null || true)
-  origin=$(cat "$ST_STATE/origin/$(tty_key "$tty")" 2>/dev/null) || origin=""
+  origin_file="$ST_STATE/origin/$(tty_key "$tty")"
+  origin=$(cat "$origin_file" 2>/dev/null) || origin=""
+  rm -f "$origin_file"
   # Go back to the session st was opened from; detach only when there is none.
   if [ -n "$origin" ] && [ "$origin" != "$cur" ] && tmux has-session -t "=$origin" 2>/dev/null; then
     tmux switch-client -c "$tty" -t "=$origin" && return 0
