@@ -30,7 +30,7 @@ harness_label() {
 
 agent_pane() {
   local sess=$1 name
-  name=$(tmux show-options -qv -t "$sess" @st_agent_window 2>/dev/null) || name=""
+  name=$(tmux show-options -qv -t "=$sess:" @st_agent_window 2>/dev/null) || name=""
   [ -n "$name" ] || name=$(harness_window)
   tmux list-panes -t "=$sess:$name" -f '#{!=:#{@st_sidebar},1}' -F '#{pane_id}' 2>/dev/null | head -1
 }
@@ -62,6 +62,36 @@ agent_status() {
   if agent_needs_input "$pane"; then printf 'input'; else printf 'running'; fi
 }
 
+agent_statuses() {
+  local format panes name bin sess status pane
+  format='#{session_name}'$'\t''#{window_name}'$'\t''#{pane_id}'$'\t''#{@st_agent_state}'$'\t''#{@st_agent_window}'$'\t''#{pane_current_command}'$'\t''#{@st_sidebar}'
+  panes=$(tmux list-panes -a -F "$format" 2>/dev/null) || panes=''
+  [ -n "$panes" ] || return 0
+  name=$(harness_window)
+  bin=$(harness_bin)
+  bin=${bin##*/}
+  # \037 separates fields because read collapses consecutive tabs, shifting empty ones.
+  printf '%s\n' "$panes" | awk -F '\t' -v default_name="$name" -v bin="$bin" '
+    $1 == "" || $7 == 1 { next }
+    !($1 in seen) { seen[$1] = 1; order[++n] = $1 }
+    $5 != "" { agent_window[$1] = $5 }
+    {
+      wanted = ($1 in agent_window) ? agent_window[$1] : default_name
+      if ($2 == wanted && !($1 in pane)) { pane[$1] = $3; state[$1] = $4; command[$1] = $6 }
+    }
+    END {
+      for (i = 1; i <= n; i++) {
+        s = order[i]; status = "running"
+        if (!(s in pane) || state[s] == "done") status = "done"
+        else if (state[s] == "" && command[s] != bin && command[s] != "node" && command[s] != "bun") status = "done"
+        printf "%s\037%s\037%s\n", s, status, pane[s]
+      }
+    }' | while IFS=$'\037' read -r sess status pane; do
+    if [ "$status" = running ] && agent_needs_input "$pane"; then status=input; fi
+    printf '%s\t%s\n' "$sess" "$status"
+  done
+}
+
 set_agent_status() {
   [ -n "${TMUX_PANE:-}" ] || return 0
   tmux set-option -pq -t "$TMUX_PANE" @st_agent_state "$1" 2>/dev/null || true
@@ -78,7 +108,9 @@ cmd_run() {
 
 cmd_harness() {
   local repo slug marker legacy old_marker bin main branch current_tree
-  main=$(main_worktree .)
+  main=$(main_worktree .) || true
+  # Return instead of die so cmd_run still drops the pane into a shell.
+  [ -n "$main" ] || { info "not inside a git repository"; return 1; }
   repo=$(repo_key "$main")
   branch=$(tree_branch .)
   slug=$(branch_key "${branch:-(detached)}")
@@ -99,9 +131,11 @@ cmd_harness() {
   if [ -f "$marker" ] || { [ -n "$old_marker" ] && [ -f "$old_marker" ]; } ||
      { [ "$ST_HARNESS" = claude ] && [ -n "$legacy" ] && [ -f "$legacy" ]; }; then
     case $ST_HARNESS in
-      claude) claude --continue || claude;;
-      codex) codex resume --last || codex;;
-      openrouter) opencode --continue || opencode;;
+      # None of these CLIs document an exit code for "nothing to continue", so
+      # any failure falls through to the shell rather than discarding the session.
+      claude) claude --continue || info "Claude Code exited with an error; run 'claude' to start fresh";;
+      codex) codex resume --last || info "Codex exited with an error; run 'codex' to start fresh";;
+      openrouter) opencode --continue || info "OpenCode exited with an error; run 'opencode' to start fresh";;
       *) if [ -n "$ST_HARNESS_RESUME_COMMAND" ]; then
            eval "$ST_HARNESS_RESUME_COMMAND" || eval "$ST_HARNESS_COMMAND"
          else

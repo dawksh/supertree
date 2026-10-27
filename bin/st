@@ -10,7 +10,7 @@ PATH="$HOME/.local/bin:$HOME/.opencode/bin:/opt/homebrew/bin:$PATH"
 ST_WORKTREE_ROOT="${ST_WORKTREE_ROOT:-$HOME/projects/.worktrees}"
 ST_STATE="${ST_STATE:-$HOME/.local/state/supertree}"
 ST_REPOS="$ST_STATE/repos"
-_env_config=${ST_CONFIG:-}
+ST_CONFIG_FROM_ENV=${ST_CONFIG:-}
 ST_CONFIG="${ST_CONFIG:-${ST_CONFDIR:-$HOME/.config/supertree}/config}"
 
 # Config is shell syntax, like .supertree. Environment variables win so a
@@ -20,8 +20,14 @@ _env_harness_command=${ST_HARNESS_COMMAND:-}
 _env_harness_resume_command=${ST_HARNESS_RESUME_COMMAND:-}
 _env_windows_set=${ST_WINDOWS+x}
 _env_windows=${ST_WINDOWS:-}
-# shellcheck disable=SC1090
-[ -f "$ST_CONFIG" ] && . "$ST_CONFIG"
+# A config whose last line is a false test (`[ -n "$X" ] && ...`) must not
+# abort every st call, and bash 3.2 ignores `|| true` inside sourced files.
+if [ -f "$ST_CONFIG" ]; then
+  set +e
+  # shellcheck disable=SC1090
+  . "$ST_CONFIG"
+  set -e
+fi
 [ -n "$_env_harness" ] && ST_HARNESS=$_env_harness
 [ -n "$_env_harness_command" ] && ST_HARNESS_COMMAND=$_env_harness_command
 [ -n "$_env_harness_resume_command" ] && ST_HARNESS_RESUME_COMMAND=$_env_harness_resume_command
@@ -50,6 +56,7 @@ fi
 # shellcheck disable=SC1090
 . "$st_lib_dir/00-core.sh"
 
+# Slot 0 is a placeholder: bash 3.2 treats an empty array as unset under set -u.
 ST_COMMAND_NAMES=('')
 ST_COMMAND_HANDLERS=('')
 ST_COMMAND_HELP=('')
@@ -88,7 +95,7 @@ usage() {
 
 print_keys() {
   cat <<'KEYS'
-keys (inside tmux)
+keys (inside tmux; defaults, rebind with ST_KEY_* in the config)
   M-w   tree picker          M-e   toggle first <-> second configured window
   M-Tab switch to the previous tree
   M-r         pick a known repo and create a tree in it

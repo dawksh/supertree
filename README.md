@@ -221,6 +221,23 @@ and the `st _sidebar*` commands are called by the tmux bindings and the sidebar,
 | `M-Q` (Option-Shift-Q) | leave tmux; keep the current tree session running |
 | `M-/` | popup listing every key (`st keys` prints the same list) |
 
+To change a key, set its variable in `~/.config/supertree/config` and re-run
+the installer, which writes the keys into the installed tmux fragment:
+
+```sh
+ST_KEY_LAST=M-o         # M-Tab
+ST_KEY_WINDOW_1=F1      # M-1   (also ST_KEY_WINDOW_2 … ST_KEY_WINDOW_9)
+```
+
+The others are `ST_KEY_PICKER` (`M-w`), `ST_KEY_TOGGLE` (`M-e`),
+`ST_KEY_ROOTS` (`M-r`), `ST_KEY_NEXT_TAB` (`M-n`), `ST_KEY_PREV_TAB` (`M-p`),
+`ST_KEY_NEXT_TREE` (`M-j`), `ST_KEY_PREV_TREE` (`M-k`), `ST_KEY_PANE_LEFT`
+(`M-h`), `ST_KEY_PANE_RIGHT` (`M-l`), `ST_KEY_CLOSE_PANE` (`M-x`),
+`ST_KEY_SPLIT` (`M-v`), `ST_KEY_SIDEBAR` (`M-s`), `ST_KEY_SIDEBAR_TOGGLE`
+(`M-B`), `ST_KEY_HELP` (`M-/`), `ST_KEY_LEAVE` (`M-q`) and `ST_KEY_DETACH`
+(`M-Q`). Use tmux key names made of letters, digits, `-`, `_` and `/`. Source installs load
+`tmux/supertree.conf` as-is; add your own `unbind`/`bind` lines after it instead.
+
 In the tree picker, press Enter to open a tree, Ctrl-D to delete the selected
 worktree, or Escape to close the picker.
 
@@ -429,7 +446,7 @@ Example `.supertree`:
 ```sh
 ST_LINK_DIRS=(node_modules)      # symlinked from main when the lockfile matches
 ST_COPY_GLOBS=('.env*')          # copied from main
-ST_INSTALL_CMD='npm ci'          # used when the lockfile differs
+ST_INSTALL_CMD='npm ci'          # used when the lockfile differs (the default)
 ST_LOCKFILES=(package-lock.json yarn.lock pnpm-lock.yaml bun.lockb)
 ST_POST_CREATE='echo "PORT=$((3000 + ST_TREE_INDEX))" >> .env.local'
 ST_BASE_BRANCH=dev               # new branches start from dev
@@ -447,6 +464,12 @@ from it so two trees can run at once.
 
 The file is sourced as a shell script, so it runs as you. Only trust its contents
 after reviewing them. Global user config remains sourced on every invocation.
+Trust covers only `.supertree` itself, not any script or file it sources or
+runs; review those too.
+
+The default `ST_INSTALL_CMD`, `npm ci`, runs the branch's own package install
+scripts (such as `postinstall` and `prepare`) whenever its lockfile differs from
+main's, so be careful creating trees from branches you do not trust.
 
 ---
 
@@ -529,6 +552,10 @@ worktree root with `ST_WORKTREE_ROOT`, the state dir with `ST_STATE`.
 send Meta rather than composing characters. Your `M-arrow` pane binds are the
 quick test: if those work, these do.
 
+**`M-Tab` or `M-1`–`M-9` do nothing on Linux** — the desktop or terminal
+already uses them (Alt-Tab switches apps; Alt-digit switches terminal tabs).
+Rebind them with `ST_KEY_*` in the config, as described under [Keys](#keys).
+
 **`st go` says "no current client"** — run from a shell that is not attached to a
 tmux client. Harmless from scripts; from a real pane it switches normally.
 
@@ -543,6 +570,12 @@ changes on main. Intended.
 **The agent started fresh instead of continuing** — check `st doctor`, the
 configured harness, and that tree's `seen` marker. Each agent keeps a separate
 marker and its own native history.
+
+**A strip of different colour (or see-through) around the cards** — your
+terminal adds its own window padding and paints it in its own background,
+outside tmux. Set it to 0; in WezTerm
+([`window_padding`](https://wezterm.org/config/lua/config/window_padding.html)):
+`config.window_padding = { left = 0, right = 0, top = 0, bottom = 0 }`.
 
 **OpenRouter is selected but no models appear** — run `opencode`, enter
 `/connect`, choose OpenRouter, then use `/models` to select a model.

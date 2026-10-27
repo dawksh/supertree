@@ -14,7 +14,7 @@ cmd_new() {
   done
   [ -n "$branch" ] || die "usage: st new <branch> [--from <base>] [--bare]"
 
-  local main repo slug dir sess idx existing
+  local main repo slug dir sess idx existing stale
   main=$(require_repo "${repo_arg:-.}")
   repo=$(repo_key "$main")
   slug=$(branch_key "$branch")
@@ -22,19 +22,33 @@ cmd_new() {
   [ "$bare" = 1 ] || prepare_repo_config "$main"
   register_repo "$main"
 
+  if [ -n "$base" ] && git -C "$main" show-ref --verify --quiet "refs/heads/$branch"; then
+    info "$branch already exists; ignoring --from $base"
+  fi
   existing=$(branch_worktree "$main" "$branch" || true)
   if [ -n "$existing" ]; then
+    [ "$existing" != "$main" ] || die "$branch is the main checkout ($main); use 'st go'"
     managed_tree "$main" "$branch" "$existing" ||
       die "$branch is already checked out outside supertree: $existing"
     dir=$existing
     info "worktree already exists: $(basename "$main")/$branch"
   else
+    # Clears only that record; git refuses to add the branch while it is registered.
+    # https://git-scm.com/docs/git-worktree#Documentation/git-worktree.txt-remove
+    while IFS= read -r stale; do
+      [ -n "$stale" ] || continue
+      git -C "$main" worktree remove "$stale" || die "cannot clear missing worktree: $stale"
+      info "cleared missing worktree: $stale"
+    done <<< "$(stale_branch_worktrees "$main" "$branch")"
     [ ! -e "$dir" ] && [ ! -L "$dir" ] || die "path already exists: $dir"
     mkdir -p "$(dirname "$dir")"
     if git -C "$main" show-ref --verify --quiet "refs/heads/$branch"; then
       git -C "$main" worktree add -q "$dir" "$branch"
     else
       base=$(pre_create "$main" "$branch" "$base") || die "pre-create hook failed; no worktree created"
+      case $base in -*) die "invalid base: $base";; esac
+      [ -z "$base" ] || git -C "$main" rev-parse --verify --quiet "$base^{commit}" >/dev/null ||
+        die "unknown base: $base; no worktree created"
       git -C "$main" worktree add -q -b "$branch" "$dir" ${base:+"$base"}
     fi
   fi
@@ -71,13 +85,17 @@ cmd_trust() {
 }
 
 cmd_ls() {
-  local repo branch path s live changes agent kind main
+  local repo branch path s live changes agent kind repos statuses
+  repos=$(main_checkouts)
+  statuses=$(agent_statuses)
   list_trees | while IFS=$'\t' read -r repo branch path s; do
-    if tmux has-session -t "=$s" 2>/dev/null; then live='open'; else live='closed'; fi
-    if [ "$live" = open ]; then agent=$(agent_status "$s"); else agent='-'; fi
+    agent=$(printf '%s\n' "$statuses" | awk -F '\t' -v s="$s" '$1 == s { print $2; exit }')
+    if [ -n "$agent" ]; then live='open'; else live='closed'; agent='-'; fi
     if [ -n "$(git -C "$path" status --porcelain 2>/dev/null)" ]; then changes='modified'; else changes='clean'; fi
-    main=$(main_worktree "$path")
-    if [ "$path" = "$main" ]; then kind='main'; else kind='worktree'; fi
+    case $'\n'"$repos"$'\n' in
+      *$'\n'"$path"$'\n'*) kind='main';;
+      *) kind='worktree';;
+    esac
     printf '%s\t%s\t%s\t%s\t%s\n' "$(tree_label "$repo" "$branch")" "$live" "$agent" "$changes" "$kind"
   done | awk -F '\t' '
     { for (i = 1; i <= 5; i++) { cell[NR,i] = $i; if (length($i) > width[i]) width[i] = length($i) } }
@@ -102,21 +120,13 @@ cmd_ls() {
 }
 
 cmd_status() {
-  local s all query
+  local s all trees
+  trees=$(list_trees)
+  all=$(printf '%s\n' "$trees" | cut -f4)
   if [ $# -gt 0 ]; then
-    query=$1
-    all=$(known_sessions)
-    s=$(session_for_label "$query" || true)
-    if [ -z "$s" ]; then
-      case $'\n'"$all"$'\n' in
-        *$'\n'"$query"$'\n'*) s=$query;;
-        *) s=$(printf '%s\n' "$all" | grep -i -- "$query" | head -1) || true;;
-      esac
-    fi
-    [ -n "$s" ] || die "no tree matching: $query"
+    s=$(resolve_session "$1" "$trees") || die "no tree matching: $1"
   elif [ -n "${TMUX:-}" ]; then
-    s=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S')
-    all=$(known_sessions)
+    s=$(current_session)
     case $'\n'"$all"$'\n' in
       *$'\n'"$s"$'\n'*) ;;
       *) die "$s is not a supertree session";;
@@ -124,7 +134,7 @@ cmd_status() {
   else
     die "usage: st status <tree>  (omit tree inside tmux)"
   fi
-  printf '%s\t%s\n' "$(label_for_session "$s")" "$(agent_status "$s")"
+  printf '%s\t%s\n' "$(label_for_session "$s" "$trees")" "$(agent_status "$s")"
 }
 
 cmd_rm() {
@@ -138,7 +148,7 @@ cmd_rm() {
   done
   [ -n "$branch" ] || die "usage: st rm <branch> [--force]"
 
-  local main repo slug dir sess dirty unpushed current old_sess current_sess=''
+  local main repo slug dir sess report current old_sess current_sess=''
   main=$(require_repo "${repo_arg:-.}")
   repo=$(repo_key "$main")
   slug=$(branch_key "$branch")
@@ -155,17 +165,9 @@ cmd_rm() {
   fi
 
   ! git_op_in_progress "$dir" || die "$branch is mid rebase or bisect; finish or abort it first"
-  dirty=$(git -C "$dir" status --porcelain 2>/dev/null || true)
-  # Not `@{u}..`: trees branched off origin/dev track it, so commits merged in from any remote branch look unpushed.
-  if [ -n "$(git -C "$dir" remote)" ]; then
-    unpushed=$(git -C "$dir" log --format=%s HEAD --not --remotes 2>/dev/null || true)
-  else
-    unpushed=''   # no remote configured, nothing can be "unpushed"
-  fi
-
-  if [ "$force" = 0 ] && [ -n "$dirty$unpushed" ]; then
-    [ -n "$dirty" ]    && { printf 'uncommitted changes:\n%s\n' "$dirty" >&2; }
-    [ -n "$unpushed" ] && { printf 'unpushed commits:\n%s\n' "$unpushed" >&2; }
+  report=$(tree_dirty_report "$dir")
+  if [ "$force" = 0 ] && [ -n "$report" ]; then
+    printf '%s\n' "$report" >&2
     die "refusing to remove $branch — commit/push, or pass --force"
   fi
 
@@ -176,18 +178,18 @@ cmd_rm() {
   current=$(branch_worktree "$main" "$branch" || true)
   [ "$current" = "$dir" ] || die "worktree for $branch changed; refusing to remove $dir"
 
-  if [ -n "${TMUX:-}" ]; then
-    current_sess=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S' 2>/dev/null || true)
-  fi
-  evacuate_clients "$sess"
-  # Killing our own session kills this process, so close it only after cleanup.
-  if [ "$sess" != "$current_sess" ]; then tmux kill-session -t "=$sess" 2>/dev/null || true; fi
+  [ -z "${TMUX:-}" ] || current_sess=$(current_session)
   if [ "$force" = 1 ]; then git -C "$main" worktree remove --force "$dir"
   else git -C "$main" worktree remove "$dir"; fi
+  if [ -n "$sess" ]; then
+    evacuate_clients "$sess"
+    # Killing our own session kills this process, so close it only after cleanup.
+    if [ "$sess" != "$current_sess" ]; then tmux kill-session -t "=$sess" 2>/dev/null || true; fi
+  fi
   git -C "$main" branch -d "$branch" >/dev/null 2>&1 || info "branch $branch kept (not merged)"
   clear_tree_state "$repo" "$slug" "$sess"
   info "removed $(basename "$main")/$branch"
-  if [ "$sess" = "$current_sess" ]; then tmux kill-session -t "=$sess" 2>/dev/null || true; fi
+  if [ -n "$sess" ] && [ "$sess" = "$current_sess" ]; then tmux kill-session -t "=$sess" 2>/dev/null || true; fi
 }
 
 # Removing a worktree drops its rebase state and reflog, losing rebased commits.
@@ -208,24 +210,26 @@ remove_tree_at() {
   cmd_rm "$branch" --repo "$main"
 }
 
-clear_tree_state() {
-  local repo=$1 slug=$2 sess=$3 tmp
-  rm -f "$ST_STATE/idx/$repo/$slug" \
-    "$ST_STATE/seen/$repo/$slug" \
-    "$ST_STATE/seen/$repo/$slug.$ST_HARNESS" \
-    "$ST_STATE/seen/$repo/$slug.claude" \
-    "$ST_STATE/seen/$repo/$slug.codex" \
-    "$ST_STATE/seen/$repo/$slug.openrouter"
-  if [ -f "$ST_STATE/recent" ]; then
-    tmp=$(mktemp "$ST_STATE/.recent.XXXXXX")
-    grep -vxF -- "$sess" "$ST_STATE/recent" > "$tmp" || true
-    mv "$tmp" "$ST_STATE/recent"
+tree_dirty_report() {
+  local dir=$1 dirty unpushed=''
+  dirty=$(git -C "$dir" status --porcelain 2>/dev/null || true)
+  # Not `@{u}..`: trees branched off origin/dev track it, so commits merged in from any remote branch look unpushed.
+  if [ -n "$(git -C "$dir" remote)" ]; then
+    unpushed=$(git -C "$dir" log --format=%s HEAD --not --remotes 2>/dev/null || true)
   fi
+  [ -z "$dirty" ] || printf 'uncommitted changes:\n%s\n' "$dirty"
+  [ -z "$unpushed" ] || printf 'unpushed commits:\n%s\n' "$unpushed"
+}
+
+clear_tree_state() {
+  local repo=$1 slug=$2 sess=$3
+  rm -f "$ST_STATE/idx/$repo/$slug" "$ST_STATE/seen/$repo/$slug" "$ST_STATE/seen/$repo/$slug".*
+  [ ! -f "$ST_STATE/recent" ] || rewrite_recent "$sess" 0
   if declare -F sidebar_forget >/dev/null; then sidebar_forget "$sess"; fi
 }
 
 cmd_remove_all() {
-  local force=0 root dir main branch sess repo slug dirty unpushed current other found tmp j
+  local force=0 root dir main branch sess repo slug current other found tmp j trees
   local current_sess='' close_current=0
   local -a dirs=() mains=() branches=() sessions=() kinds=()
   case ${1:-} in --force|-f) force=1; shift;; esac
@@ -234,6 +238,7 @@ cmd_remove_all() {
   root=$(cd "$ST_WORKTREE_ROOT" && pwd -P)
   [ "$root" != / ] && [ "$root" != "$HOME" ] || die "unsafe worktree root: $root"
 
+  trees=$(list_trees)
   for dir in "$root"/* "$root"/*/*; do
     [ -d "$dir" ] && [ ! -L "$dir" ] && [ ! -L "$dir/.git" ] &&
       { [ -f "$dir/.git" ] || [ -d "$dir/.git" ]; } || continue
@@ -248,7 +253,7 @@ cmd_remove_all() {
       esac
       sess=''
       if [ -n "$branch" ] && grep -qxF "$dir" "$ST_REPOS" 2>/dev/null; then
-        sess=$(tree_session "$(repo_key "$dir")" "$branch")
+        sess=$(tree_session "$(repo_key "$dir")" "$branch" "$trees")
       fi
       dirs+=("$dir"); mains+=("$main"); branches+=("$branch")
       sessions+=("$sess"); kinds+=(repo)
@@ -258,7 +263,7 @@ cmd_remove_all() {
           die "worktree changed while listing: $dir"
       fi
       repo=$(repo_key "$main")
-      sess=$(tree_session "$repo" "${branch:-(detached)}")
+      sess=$(tree_session "$repo" "${branch:-(detached)}" "$trees")
       dirs+=("$dir"); mains+=("$main"); branches+=("$branch")
       sessions+=("$sess"); kinds+=(worktree)
     fi
@@ -291,20 +296,13 @@ cmd_remove_all() {
     fi
     ! git_op_in_progress "$dir" ||
       die "$(basename "${mains[i]}")/${branches[i]:-(detached)} is mid rebase or bisect; finish or abort it first"
-    dirty=$(git -C "$dir" status --porcelain 2>/dev/null || true)
-    unpushed=''
-    if [ -n "$(git -C "$dir" remote)" ]; then
-      unpushed=$(git -C "$dir" log --format=%s HEAD --not --remotes 2>/dev/null || true)
-    fi
-    if [ "$force" = 0 ] && [ -n "$dirty$unpushed" ]; then
+    if [ "$force" = 0 ] && [ -n "$(tree_dirty_report "$dir")" ]; then
       die "refusing to remove $(basename "${mains[i]}")/${branches[i]:-(detached)} with uncommitted or unpushed work; pass --force"
     fi
   done
   printf 'proceed? [y/N] ' >&2; read -r ans
   case ${ans:-n} in y|Y|yes) ;; *) die "aborted";; esac
-  if [ -n "${TMUX:-}" ]; then
-    current_sess=$(tmux display-message -p '#S' 2>/dev/null || true)
-  fi
+  [ -z "${TMUX:-}" ] || current_sess=$(current_session)
 
   # Linked worktrees must go first when a standalone repo under the root owns
   # one of them. Revalidate each candidate before touching it.
@@ -322,21 +320,23 @@ cmd_remove_all() {
           current=$(branch_worktree "$main" "$branch" || true)
           [ "$current" = "$dir" ] || die "worktree changed; refusing to remove $dir"
         fi
-        evacuate_clients "$sess"
-        if [ "$sess" = "$current_sess" ]; then close_current=1
-        else tmux kill-session -t "=$sess" 2>/dev/null || true; fi
         if [ "$force" = 1 ]; then git -C "$main" worktree remove --force "$dir"
         else git -C "$main" worktree remove "$dir"; fi
-        [ -z "$branch" ] || git -C "$main" branch -d "$branch" >/dev/null 2>&1 ||
-          info "branch $branch kept (not merged)"
-        clear_tree_state "$repo" "$(branch_key "${branch:-(detached)}")" "$sess"
-      else
         if [ -n "$sess" ]; then
           evacuate_clients "$sess"
           if [ "$sess" = "$current_sess" ]; then close_current=1
           else tmux kill-session -t "=$sess" 2>/dev/null || true; fi
         fi
+        [ -z "$branch" ] || git -C "$main" branch -d "$branch" >/dev/null 2>&1 ||
+          info "branch $branch kept (not merged)"
+        clear_tree_state "$repo" "$(branch_key "${branch:-(detached)}")" "$sess"
+      else
         rm -rf -- "$dir"
+        if [ -n "$sess" ]; then
+          evacuate_clients "$sess"
+          if [ "$sess" = "$current_sess" ]; then close_current=1
+          else tmux kill-session -t "=$sess" 2>/dev/null || true; fi
+        fi
         if [ -f "$ST_REPOS" ]; then
           tmp=$(mktemp "$ST_STATE/.repos.XXXXXX")
           grep -vxF -- "$dir" "$ST_REPOS" > "$tmp" || true
