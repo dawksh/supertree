@@ -169,7 +169,9 @@ if [ -n "$real_tmux" ]; then
   trap 'TMUX_TMPDIR="$TEST_ROOT" "$real_tmux" -L "$socket" kill-server >/dev/null 2>&1 || true; rm -rf "$TEST_ROOT"' EXIT
   e2e_log="$TEST_ROOT/e2e.log"
   mkdir -p "$TEST_ROOT/e2e/.local/bin"
-  printf '%s\n' '#!/bin/sh' 'printf "%s|" "$@" >> "$ST_E2E_LOG"; echo >> "$ST_E2E_LOG"' > "$odd_dir/st"
+  # A sidebar pane stays open like the real one; st sets options on it after the split.
+  printf '%s\n' '#!/bin/sh' 'printf "%s|" "$@" >> "$ST_E2E_LOG"; echo >> "$ST_E2E_LOG"' \
+    '[ "$1" != _sidebar ] || exec sleep 60' > "$odd_dir/st"
   printf '#!/bin/sh\nexec %q -L %q -f /dev/null "$@"\n' "$real_tmux" "$socket" > "$TEST_ROOT/e2e/.local/bin/tmux"
   chmod +x "$odd_dir/st" "$TEST_ROOT/e2e/.local/bin/tmux"
   : > "$e2e_log"
@@ -185,11 +187,11 @@ if [ -n "$real_tmux" ]; then
       grep -Eqx -- "$1" "$e2e_log" && return 0
       sleep 0.1
     done
-    fail "isolated tmux never ran st with: $1 (log: $(tr '\n' ' ' < "$e2e_log"))"
+    fail "isolated tmux never ran st with: $1 (log: $(tr '\n' ' ' < "$e2e_log")) (st output: $(tr '\n' ' ' < "$TEST_ROOT/e2e.out" 2>/dev/null))"
   }
   printf 'ST_HARNESS=codex\nST_WINDOWS=shell\n' > "$ST_CONFIG"
   e2e_tmux new-session -d -s probe 'sleep 60'
-  e2e "$ROOT/bin/st" go main >/dev/null 2>&1 || true
+  e2e "$ROOT/bin/st" go main > "$TEST_ROOT/e2e.out" 2>&1 || true
   wait_e2e '_sidebar-poll\|'
   e2e_tmux new-window -d -t "=$main_session" >/dev/null 2>&1 || fail 'the after-new-window hook failed'
   wait_e2e '_sidebar-attach\|@[0-9]+\|'
