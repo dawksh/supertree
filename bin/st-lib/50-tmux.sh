@@ -118,7 +118,8 @@ style_tab() {
 # no formats, so focused and unfocused cards share one colour to keep it invisible.
 style_cards() {
   local target=$1
-  tmux set-option -w -t "$target" pane-border-lines spaces
+  # `spaces` is tmux 3.5+; older servers keep their default border lines.
+  tmux set-option -w -t "$target" pane-border-lines spaces 2>/dev/null || true
   tmux set-option -w -t "$target" pane-border-status top
   tmux set-option -w -t "$target" pane-border-style 'bg=default'
   tmux set-option -w -t "$target" pane-active-border-style 'bg=default'
