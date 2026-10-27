@@ -185,11 +185,11 @@ if [ -n "$real_tmux" ]; then
       grep -Eqx -- "$1" "$e2e_log" && return 0
       sleep 0.1
     done
-    fail "isolated tmux never ran st with: $1 (log: $(tr '\n' ' ' < "$e2e_log"))"
+    fail "isolated tmux never ran st with: $1 (log: $(tr '\n' ' ' < "$e2e_log")) (st output: $(tr '\n' ' ' < "$TEST_ROOT/e2e.out" 2>/dev/null))"
   }
   printf 'ST_HARNESS=codex\nST_WINDOWS=shell\n' > "$ST_CONFIG"
   e2e_tmux new-session -d -s probe 'sleep 60'
-  e2e "$ROOT/bin/st" go main >/dev/null 2>&1 || true
+  e2e "$ROOT/bin/st" go main > "$TEST_ROOT/e2e.out" 2>&1 || true
   wait_e2e '_sidebar-poll\|'
   e2e_tmux new-window -d -t "=$main_session" >/dev/null 2>&1 || fail 'the after-new-window hook failed'
   wait_e2e '_sidebar-attach\|@[0-9]+\|'
