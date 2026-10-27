@@ -49,6 +49,19 @@ EOF
 
 st_self() { command -v st 2>/dev/null || printf '%s' "$HOME/.local/bin/st"; }
 
+# run-shell and hook commands expand #{} formats before the shell runs them, so # is doubled.
+# "dq": the word also sits inside tmux double quotes, where \ " and $ are special.
+tmux_cmd_word() {
+  local q="'" escaped_q="'\\''" word
+  word="'${1//$q/$escaped_q}'"
+  if [ "${2:-}" = dq ]; then
+    word=${word//\\/\\\\}
+    word=${word//\"/\\\"}
+    word=${word//\$/\\\$}
+  fi
+  printf '%s' "${word//#/##}"
+}
+
 is_tree_session() {
   [ -n "$(tmux show-options -qv -t "=$1:" @supertree_label 2>/dev/null)" ]
 }

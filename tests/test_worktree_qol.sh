@@ -22,6 +22,9 @@ cat > "$HOME/.local/bin/tmux" <<'EOF'
 printf '%s\n' "$*" >> "$ST_TEST_LOG"
 case ${1:-} in
   has-session)
+    if [ -n "${ST_TEST_SESSIONS:-}" ]; then
+      printf '%s\n' "$ST_TEST_SESSIONS" | grep -qxF -- "${3#=}"; exit
+    fi
     if [ "${ST_TEST_MAIN_CLOSED:-0}" = 1 ] &&
        [[ $* == *"=$ST_TEST_MAIN_SESSION"* ]]; then exit 1; fi
     [ "${ST_TEST_HAS_SESSIONS:-0}" = 1 ]; exit;;
@@ -38,6 +41,7 @@ case ${1:-} in
       printf '%%0\n'
     fi;;
   capture-pane) printf '%s\n' "${ST_TEST_SCREEN:-Working...}";;
+  list-sessions) [ -z "${ST_TEST_SESSIONS:-}" ] || printf '%s\n' "$ST_TEST_SESSIONS";;
   list-clients) exit 1;;
 esac
 EOF
@@ -231,5 +235,25 @@ expected=$(printf 'uncommitted changes:\n?? dirty-file\nunpushed commits:\nlocal
 [ "$(head -4 "$TEST_ROOT/report.out")" = "$expected" ] || fail 'rm dirty report changed'
 grep -qF 'refusing to remove delta — commit/push, or pass --force' "$TEST_ROOT/report.out" || fail 'rm refusal message changed'
 [ -d "$delta_dir" ] || fail 'refused rm removed the tree'
+
+theta_dir=$("$ROOT/bin/st" new theta --bare 2>/dev/null)
+rm -rf "$theta_dir"
+printf 'x\n' > "$TEST_ROOT/demo/.env"
+"$ROOT/bin/st" new theta > "$TEST_ROOT/theta.out" 2>&1 || fail 'new did not recreate a deleted tree folder'
+[ -d "$theta_dir" ] || fail 'new did not recreate the deleted tree folder'
+[ -f "$theta_dir/.env" ] || fail 'new did not bootstrap the recreated tree'
+if grep -qF 'worktree already exists' "$TEST_ROOT/theta.out"; then fail 'new treated a deleted tree as existing'; fi
+rm "$TEST_ROOT/demo/.env"
+
+alpha_hash=$(printf '%s' alpha | { shasum -a 256 2>/dev/null || sha256sum; } | cut -c1-32)
+hashed_alpha="$repo/alpha-$alpha_hash"
+list=$(ST_TEST_SESSIONS=$hashed_alpha ST_TEST_SCREEN='Working...' \
+  ST_TEST_PANES=$(printf '%s\tcodex\t%%1\tdone\tcodex\tbash' "$hashed_alpha") "$ROOT/bin/st" ls)
+printf '%s\n' "$list" | grep -Eq '^demo/alpha +open +done ' || fail 'list did not see a session under its old hashed name'
+: > "$ST_TEST_LOG"
+ST_TEST_SESSIONS=$hashed_alpha "$ROOT/bin/st" down demo/alpha > "$TEST_ROOT/down-hashed.out" 2>&1 ||
+  fail 'down failed on an old hashed session'
+grep -qxF "kill-session -t =$hashed_alpha" "$ST_TEST_LOG" || fail 'down did not close the old hashed session'
+if grep -q '^rename-session ' "$ST_TEST_LOG"; then fail 'down renamed a session'; fi
 
 printf 'ok: recent picker, Escape, agent state, bulk close, and guarded deletion\n'

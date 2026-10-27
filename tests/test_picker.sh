@@ -16,10 +16,10 @@ mkdir -p "$HOME/.local/bin" "$ST_STATE" "$TEST_ROOT/fzf-bin" "$TEST_ROOT/one/dem
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
-# st lives at a path with a space, and without the hard-coded Homebrew PATH
-# entry so a missing fzf can be simulated. fzf may sit in /usr/bin (Linux), so
-# no_fzf runs on a PATH of system-tool links minus fzf.
-st_dir="$TEST_ROOT/st dir"
+# st lives at a path with a space, ' and # (display-popup expands no formats, so no ##), and
+# without the hard-coded Homebrew PATH entry so a missing fzf can be simulated. fzf may
+# sit in /usr/bin (Linux), so no_fzf runs on a PATH of system-tool links minus fzf.
+st_dir="$TEST_ROOT/st dir'#S"
 mkdir -p "$st_dir" "$TEST_ROOT/no-fzf-bin"
 cp "$ROOT/bin/st" "$st_dir/st"
 cp -R "$ROOT/bin/st-lib" "$st_dir/st-lib"

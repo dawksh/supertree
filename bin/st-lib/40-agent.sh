@@ -131,11 +131,11 @@ cmd_harness() {
   if [ -f "$marker" ] || { [ -n "$old_marker" ] && [ -f "$old_marker" ]; } ||
      { [ "$ST_HARNESS" = claude ] && [ -n "$legacy" ] && [ -f "$legacy" ]; }; then
     case $ST_HARNESS in
-      # Claude Code documents no exit code for "nothing to continue", so any
-      # failure falls through to the shell rather than discarding the session.
+      # None of these CLIs document an exit code for "nothing to continue", so
+      # any failure falls through to the shell rather than discarding the session.
       claude) claude --continue || info "Claude Code exited with an error; run 'claude' to start fresh";;
-      codex) codex resume --last || codex;;
-      openrouter) opencode --continue || opencode;;
+      codex) codex resume --last || info "Codex exited with an error; run 'codex' to start fresh";;
+      openrouter) opencode --continue || info "OpenCode exited with an error; run 'opencode' to start fresh";;
       *) if [ -n "$ST_HARNESS_RESUME_COMMAND" ]; then
            eval "$ST_HARNESS_RESUME_COMMAND" || eval "$ST_HARNESS_COMMAND"
          else

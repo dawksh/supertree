@@ -107,7 +107,7 @@ sidebar_session() {
   tmux set-option -t "=$sess:" status-left-length $((ST_SIDEBAR_WIDTH + 1))
   tmux set-option -t "=$sess:" status-left \
     "#{?@st_sidebar_off, #{@supertree_label} ,#[fg=colour245]#{p$((ST_SIDEBAR_WIDTH + 1)):#{=/$((ST_SIDEBAR_WIDTH - 1))/…: #{@supertree_label}}}#[default]}"
-  tmux set-hook -t "$sess" after-new-window "run-shell \"'$self' _sidebar-attach '#{window_id}'\""
+  tmux set-hook -t "$sess" after-new-window "run-shell \"$(tmux_cmd_word "$self" dq) _sidebar-attach '#{window_id}'\""
 }
 
 sidebar_snapshot() {
@@ -163,7 +163,7 @@ sidebar_forget() {
 
 sidebar_poke() {
   local sock pane action
-  action="reload('$(st_self)' _sidebar-rows)"
+  action="reload:$(printf %q "$(st_self)") _sidebar-rows"
   for sock in "$ST_SIDEBAR_DIR"/*.sock; do
     [ -e "$sock" ] || continue
     pane=${sock##*/}; pane="%${pane%.sock}"
@@ -205,7 +205,7 @@ sidebar_poll_start() {
   pid=$(cat "$ST_SIDEBAR_DIR/poll.lock/pid" 2>/dev/null) || pid=''
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && return 0
   # run-shell -b detaches the refresher from this pane, so closing the pane leaves it running.
-  tmux run-shell -b "$(printf '%q _sidebar-poll' "$(st_self)") >/dev/null 2>&1"
+  tmux run-shell -b "$(tmux_cmd_word "$(st_self)") _sidebar-poll >/dev/null 2>&1"
 }
 
 # One refresher per tmux server. The tree list (git) is slow, so it reloads only
@@ -269,7 +269,7 @@ cmd_sidebar() {
   declare -F picker_rows >/dev/null || die "sidebar needs the picker module"
   # Long-running like the refresher: a failed row read should retry, not close the pane.
   set +e
-  self=$(st_self)
+  printf -v self %q "$(st_self)"
   mkdir -p "$ST_SIDEBAR_DIR"
   sock="$ST_SIDEBAR_DIR/${TMUX_PANE#%}.sock"
   # Unix socket paths are capped near 104 bytes; past that, skip live refresh (Ctrl-R still reloads).
@@ -286,13 +286,13 @@ cmd_sidebar() {
           ${listen[@]+"${listen[@]}"} --pointer='▌' --gutter=' ' --ellipsis='…' --padding=1,0,0,0 \
           --bind="load:pos(${start:-1})+unbind(load)" \
           --bind='j:down,k:up,g:first,G:last' \
-          --bind="enter:execute-silent('$self' _sidebar-open {2} {3})" \
-          --bind="l:execute-silent('$self' _sidebar-open {2} {3})" \
-          --bind="double-click:execute-silent('$self' _sidebar-open {2} {3})" \
-          --bind="d:execute-silent('$self' _sidebar-rm {2} {3})" \
+          --bind="enter:execute-silent:$self _sidebar-open {2} {3}" \
+          --bind="l:execute-silent:$self _sidebar-open {2} {3}" \
+          --bind="double-click:execute-silent:$self _sidebar-open {2} {3}" \
+          --bind="d:execute-silent:$self _sidebar-rm {2} {3}" \
           --bind='esc:execute-silent(tmux select-pane -R),h:execute-silent(tmux select-pane -R),q:execute-silent(tmux select-pane -R)' \
-          --bind="ctrl-r:reload('$self' _sidebar-rows)" \
-          --bind="resize:execute-silent('$self' _sidebar-heal)" || sleep 1
+          --bind="ctrl-r:reload:$self _sidebar-rows" \
+          --bind="resize:execute-silent:$self _sidebar-heal" || sleep 1
   done
 }
 
@@ -302,7 +302,7 @@ cmd_sidebar_open() {
     ''|'#'*) return 0;;
     +new)
       tty=$(tmux display-message -p -t "$TMUX_PANE" '#{client_tty}')
-      tmux run-shell -b "$(printf '%q go --popup %q' "$(st_self)" "$tty")"
+      tmux run-shell -b "$(tmux_cmd_word "$(st_self)") go --popup $(tmux_cmd_word "$tty")"
       return 0;;
   esac
   # Leave focus on the tab so coming back to this tree lands in the program, not the list.

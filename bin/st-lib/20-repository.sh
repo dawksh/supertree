@@ -69,24 +69,32 @@ resolve_session() {
     }' <<< "$trees"
 }
 
+# A worktree whose folder was deleted by hand stays listed as "prunable"
+# after its branch line, so a record only counts once it has ended.
 branch_worktree() {
-  local main=$1 branch=$2 line path=''
+  local main=$1 branch=$2 line path='' match=0 stale=0
   while IFS= read -r line; do
     case $line in
-      'worktree '*) path=${line#worktree };;
-      'branch '*)
-        if [ "${line#branch }" = "refs/heads/$branch" ]; then
+      'worktree '*) path=${line#worktree }; match=0; stale=0;;
+      'branch '*) [ "${line#branch }" != "refs/heads/$branch" ] || match=1;;
+      detached) [ "$(tree_branch "$path")" != "$branch" ] || match=1;;
+      prunable*) stale=1;;
+      '')
+        if [ "$match" = 1 ] && [ "$stale" = 0 ] && [ -d "$path" ]; then
           printf '%s' "$path"
           return 0
-        fi;;
-      detached)
-        if [ "$(tree_branch "$path")" = "$branch" ]; then
-          printf '%s' "$path"
-          return 0
-        fi;;
+        fi
+        match=0;;
     esac
-  done < <(git -C "$main" worktree list --porcelain)
+  done < <(git -C "$main" worktree list --porcelain; echo)
   return 1
+}
+
+stale_branch_worktrees() {
+  git -C "$1" worktree list --porcelain | ST_BRANCH="refs/heads/$2" awk '
+    /^worktree /{ p = substr($0, 10); b = "" }
+    /^branch /{ b = substr($0, 8) }
+    /^prunable/ && b == ENVIRON["ST_BRANCH"] { print p }'
 }
 
 # Rebase, bisect and `checkout <sha>` detach HEAD. Keep naming the tree after
@@ -173,11 +181,24 @@ adopt_hashed_session() {
   tmux rename-session -t "=$hashed" "$sess" 2>/dev/null || true
 }
 
+# A session still under its pre-readable hashed name is this tree's session.
+# Listing is read-only, so it reports that name instead of renaming it.
+live_hashed_session() {
+  local repo=$1 branch=$2 sess=$3 live=$4 hashed
+  hashed=$(sess_name "$repo" "$(branch_key "$branch")")
+  case $'\n'"$live"$'\n' in
+    *$'\n'"$sess"$'\n'*) printf '%s' "$sess";;
+    *$'\n'"$hashed"$'\n'*) printf '%s' "$hashed";;
+    *) printf '%s' "$sess";;
+  esac
+}
+
 # Rows: repo key, branch, path, tmux session. Session names stay readable
 # (repo/branch); a short hash is added only where two trees would collide.
 list_trees() {
-  local r repo branch path sess clash root
+  local r repo branch path sess clash root live
   [ -f "$ST_REPOS" ] || return 0
+  live=$(tmux list-sessions -F '#S' 2>/dev/null || true)
   root=$(cd "$ST_WORKTREE_ROOT" 2>/dev/null && pwd -P || printf '%s' "$ST_WORKTREE_ROOT")
   while read -r r; do
     [ -d "$r" ] || continue
@@ -219,6 +240,7 @@ list_trees() {
       for (i = 1; i <= NR; i++) print row[i] "\t" sess[i] "\t" (trees[sess[i]] > 1)
     }' | while IFS=$'\t' read -r repo branch path orphan sess clash; do
     [ "$clash" = 0 ] || sess="$sess-$(identity_hash "$branch" | cut -c1-6)"
+    case $'\n'"$live" in *$'\n'"$repo/"*) sess=$(live_hashed_session "$repo" "$branch" "$sess" "$live");; esac
     [ "$orphan" = 0 ] || tmux has-session -t "=$sess" 2>/dev/null || continue
     printf '%s\t%s\t%s\t%s\n' "$repo" "$branch" "$path" "$sess"
   done

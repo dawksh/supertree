@@ -14,7 +14,7 @@ cmd_new() {
   done
   [ -n "$branch" ] || die "usage: st new <branch> [--from <base>] [--bare]"
 
-  local main repo slug dir sess idx existing
+  local main repo slug dir sess idx existing stale
   main=$(require_repo "${repo_arg:-.}")
   repo=$(repo_key "$main")
   slug=$(branch_key "$branch")
@@ -33,6 +33,13 @@ cmd_new() {
     dir=$existing
     info "worktree already exists: $(basename "$main")/$branch"
   else
+    # Clears only that record; git refuses to add the branch while it is registered.
+    # https://git-scm.com/docs/git-worktree#Documentation/git-worktree.txt-remove
+    while IFS= read -r stale; do
+      [ -n "$stale" ] || continue
+      git -C "$main" worktree remove "$stale" || die "cannot clear missing worktree: $stale"
+      info "cleared missing worktree: $stale"
+    done <<< "$(stale_branch_worktrees "$main" "$branch")"
     [ ! -e "$dir" ] && [ ! -L "$dir" ] || die "path already exists: $dir"
     mkdir -p "$(dirname "$dir")"
     if git -C "$main" show-ref --verify --quiet "refs/heads/$branch"; then
@@ -174,13 +181,15 @@ cmd_rm() {
   [ -z "${TMUX:-}" ] || current_sess=$(current_session)
   if [ "$force" = 1 ]; then git -C "$main" worktree remove --force "$dir"
   else git -C "$main" worktree remove "$dir"; fi
-  evacuate_clients "$sess"
-  # Killing our own session kills this process, so close it only after cleanup.
-  if [ "$sess" != "$current_sess" ]; then tmux kill-session -t "=$sess" 2>/dev/null || true; fi
+  if [ -n "$sess" ]; then
+    evacuate_clients "$sess"
+    # Killing our own session kills this process, so close it only after cleanup.
+    if [ "$sess" != "$current_sess" ]; then tmux kill-session -t "=$sess" 2>/dev/null || true; fi
+  fi
   git -C "$main" branch -d "$branch" >/dev/null 2>&1 || info "branch $branch kept (not merged)"
   clear_tree_state "$repo" "$slug" "$sess"
   info "removed $(basename "$main")/$branch"
-  if [ "$sess" = "$current_sess" ]; then tmux kill-session -t "=$sess" 2>/dev/null || true; fi
+  if [ -n "$sess" ] && [ "$sess" = "$current_sess" ]; then tmux kill-session -t "=$sess" 2>/dev/null || true; fi
 }
 
 # Removing a worktree drops its rebase state and reflog, losing rebased commits.

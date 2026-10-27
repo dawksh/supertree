@@ -150,6 +150,62 @@ PATH="$TEST_ROOT/with space:$PATH" "$ROOT/bin/st" go main
 assert_log_contains "$(printf '%q' "$TEST_ROOT/with space/st") _run _agent"
 assert_log_contains "$(printf '%q' "$TEST_ROOT/with space/st") _run nvim"
 
+# Commands tmux runs through run-shell or a hook expand #{} formats, so # is doubled there only.
+odd_dir="$TEST_ROOT/we ird'\$HOME#S"
+mkdir -p "$odd_dir"
+ln -s "$ROOT/bin/st" "$odd_dir/st"
+printf 'ST_HARNESS=codex\n' > "$ST_CONFIG"
+: > "$ST_TMUX_LOG"
+PATH="$odd_dir:$PATH" "$ROOT/bin/st" go main
+assert_log_contains "$(printf '%q' "$odd_dir/st") _run _agent"
+assert_log_contains "after-new-window run-shell \"'$TEST_ROOT/we ird'\\\\''\\\$HOME##S/st' _sidebar-attach '#{window_id}'\""
+assert_log_contains "run-shell -b '$TEST_ROOT/we ird'\\''\$HOME##S/st' _sidebar-poll >/dev/null 2>&1"
+rm "$odd_dir/st"
+
+# A real, isolated tmux server runs those commands, with a stub st that logs its arguments.
+real_tmux=$(command -v tmux || true)
+if [ -n "$real_tmux" ]; then
+  socket="st-windows-test-$$"
+  trap 'TMUX_TMPDIR="$TEST_ROOT" "$real_tmux" -L "$socket" kill-server >/dev/null 2>&1 || true; rm -rf "$TEST_ROOT"' EXIT
+  e2e_log="$TEST_ROOT/e2e.log"
+  mkdir -p "$TEST_ROOT/e2e/.local/bin"
+  printf '%s\n' '#!/bin/sh' 'printf "%s|" "$@" >> "$ST_E2E_LOG"; echo >> "$ST_E2E_LOG"' > "$odd_dir/st"
+  printf '#!/bin/sh\nexec %q -L %q -f /dev/null "$@"\n' "$real_tmux" "$socket" > "$TEST_ROOT/e2e/.local/bin/tmux"
+  chmod +x "$odd_dir/st" "$TEST_ROOT/e2e/.local/bin/tmux"
+  : > "$e2e_log"
+  e2e() {
+    HOME="$TEST_ROOT/e2e" PATH="$odd_dir:$PATH" ST_E2E_LOG="$e2e_log" TMUX_TMPDIR="$TEST_ROOT" \
+      ST_WORKTREE_ROOT="$TEST_ROOT/home/projects/.worktrees" "$@"
+  }
+  e2e_tmux() { e2e "$real_tmux" -L "$socket" -f /dev/null "$@"; }
+  # An optional key is resent each try: fzf drops keys that arrive before it has drawn.
+  wait_e2e() {
+    for _ in $(seq 50); do
+      [ -z "${2:-}" ] || e2e_tmux send-keys -t "$sidebar_pane" "$2"
+      grep -Eqx -- "$1" "$e2e_log" && return 0
+      sleep 0.1
+    done
+    fail "isolated tmux never ran st with: $1 (log: $(tr '\n' ' ' < "$e2e_log"))"
+  }
+  printf 'ST_HARNESS=codex\nST_WINDOWS=shell\n' > "$ST_CONFIG"
+  e2e_tmux new-session -d -s probe 'sleep 60'
+  e2e "$ROOT/bin/st" go main >/dev/null 2>&1 || true
+  wait_e2e '_sidebar-poll\|'
+  e2e_tmux new-window -d -t "=$main_session" >/dev/null 2>&1 || fail 'the after-new-window hook failed'
+  wait_e2e '_sidebar-attach\|@[0-9]+\|'
+  TMUX_PANE=$(e2e_tmux display-message -p -t '=probe:' '#{pane_id}') e2e "$ROOT/bin/st" _sidebar-open +new
+  wait_e2e 'go\|--popup\|\|'
+
+  # The sidebar's fzf runs its key bindings through the shell, not tmux: no doubled #.
+  if command -v fzf >/dev/null; then
+    sidebar_pane=$(e2e_tmux new-window -d -t '=probe' -P -F '#{pane_id}' "$ROOT/bin/st" _sidebar)
+    wait_e2e '_sidebar-open\|.*' Enter
+    wait_e2e '_sidebar-rows\|' C-r
+  fi
+  e2e_tmux kill-server >/dev/null 2>&1 || true
+  rm -rf "$ST_STATE/sidebar"
+fi
+
 # Window shortcuts refuse outside a supertree session and create nothing.
 printf 'ST_HARNESS=codex\n' > "$ST_CONFIG"
 for args in 'window 1' 'toggle' 'agent'; do

@@ -571,5 +571,11 @@ changes on main. Intended.
 configured harness, and that tree's `seen` marker. Each agent keeps a separate
 marker and its own native history.
 
+**A strip of different colour (or see-through) around the cards** — your
+terminal adds its own window padding and paints it in its own background,
+outside tmux. Set it to 0; in WezTerm
+([`window_padding`](https://wezterm.org/config/lua/config/window_padding.html)):
+`config.window_padding = { left = 0, right = 0, top = 0, bottom = 0 }`.
+
 **OpenRouter is selected but no models appear** — run `opencode`, enter
 `/connect`, choose OpenRouter, then use `/models` to select a model.

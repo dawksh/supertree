@@ -68,6 +68,21 @@ out=$(ST_TEST_FAIL_ARGS=--continue ST_STATE="$TEST_ROOT/claude-fail-state" \
 assert_log "$(printf '%s\n%s' 'claude|' 'claude|--continue')"
 case $out in *"run 'claude' to start fresh"*) ;; *) fail "missing start-fresh hint: [$out]";; esac
 
+# Codex and OpenCode resume failures also fall through without a fresh launch.
+run_resume_failure() {
+  local harness=$1 command=$2 resume_args=$3
+  printf 'ST_HARNESS=%s\n' "$harness" > "$ST_CONFIG"
+  : > "$ST_TEST_LOG"
+  ST_STATE="$TEST_ROOT/$harness-fail-state" "$ROOT/bin/st" _agent
+  out=$(ST_TEST_FAIL_ARGS="$resume_args" ST_STATE="$TEST_ROOT/$harness-fail-state" \
+    "$ROOT/bin/st" _agent 2>&1) || fail "failed $command $resume_args made st _agent fail"
+  assert_log "$(printf '%s\n%s' "$command|" "$command|$resume_args")"
+  case $out in *"run '$command' to start fresh"*) ;; *) fail "missing $command start-fresh hint: [$out]";; esac
+}
+
+run_resume_failure codex codex 'resume --last'
+run_resume_failure openrouter opencode --continue
+
 # Outside a git repository the pane's harness refuses, writes no markers,
 # and still drops into the shell.
 outside="$TEST_ROOT/not-a-repo"

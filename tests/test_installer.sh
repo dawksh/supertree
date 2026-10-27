@@ -112,10 +112,15 @@ fi
   exit 1
 }
 
-# Every st binding runs in the background so tmux is not blocked while st works.
-for key in M-e M-Tab M-1 M-2 M-3 M-4 M-5 M-6 M-7 M-8 M-9 M-s M-B M-v M-j M-k M-q; do
+# Every st binding except tree stepping runs in the background so tmux is not blocked while st works.
+# Tree stepping runs in the foreground so a fast double press cannot run two steps at once.
+for key in M-e M-Tab M-1 M-2 M-3 M-4 M-5 M-6 M-7 M-8 M-9 M-s M-B M-v M-q; do
   grep -Eq "^bind -n $key run-shell -b " "$ROOT/tmux/supertree.conf" ||
     fail "supertree.conf binding $key does not use run-shell -b"
+done
+for key in M-j M-k; do
+  grep -Eq "^bind -n $key run-shell \"" "$ROOT/tmux/supertree.conf" ||
+    fail "supertree.conf binding $key must use run-shell without -b"
 done
 
 # A config whose last line is a false test must not break st.
@@ -146,13 +151,16 @@ grep -qxF "bind -n M-w run-shell -b -c '#{pane_current_path}' \"$expected_word g
 real_tmux=$(command -v tmux || true)
 if [ -n "$real_tmux" ]; then
   socket="st-installer-test-$$"
+  # Short dir: the default temp path is too long for a unix socket on macOS.
+  sock_dir=$(mktemp -d /tmp/st-sock.XXXXXX)
   printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$*" > "$ST_TEST_LOG"' > "$odd_prefix/st"
   chmod +x "$odd_prefix/st"
   sed -n 's/^bind -n M-1 run-shell -b /run-shell /p' "$odd_conf/supertree.conf" > "$TEST_ROOT/odd-run.conf"
-  ST_TEST_LOG="$TEST_ROOT/odd-run.log" "$real_tmux" -L "$socket" -f /dev/null \
+  TMUX_TMPDIR="$sock_dir" ST_TEST_LOG="$TEST_ROOT/odd-run.log" "$real_tmux" -L "$socket" -f /dev/null \
     new-session -d -s probe "sleep 30" \; source-file "$TEST_ROOT/odd-run.conf" >/dev/null 2>&1 || true
   for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$TEST_ROOT/odd-run.log" ] && break; sleep 0.2; done
-  "$real_tmux" -L "$socket" kill-server >/dev/null 2>&1 || true
+  TMUX_TMPDIR="$sock_dir" "$real_tmux" -L "$socket" kill-server >/dev/null 2>&1 || true
+  rm -rf "$sock_dir"
   [ "$(cat "$TEST_ROOT/odd-run.log" 2>/dev/null)" = 'window 1' ] ||
     fail 'tmux could not run the binding rendered for an unusual prefix'
 fi
