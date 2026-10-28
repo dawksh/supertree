@@ -42,7 +42,7 @@ cmd_go() {
     esac
   done
 
-  local rows sel dir sess key start
+  local rows sel dir sess key start live_dir
   if [ "$popup" = 1 ]; then
     [ -n "$popup_client" ] || die "no tmux client for tree picker"
     local self
@@ -53,6 +53,20 @@ cmd_go() {
   fi
 
   if [ -n "$query" ]; then
+    # Exact live-session names already carry their tree path. A partial query
+    # still needs the full picker rows to choose the first match.
+    if [ "${ST_PICKER_ROWS+x}" != x ]; then
+      case $query in
+        */*)
+          live_dir=$(tmux list-windows -a -F '#{session_name}'$'\t''#{@st_tree_dir}' 2>/dev/null |
+            awk -F '\t' -v q="$query" '$1 == q && $2 != "" { print $2; exit }')
+          if [ -d "$live_dir" ]; then
+            build_session "$query" "$live_dir"
+            attach "$query"
+            return 0
+          fi;;
+      esac
+    fi
     if [ "${ST_PICKER_ROWS+x}" = x ]; then rows=$ST_PICKER_ROWS
     else rows=$(picker_rows | sort_recent); fi
     [ -n "$rows" ] || die "no worktrees known yet — run 'st new <branch>' inside a repo"
@@ -109,8 +123,15 @@ cmd_go() {
 
 # Direct entry: the tree you are standing in, else the most recently opened one.
 cmd_open() {
-  local here main rows row=''
+  local here main rows row='' live
   here=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  if [ -n "$here" ]; then
+    # A live tree already records its checkout path on each window. Reuse it
+    # without discovering every repository; home may share the same cwd.
+    live=$(tmux list-windows -a -F '#{session_name}'$'\t''#{@st_tree_dir}' 2>/dev/null |
+      awk -F '\t' -v p="$here" -v home="$ST_HOME_SESSION" '$1 != home && $2 == p { print $1; exit }')
+    if [ -n "$live" ]; then attach "$live"; return 0; fi
+  fi
   main=$(main_worktree .) || main=''
   [ -z "$main" ] || register_repo "$main"
   rows=$(list_trees | cut -f2-)

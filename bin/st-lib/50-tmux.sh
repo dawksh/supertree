@@ -194,6 +194,12 @@ cmd_split() {
 
 build_session() {
   local sess=$1 dir=$2 windows type first_name='' initial=1 branch main label
+  # A current Supertree session already has its label, windows, and sidebar.
+  # Switching to it should not inspect the Git checkout again.
+  if tmux has-session -t "=$sess" 2>/dev/null &&
+     [ "$(tmux show-options -qv -t "=$sess:" @st_layout 2>/dev/null)" = "$ST_LAYOUT_VERSION" ]; then
+    return 0
+  fi
   branch=$(tree_branch "$dir")
   main=$(main_worktree "$dir") || main=''
   label="$(basename "$main")/${branch:-(detached)}"
