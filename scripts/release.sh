@@ -4,6 +4,8 @@ set -euo pipefail
 # Every first-parent commit after the latest published release gets a release.
 # The first run begins at the commit that introduced this workflow, so older
 # unreleased commits are included in that first release instead of backfilled.
+# A commit that fails its checks is folded into the next release, unless it is
+# the newest: otherwise one broken merge would block every release after it.
 
 next_version() {
   local tag=$1 bump=$2 major minor patch
@@ -33,9 +35,19 @@ choose_bump() {
   fi
 }
 
+check_source() {
+  local src=$1 file
+  for file in "$src/bin/st" "$src"/bin/st-lib/*.sh "$src/install.sh" "$src"/tests/*.sh "$src"/scripts/*.sh; do
+    bash -n "$file" || return 1
+  done
+  for file in "$src"/tests/*.sh; do
+    bash "$file" || return 1
+  done
+}
+
 main() {
   local repo=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}
-  local base sha labels bump next tmp src assets state tagged_sha
+  local base sha labels bump next tmp src assets state tagged_sha pending newest carried=''
   local active=0 released=0
 
   cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -53,14 +65,18 @@ main() {
     return 1
   }
 
+  pending=$(git rev-list --first-parent --reverse "$base..origin/main")
+  newest=${pending##*$'\n'}
   # On activation, skip old commits whose source did not contain this pipeline.
   while IFS= read -r sha; do
+    [[ -n $sha ]] || continue
     if [[ $active == 0 ]]; then
       git cat-file -e "$sha:.github/workflows/release.yml" 2>/dev/null || continue
       active=1
     fi
     labels=$(gh api "repos/$repo/commits/$sha/pulls" \
       --jq '.[] | select(.merged_at != null) | .labels[].name')
+    labels=$carried$labels
     bump=$(choose_bump "$labels")
     next=$(next_version "$base" "$bump")
     printf 'Releasing %s as %s (%s)\n' "$sha" "$next" "$bump"
@@ -70,12 +86,14 @@ main() {
     assets="$tmp/assets"
     mkdir -p "$src" "$assets"
     git archive "$sha" | tar -x -C "$src"
-    for file in "$src/bin/st" "$src"/bin/st-lib/*.sh "$src/install.sh" "$src"/tests/*.sh "$src"/scripts/*.sh; do
-      bash -n "$file"
-    done
-    for file in "$src"/tests/*.sh; do
-      bash "$file"
-    done
+    if ! check_source "$src"; then
+      [[ $sha != "$newest" ]] || return 1
+      printf 'Skipping %s: checks failed; its changes ship with the next release.\n' "$sha" >&2
+      carried=$labels$'\n'
+      rm -rf "$tmp"
+      continue
+    fi
+    carried=''
 
     tar -czf "$assets/st.tar.gz" -C "$src/bin" st st-lib
     cp "$src/scripts/legacy-upgrade.sh" "$assets/st"
@@ -110,7 +128,7 @@ main() {
     base=$next
     released=$((released + 1))
     rm -rf "$tmp"
-  done < <(git rev-list --first-parent --reverse "$base..origin/main")
+  done <<<"$pending"
   if ((released == 0)); then
     printf 'No commits pending release.\n'
   fi
