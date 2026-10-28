@@ -4,8 +4,9 @@ Work on several branches of the same repo at once, each in its own git worktree
 and configurable tmux session, with your chosen coding agent and terminal tools
 already running.
 
-Run `st` on its own and you land in a tree: a sidebar listing every tree on the
-left, and your agent, editor and shell as tabs. One key switches between trees,
+Run `st` on its own and you land in a persistent Supertree home shell, with a
+sidebar listing every tree on the left. Open a tree to get your agent, editor
+and shell as tabs. One key switches between trees,
 one key flips between your primary windows, and two keys leave tmux while keeping
 the tree running. Closing a tree with `st down` lets you reopen the agent in the
 same conversation.
@@ -145,10 +146,11 @@ update those with `git pull` instead.
 
 ```sh
 cd ~/projects/webauth
+st                     # enter the Supertree home shell
 st new feat-otp        # worktree + deps + env + session, drops you in the agent
 # ... work ...
-M-q                    # back to where you ran st; the tree keeps running
-st                     # from anywhere: back into the tree you used last
+M-q                    # back to Supertree home; the tree keeps running
+st                     # from anywhere: back to Supertree home
 M-w                    # jump to any other tree
 st down feat-otp       # close the tree session; agent history stays
 st rm feat-otp         # done with it: session, worktree and branch go away
@@ -160,7 +162,8 @@ st rm feat-otp         # done with it: session, worktree and branch go away
 
 | command | what it does |
 |---|---|
-| `st` | Open the tree you are standing in. Outside a known tree, open the one you used most recently. Inside a repository `st` has not seen yet, registers it and opens its main checkout. Same as `st open`. |
+| `st` / `st home` | Open the persistent Supertree home shell and sidebar. Registers the current repository if needed. |
+| `st open` | Go directly to the current tree, or the most recently used tree outside a known checkout. |
 | `st new <branch>` | Create the worktree, bootstrap it, build the tmux session, switch to it. Reuses the branch if it already exists, otherwise creates it. |
 | `st trust` | Trust the current contents of this repository's reviewed `.supertree` file. Run again if the file changes. |
 | `st go [query]` | Switch to a tree. No query opens an fzf picker; a query picks the first match. Builds the session first if the tree is closed. |
@@ -217,7 +220,7 @@ and the `st _sidebar*` commands are called by the tmux bindings and the sidebar,
 | `M-v` | open another copy of this tab's program side by side (a fresh agent session in the agent tab); `exit` or `prefix x` closes it |
 | `M-s` | focus the tree sidebar with the cursor on the tree you are in; Escape goes back to the tab |
 | `M-B` (Option-Shift-B) | hide or show the sidebar in every tree window; showing it also focuses it |
-| `M-q` | go back to the session you ran `st` from (leaves tmux if you started outside it) |
+| `M-q` | return to Supertree home when it is open; from home, detach |
 | `M-Q` (Option-Shift-Q) | leave tmux; keep the current tree session running |
 | `M-/` | popup listing every key (`st keys` prints the same list) |
 
@@ -479,10 +482,11 @@ main's, so be careful creating trees from branches you do not trust.
 `Ctrl-D`. The window falls back to a shell in the worktree. `M-1` recreates the
 configured agent window if it has been closed.
 
-**Leave tmux** — `M-q` switches back to the tmux session you ran `st` from, or
-detaches if you started outside tmux. `M-Q` always detaches your client and
+**Leave tmux** — `M-q` returns from a tree to Supertree home when home is open.
+From home it detaches. Without home, it returns to the tmux session you ran `st`
+from, or detaches if you started outside tmux. `M-Q` always detaches your client and
 returns to your terminal shell. The tree session, agent, and editor keep running. Reattach with
-`st resume [branch]` or `tmux attach`.
+`st` for home, `st resume [branch]` for a tree, or `tmux attach`.
 
 **Close the tree** — `st down`. Kills only the tmux session. Unsaved editor
 buffers in that session are lost.
@@ -533,8 +537,8 @@ the `st` symlink, not the checkout.
 | path | holds |
 |---|---|
 | `~/projects/.worktrees/<repo>-<id>/<branch>-<id>` | new worktrees, 5-character IDs (old paths remain usable) |
-| `~/.local/state/supertree/repos` | repos `st` knows about (appended by `st new` and bare `st`) |
-| `~/.local/state/supertree/recent` | trees in the order you last opened them; bare `st` and `M-w` read it |
+| `~/.local/state/supertree/repos` | repos `st` knows about (appended by `st new`, `st`, and `st open`) |
+| `~/.local/state/supertree/recent` | trees in the order you last opened them; `st open` and `M-w` read it |
 | `~/.local/state/supertree/sidebar/` | sidebar row cache, refresher lock, and one fzf socket per sidebar |
 | `~/.local/state/supertree/idx/<repo-id>/<branch-id>` | that tree's `ST_TREE_INDEX` |
 | `~/.local/state/supertree/seen/<repo-id>/<branch-id>.<harness>` | marker meaning that agent has run here, drives continuation |

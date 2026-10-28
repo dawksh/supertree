@@ -42,7 +42,9 @@ done
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   '{ printf "%s\n" "$@"; printf -- "--\n"; } >> "$ST_TMUX_LOG"' \
-  '[ "${1:-}" = has-session ] && exit 1' \
+  '[ "${1:-}" = has-session ] && [ "${ST_TEST_HAS_SESSION:-0}" != 1 ] && exit 1' \
+  '[ "${1:-}" = list-windows ] && printf "%s\n" "${ST_TEST_LIVE_WINDOWS:-}"' \
+  'case "$*" in *"@st_layout"*) printf "5\n";; esac' \
   '[ "${1:-}" = list-panes ] && printf "%s\n" "${ST_TEST_PANES:-}"' \
   'if [ "${1:-}" = capture-pane ]; then' \
   '  case " ${ST_TEST_INPUT_PANES:-} " in *" $4 "*) printf "❯ \n";; *) printf "Working...\n";; esac' \
@@ -140,5 +142,21 @@ done
 [ "$(grep -cx 'list-panes' "$ST_TMUX_LOG")" = 1 ] || fail 'agent statuses did not use one list-panes call'
 captured=$(grep -A3 -x 'capture-pane' "$ST_TMUX_LOG" | grep '^%' | sort | tr '\n' ' ')
 [ "$captured" = '%2 %3 %5 ' ] || fail "screens captured for non-running panes: [$captured]"
+
+# Exact live trees and direct entry should avoid scanning every known repo.
+plain_root=$(git -C "$ST_WORKTREE_ROOT/demo/plain" rev-parse --show-toplevel)
+live_window=$(printf 'demo/plain\t%s' "$plain_root")
+for action in query open; do
+  : > "$ST_TMUX_LOG"
+  if [ "$action" = query ]; then
+    ST_TEST_HAS_SESSION=1 ST_TEST_LIVE_WINDOWS=$live_window no_fzf go demo/plain >/dev/null
+  else
+    ( cd "$plain_root" && ST_TEST_HAS_SESSION=1 ST_TEST_LIVE_WINDOWS=$live_window no_fzf open >/dev/null )
+  fi
+  grep -qxF '=demo/plain' "$ST_TMUX_LOG" || fail "$action did not attach the live tree"
+  if grep -qx 'list-sessions' "$ST_TMUX_LOG"; then
+    fail "$action scanned all trees despite a live exact match"
+  fi
+done
 
 printf 'ok: picker popups, fzf check, query matching, and repo chooser\n'

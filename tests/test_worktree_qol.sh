@@ -124,8 +124,10 @@ fi
 : > "$ST_TEST_LOG"
 ST_TEST_PANES=$(printf '%s\tcodex\t%%1\tdone\tcodex\tbash' "$alpha_session") \
   "$ROOT/bin/st" go --popup /dev/ttys999
-grep -F 'display-popup -c /dev/ttys999' "$ST_TEST_LOG" >/dev/null || fail 'popup was not opened after preparation'
-grep -F 'ST_PICKER_ROWS=' "$ST_TEST_LOG" >/dev/null || fail 'popup did not receive prepared rows'
+grep -F 'display-popup -c /dev/ttys999' "$ST_TEST_LOG" >/dev/null || fail 'popup was not opened'
+if grep -q '^list-panes -a ' "$ST_TEST_LOG"; then
+  fail 'popup dispatch waited for picker rows'
+fi
 
 : > "$ST_TEST_LOG"
 ST_PICKER_ROWS=$'· demo/prepared\t/tmp/prepared\tdemo/prepared' \

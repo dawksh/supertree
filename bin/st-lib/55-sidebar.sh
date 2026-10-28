@@ -123,7 +123,9 @@ sidebar_rows() {
   sess=$(current_session)
   # A brand-new tree is missing from the refresher's cache; without it the cursor
   # would start on the header instead of the current tree.
-  if [ ! -s "$cache" ] || ! awk -F '\t' -v s="$sess" '$5 == s { found = 1 } END { exit !found }' "$cache"; then
+  if [ ! -f "$cache" ] || [ -e "$ST_SIDEBAR_DIR/stale" ] ||
+     { [ "$sess" != "$ST_HOME_SESSION" ] &&
+       ! awk -F '\t' -v s="$sess" '$5 == s { found = 1 } END { exit !found }' "$cache"; }; then
     mkdir -p "$ST_SIDEBAR_DIR"
     tmp=$(mktemp "$ST_SIDEBAR_DIR/.rows.XXXXXX")
     sidebar_snapshot > "$tmp" && mv "$tmp" "$cache"

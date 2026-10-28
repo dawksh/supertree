@@ -185,31 +185,26 @@ adopt_hashed_session() {
 # Listing is read-only, so it reports that name instead of renaming it.
 live_hashed_session() {
   local repo=$1 branch=$2 sess=$3 live=$4 hashed
+  case $'\n'"$live"$'\n' in
+    *$'\n'"$sess"$'\n'*) printf '%s' "$sess"; return;;
+  esac
   hashed=$(sess_name "$repo" "$(branch_key "$branch")")
   case $'\n'"$live"$'\n' in
-    *$'\n'"$sess"$'\n'*) printf '%s' "$sess";;
     *$'\n'"$hashed"$'\n'*) printf '%s' "$hashed";;
     *) printf '%s' "$sess";;
   esac
 }
 
-# Rows: repo key, branch, path, tmux session. Session names stay readable
-# (repo/branch); a short hash is added only where two trees would collide.
-list_trees() {
-  local r repo branch path sess clash root live
-  [ -f "$ST_REPOS" ] || return 0
-  live=$(tmux list-sessions -F '#S' 2>/dev/null || true)
-  root=$(cd "$ST_WORKTREE_ROOT" 2>/dev/null && pwd -P || printf '%s' "$ST_WORKTREE_ROOT")
-  while read -r r; do
-    [ -d "$r" ] || continue
-    # A moved or broken checkout in the repos list must not fail every listing.
-    git -C "$r" rev-parse --git-dir >/dev/null 2>&1 || continue
-    repo=$(repo_key "$r")
-    # Skip linked worktrees made by other tools (e.g. Cursor) outside our root.
-    # Flag the main checkout as orphaned when no worktree under our root is left.
-    # Rows wait for the record end: "prunable" (dir deleted) comes after "branch".
-    # https://git-scm.com/docs/git-worktree#_porcelain_format
-    git -C "$r" worktree list --porcelain 2>/dev/null | awk -v repo="$repo" -v root="$root/" '
+list_repo_trees() {
+  local r=$1 root=$2 repo branch path orphan
+  [ -d "$r" ] || return 0
+  # git worktree list yields no rows for a moved or broken checkout.
+  repo=$(repo_key "$r")
+  # Skip linked worktrees made by other tools (e.g. Cursor) outside our root.
+  # Flag the main checkout as orphaned when no worktree under our root is left.
+  # Rows wait for the record end: "prunable" (dir deleted) comes after "branch".
+  # https://git-scm.com/docs/git-worktree#_porcelain_format
+  git -C "$r" worktree list --porcelain 2>/dev/null | awk -v repo="$repo" -v root="$root/" '
       function flush() { if (row != "") { if (n == 1) main = row; else linked[++k] = row }; row = "" }
       /^worktree /{flush(); p=substr($0,10); n++; keep = n == 1 || index(p, root) == 1}
       keep && /^branch /{b=$2; sub("refs/heads/","",b); row = repo"\t"b"\t"p}
@@ -223,7 +218,31 @@ list_trees() {
         [ "$branch" != '(detached)' ] || branch=$(tree_branch "$path")
         printf '%s\t%s\t%s\t%s\n' "$repo" "${branch:-(detached)}" "$path" "$orphan"
       done
-  done < "$ST_REPOS" | awk -F '\t' '
+}
+
+# Rows: repo key, branch, path, tmux session. Session names stay readable
+# (repo/branch); a short hash is added only where two trees would collide.
+list_trees() {
+  local r repo branch path sess clash root live batch count=0 i
+  [ -f "$ST_REPOS" ] || return 0
+  live=$(tmux list-sessions -F '#S' 2>/dev/null || true)
+  root=$(cd "$ST_WORKTREE_ROOT" 2>/dev/null && pwd -P || printf '%s' "$ST_WORKTREE_ROOT")
+  batch=$(mktemp -d)
+  {
+    while IFS= read -r r; do
+      [ -d "$r" ] || continue
+      count=$((count + 1))
+      list_repo_trees "$r" "$root" > "$batch/$count" &
+      if [ "$count" -eq 8 ]; then
+        wait
+        for ((i=1; i<=count; i++)); do cat "$batch/$i"; rm "$batch/$i"; done
+        count=0
+      fi
+    done < "$ST_REPOS"
+    wait
+    for ((i=1; i<=count; i++)); do cat "$batch/$i"; done
+    rm -rf "$batch"
+  } | awk -F '\t' '
     {
       row[NR] = $0; branch[NR] = $2; name = $1; sub(/-[^-]*$/, "", name)
       hash = $1; sub(/.*-/, "", hash)
