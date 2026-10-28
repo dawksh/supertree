@@ -20,6 +20,15 @@ picker_rows() {
   ' <(printf '%s\n' "$statuses") -
 }
 
+picker_choices() {
+  if declare -F cmd_new >/dev/null; then printf '+ new branch…\t\t\n'; fi
+  if [ "${ST_PICKER_ROWS+x}" = x ]; then
+    printf '%s\n' "$ST_PICKER_ROWS"
+  else
+    picker_rows | sort_recent
+  fi
+}
+
 # ---------------------------------------------------------------- commands
 
 cmd_go() {
@@ -33,41 +42,38 @@ cmd_go() {
     esac
   done
 
-  local rows sel dir sess key choices start
-  if [ "${ST_PICKER_ROWS+x}" = x ]; then rows=$ST_PICKER_ROWS
-  else rows=$(picker_rows | sort_recent); fi
-
-  [ -n "$rows" ] || die "no worktrees known yet — run 'st new <branch>' inside a repo"
-
+  local rows sel dir sess key start
   if [ "$popup" = 1 ]; then
     [ -n "$popup_client" ] || die "no tmux client for tree picker"
     local self
     self=$(st_executable)
     tmux display-popup -c "$popup_client" -d "$PWD" -EE -w 80% -h 70% \
-      -e "ST_PICKER_ROWS=$rows" "$(printf '%q go --picker' "$self")"
+      "$(printf '%q go --picker' "$self")"
     return
   fi
 
   if [ -n "$query" ]; then
+    if [ "${ST_PICKER_ROWS+x}" = x ]; then rows=$ST_PICKER_ROWS
+    else rows=$(picker_rows | sort_recent); fi
+    [ -n "$rows" ] || die "no worktrees known yet — run 'st new <branch>' inside a repo"
     sel=$(printf '%s\n' "$rows" | ST_QUERY=$query awk -F '\t' '
       { split($1, cols, " ") }
       index(tolower(cols[1]), tolower(ENVIRON["ST_QUERY"])) { print; exit }')
     [ -n "$sel" ] || die "no tree matching: $query"
   else
     command -v fzf >/dev/null || die "fzf is required for the tree picker"
-    choices=$rows
+    [ -f "$ST_REPOS" ] || [ "${ST_PICKER_ROWS+x}" = x ] ||
+      die "no worktrees known yet — run 'st new <branch>' inside a repo"
     start=1
     if declare -F cmd_new >/dev/null; then
-      choices=$(printf '+ new branch…\t\t\n%s\n' "$rows")
       start=2
     fi
     # Cursor starts on the most recent tree so Enter still reopens it.
-    sel=$(printf '%s\n' "$choices" |
-      fzf --delimiter=$'\t' --with-nth=1 --height=100% --reverse \
-          --no-sort --sync --bind="load:pos($start)" \
+    sel=$(fzf --delimiter=$'\t' --with-nth=1 --height=100% --reverse \
+          --no-sort --bind="load:pos($start)" \
           --border --border-label=' Trees ' \
           --prompt='Find tree › ' --preview-window=hidden \
-          --expect=ctrl-d --bind='esc:abort') || return 0
+          --expect=ctrl-d --bind='esc:abort' < <(picker_choices)) || return 0
     key=${sel%%$'\n'*}
     sel=${sel#*$'\n'}
     if [ "$key" = ctrl-d ]; then
@@ -101,7 +107,7 @@ cmd_go() {
   attach "$sess"
 }
 
-# Bare `st`: the tree you are standing in, else the most recently opened one.
+# Direct entry: the tree you are standing in, else the most recently opened one.
 cmd_open() {
   local here main rows row=''
   here=$(git rev-parse --show-toplevel 2>/dev/null || true)
@@ -147,7 +153,7 @@ cmd_roots() {
   cmd_new "$branch" --repo "$root"
 }
 
-st_register_command 'open' cmd_open 'open this tree, or the most recent one (bare st)'
+st_register_command 'open' cmd_open 'open this tree, or the most recent one'
 st_register_command 'go' cmd_go 'pick a tree and switch to it' 'go [query]'
 st_register_command 'resume' cmd_go 'reopen a tree and resume its agent' 'resume [query]'
 st_register_command 'roots' cmd_roots 'pick a known repo and create a tree in it'

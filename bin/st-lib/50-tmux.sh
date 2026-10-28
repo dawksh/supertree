@@ -49,6 +49,36 @@ EOF
 
 st_self() { command -v st 2>/dev/null || printf '%s' "$HOME/.local/bin/st"; }
 
+ST_HOME_SESSION=supertree
+
+home_is_open() {
+  [ "$(tmux show-options -qv -t "=$ST_HOME_SESSION:" @supertree_home 2>/dev/null || true)" = 1 ]
+}
+
+cmd_home() {
+  [ $# -eq 0 ] || die "usage: st home"
+  local main
+  main=$(main_worktree .) || main=''
+  [ -z "$main" ] || register_repo "$main"
+  if tmux has-session -t "=$ST_HOME_SESSION" 2>/dev/null; then
+    home_is_open || die "tmux session '$ST_HOME_SESSION' already exists outside Supertree"
+  else
+    tmux new-session -d -s "$ST_HOME_SESSION" -c "$PWD" -n shell ||
+      die "could not create Supertree home session"
+    tmux set-option -t "=$ST_HOME_SESSION:" @supertree_home 1
+    tmux set-option -t "=$ST_HOME_SESSION:" @supertree_label 'Supertree'
+    style_session "$ST_HOME_SESSION"
+    style_tab "=$ST_HOME_SESSION:shell" ''
+    if declare -F sidebar_session >/dev/null; then sidebar_session "$ST_HOME_SESSION" "$PWD"; fi
+  fi
+  if declare -F sidebar_poll_start >/dev/null; then sidebar_poll_start; fi
+  if [ -n "${TMUX:-}" ]; then
+    tmux switch-client -t "=$ST_HOME_SESSION"
+  else
+    tmux attach-session -t "=$ST_HOME_SESSION"
+  fi
+}
+
 # run-shell and hook commands expand #{} formats before the shell runs them, so # is doubled.
 # "dq": the word also sits inside tmux double quotes, where \ " and $ are special.
 tmux_cmd_word() {
@@ -63,7 +93,8 @@ tmux_cmd_word() {
 }
 
 is_tree_session() {
-  [ -n "$(tmux show-options -qv -t "=$1:" @supertree_label 2>/dev/null)" ]
+  [ "$1" != "$ST_HOME_SESSION" ] &&
+    [ -n "$(tmux show-options -qv -t "=$1:" @supertree_label 2>/dev/null)" ]
 }
 
 create_window() {
@@ -252,7 +283,8 @@ remember_origin() {
   tty=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#{client_tty}' 2>/dev/null) || return 0
   cur=$(current_session)
   [ -n "$tty" ] && [ -n "$cur" ] && [ "$cur" != "$1" ] || return 0
-  # Hops between trees keep the first non-tree origin, so M-q leaves supertree.
+  if home_is_open; then cur=$ST_HOME_SESSION; fi
+  # Hops between trees keep home as their return point.
   ! is_tree_session "$cur" || return 0
   mkdir -p "$ST_STATE/origin"
   printf '%s\n' "$cur" > "$ST_STATE/origin/$(tty_key "$tty")"
@@ -473,6 +505,13 @@ cmd_leave() {
   origin_file="$ST_STATE/origin/$(tty_key "$tty")"
   origin=$(cat "$origin_file" 2>/dev/null) || origin=""
   rm -f "$origin_file"
+  if [ "$cur" = "$ST_HOME_SESSION" ] && home_is_open; then
+    tmux detach-client -t "$tty"
+    return
+  fi
+  if [ "$cur" != "$ST_HOME_SESSION" ] && home_is_open; then
+    tmux switch-client -c "$tty" -t "=$ST_HOME_SESSION" && return 0
+  fi
   # Go back to the session st was opened from; detach only when there is none.
   if [ -n "$origin" ] && [ "$origin" != "$cur" ] && tmux has-session -t "=$origin" 2>/dev/null; then
     tmux switch-client -c "$tty" -t "=$origin" && return 0
@@ -481,6 +520,7 @@ cmd_leave() {
 }
 
 st_register_command 'down' cmd_down 'close sessions; keep worktrees' 'down [branch|--subtrees|--all]'
+st_register_command 'home' cmd_home 'open the Supertree home shell'
 st_register_command 'toggle' cmd_toggle ''
 st_register_command 'window' cmd_window ''
 st_register_command 'last' cmd_last 'switch to the previous tree'

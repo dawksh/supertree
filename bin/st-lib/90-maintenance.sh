@@ -162,6 +162,7 @@ cmd_uninstall() {
   case ${ans:-n} in y|Y|yes) ;; *) die "aborted";; esac
 
   sessions=$(known_sessions)
+  if home_is_open; then sessions=$(printf '%s\n%s' "$sessions" "$ST_HOME_SESSION"); fi
   [ -z "${TMUX:-}" ] || current_sess=$(current_session)
   while IFS= read -r sess; do
     [ -n "$sess" ] || continue
