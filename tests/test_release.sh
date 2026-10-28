@@ -25,4 +25,22 @@ assert_equal "$(choose_bump $'docs\nrelease:minor')" minor
 assert_equal "$(choose_bump $'release:major\nfix')" major
 assert_equal "$(choose_bump $'release:minor\nrelease:major')" major
 
-printf 'ok: release version and label selection\n'
+src=$(mktemp -d)
+trap 'rm -rf "$src"' EXIT
+mkdir -p "$src/bin/st-lib" "$src/tests" "$src/scripts"
+for file in bin/st bin/st-lib/00-core.sh install.sh scripts/release.sh tests/test_ok.sh; do
+  printf 'true\n' > "$src/$file"
+done
+check_source "$src" || { printf 'rejected a passing source tree\n' >&2; exit 1; }
+printf 'exit 1\n' > "$src/tests/test_broken.sh"
+if check_source "$src" 2>/dev/null; then
+  printf 'accepted a source tree with a failing test\n' >&2
+  exit 1
+fi
+printf 'if then\n' > "$src/tests/test_broken.sh"
+if check_source "$src" 2>/dev/null; then
+  printf 'accepted a source tree with a syntax error\n' >&2
+  exit 1
+fi
+
+printf 'ok: release version, label selection, and source checks\n'
