@@ -65,11 +65,18 @@ cmd_home() {
   else
     tmux new-session -d -s "$ST_HOME_SESSION" -c "$PWD" -n shell ||
       die "could not create Supertree home session"
-    tmux set-option -t "=$ST_HOME_SESSION:" @supertree_home 1
-    tmux set-option -t "=$ST_HOME_SESSION:" @supertree_label 'Supertree'
-    style_session "$ST_HOME_SESSION"
-    style_tab "=$ST_HOME_SESSION:shell" ''
-    if declare -F sidebar_session >/dev/null; then sidebar_session "$ST_HOME_SESSION" "$PWD"; fi
+    # Mark it as ours only after setup succeeds. On failure, remove the new
+    # session so the next `st` can retry instead of seeing a broken home.
+    if ! {
+      tmux set-option -t "=$ST_HOME_SESSION:" @supertree_label 'Supertree' &&
+      style_session "$ST_HOME_SESSION" &&
+      style_tab "=$ST_HOME_SESSION:shell" '' &&
+      { ! declare -F sidebar_session >/dev/null || sidebar_session "$ST_HOME_SESSION" "$PWD"; } &&
+      tmux set-option -t "=$ST_HOME_SESSION:" @supertree_home 1
+    }; then
+      tmux kill-session -t "=$ST_HOME_SESSION" >/dev/null 2>&1 || true
+      die "could not initialize Supertree home session"
+    fi
   fi
   if declare -F sidebar_poll_start >/dev/null; then sidebar_poll_start; fi
   if [ -n "${TMUX:-}" ]; then
@@ -120,11 +127,11 @@ create_window() {
 
 # Tab look is set per session and window so other tmux sessions keep the user's status bar.
 style_session() {
-  tmux set-option -t "=$1:" status-position top
-  tmux set-option -t "=$1:" status-justify left
-  tmux set-option -t "=$1:" status-style 'bg=default'
+  tmux set-option -t "=$1:" status-position top &&
+  tmux set-option -t "=$1:" status-justify left &&
+  tmux set-option -t "=$1:" status-style 'bg=default' &&
   # Pane title rows now space the tabs off the panes; sessions styled earlier had a blank second line.
-  tmux set-option -t "=$1:" status on
+  tmux set-option -t "=$1:" status on &&
   # When a tree's last program exits, switch to the most recent session instead of
   # leaving tmux. Session-scoped, so the global setting is untouched.
   tmux set-option -t "=$1:" detach-on-destroy off
@@ -135,11 +142,11 @@ style_tab() {
   # @st_tab_state comes from the sidebar refresher (running/input); without it, fall back to the pane state.
   label='#{?@st_slot,#{@st_slot}. ,}#W'
   label="$label"'#{?@st_tab_state,#{?#{==:#{@st_tab_state},input}, ◐,#{?#{==:#{@st_tab_state},running}, ●,}},#{?#{==:#{@st_agent_state},running}, ●,}}'
-  tmux set-option -w -t "$target" @st_slot "$slot"
-  tmux set-option -w -t "$target" window-status-separator ' '
-  tmux set-option -w -t "$target" window-status-format "#[fg=colour245,bg=colour236] $label #[default]"
-  tmux set-option -w -t "$target" window-status-current-format "#[fg=colour235,bg=colour252,bold] $label #[default]"
-  tmux set-option -w -t "$target" window-status-current-style default
+  tmux set-option -w -t "$target" @st_slot "$slot" &&
+  tmux set-option -w -t "$target" window-status-separator ' ' &&
+  tmux set-option -w -t "$target" window-status-format "#[fg=colour245,bg=colour236] $label #[default]" &&
+  tmux set-option -w -t "$target" window-status-current-format "#[fg=colour235,bg=colour252,bold] $label #[default]" &&
+  tmux set-option -w -t "$target" window-status-current-style default &&
   style_cards "$target"
 }
 
