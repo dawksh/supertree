@@ -10,6 +10,7 @@ export ST_CONFIG="$TEST_ROOT/config"
 export ST_WORKTREE_ROOT="$TEST_ROOT/worktrees"
 export ST_SIDEBAR=0 ST_WINDOWS=shell
 export ST_TEST_TMUX_STATE="$TEST_ROOT/tmux-state"
+export ST_TEST_TMUX_MARKER="$TEST_ROOT/tmux-marker"
 export ST_TEST_TMUX_LOG="$TEST_ROOT/tmux.log"
 mkdir -p "$HOME/.local/bin" "$ST_STATE" "$ST_WORKTREE_ROOT" "$TEST_ROOT/repo"
 git -C "$TEST_ROOT/repo" init -q
@@ -22,7 +23,10 @@ printf '%s\n' "$*" >> "$ST_TEST_TMUX_LOG"
 case ${1:-} in
   has-session) [ -f "$ST_TEST_TMUX_STATE" ];;
   new-session) : > "$ST_TEST_TMUX_STATE";;
-  show-options) case $* in *'@supertree_home'*) [ -f "$ST_TEST_TMUX_STATE" ] && printf '1\n';; esac;;
+  show-options) case $* in *'@supertree_home'*) [ -f "$ST_TEST_TMUX_MARKER" ] && printf '1\n';; esac;;
+  set-option) case $* in *'@supertree_home'*) : > "$ST_TEST_TMUX_MARKER";; esac
+    [ "${ST_TEST_FAIL_LABEL:-0}" != 1 ] || case $* in *'@supertree_label'*) exit 1;; esac;;
+  kill-session) rm -f "$ST_TEST_TMUX_STATE" "$ST_TEST_TMUX_MARKER";;
   display-message) case $* in *'#S'*) printf '%s\n' "${ST_TEST_CURRENT:-demo/branch}";; esac;;
 esac
 EOF
@@ -39,6 +43,16 @@ grep -Fx "$(git -C "$TEST_ROOT/repo" rev-parse --show-toplevel)" "$ST_STATE/repo
 : > "$ST_TEST_TMUX_LOG"
 "$ROOT/bin/st" home
 if grep -q '^new-session ' "$ST_TEST_TMUX_LOG"; then fail 'home created a duplicate session'; fi
+
+rm -f "$ST_TEST_TMUX_STATE" "$ST_TEST_TMUX_MARKER"
+if ST_TEST_FAIL_LABEL=1 "$ROOT/bin/st" home >/dev/null 2>&1; then
+  fail 'home initialization failure was ignored'
+fi
+[ ! -f "$ST_TEST_TMUX_STATE" ] && [ ! -f "$ST_TEST_TMUX_MARKER" ] ||
+  fail 'failed home initialization left a partial session'
+: > "$ST_TEST_TMUX_LOG"
+"$ROOT/bin/st" home >/dev/null 2>&1
+[ -f "$ST_TEST_TMUX_MARKER" ] || fail 'home could not recover after failed initialization'
 
 : > "$ST_TEST_TMUX_LOG"
 TMUX=1 "$ROOT/bin/st" leave /dev/pts/1
