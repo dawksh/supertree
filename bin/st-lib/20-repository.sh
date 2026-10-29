@@ -197,7 +197,9 @@ live_hashed_session() {
 
 list_repo_trees() {
   local r=$1 root=$2 repo branch path orphan
-  [ -d "$r" ] || return 0
+  [ -d "$r" ] && git -C "$r" rev-parse --git-dir >/dev/null 2>&1 || return 0
+  # This function runs in a background subshell, so pipefail is isolated here.
+  set -o pipefail
   # git worktree list yields no rows for a moved or broken checkout.
   repo=$(repo_key "$r")
   # Skip linked worktrees made by other tools (e.g. Cursor) outside our root.
@@ -223,25 +225,33 @@ list_repo_trees() {
 # Rows: repo key, branch, path, tmux session. Session names stay readable
 # (repo/branch); a short hash is added only where two trees would collide.
 list_trees() {
-  local r repo branch path sess clash root live batch count=0 i
+  local r pid repo branch path sess clash root live batch count=0 i failed=0
   [ -f "$ST_REPOS" ] || return 0
   live=$(tmux list-sessions -F '#S' 2>/dev/null || true)
   root=$(cd "$ST_WORKTREE_ROOT" 2>/dev/null && pwd -P || printf '%s' "$ST_WORKTREE_ROOT")
-  batch=$(mktemp -d)
+  batch=$(mktemp -d) || return 1
+  # Keep output ordered while bounding Git's parallelism. Check every worker:
+  # wait without a PID only reports one child status, which can hide omissions.
+  local pids=''
   {
     while IFS= read -r r; do
       [ -d "$r" ] || continue
       count=$((count + 1))
       list_repo_trees "$r" "$root" > "$batch/$count" &
+      pids="$pids $!"
       if [ "$count" -eq 8 ]; then
-        wait
+        for pid in $pids; do wait "$pid" || failed=1; done
         for ((i=1; i<=count; i++)); do cat "$batch/$i"; rm "$batch/$i"; done
+        pids=''
         count=0
       fi
     done < "$ST_REPOS"
-    wait
+    for pid in $pids; do wait "$pid" || failed=1; done
     for ((i=1; i<=count; i++)); do cat "$batch/$i"; done
     rm -rf "$batch"
+    if [ "$failed" -ne 0 ]; then
+      printf 'st: one or more repositories could not be scanned; picker results may be incomplete\n' >&2
+    fi
   } | awk -F '\t' '
     {
       row[NR] = $0; branch[NR] = $2; name = $1; sub(/-[^-]*$/, "", name)
