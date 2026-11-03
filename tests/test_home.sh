@@ -44,6 +44,28 @@ grep -Fx "$(git -C "$TEST_ROOT/repo" rev-parse --show-toplevel)" "$ST_STATE/repo
 "$ROOT/bin/st" home
 if grep -q '^new-session ' "$ST_TEST_TMUX_LOG"; then fail 'home created a duplicate session'; fi
 
+git -C "$TEST_ROOT/repo" worktree add -q -b feature "$ST_WORKTREE_ROOT/repo/feature"
+printf 'repo/feature\n' > "$ST_STATE/recent"
+: > "$ST_TEST_TMUX_LOG"
+"$ROOT/bin/st"
+grep -F 'attach-session -t =repo/feature' "$ST_TEST_TMUX_LOG" >/dev/null ||
+  fail 'bare st did not resume the most recent tree'
+
+printf 'repo/missing\n' > "$ST_STATE/recent"
+cd "$ST_WORKTREE_ROOT/repo/feature"
+: > "$ST_TEST_TMUX_LOG"
+"$ROOT/bin/st"
+grep -F 'attach-session -t =repo/feature' "$ST_TEST_TMUX_LOG" >/dev/null ||
+  fail 'bare st did not open the current tree when recent was stale'
+cd "$TEST_ROOT"
+printf 'repo/missing\n' > "$ST_STATE/recent"
+: > "$ST_TEST_TMUX_LOG"
+"$ROOT/bin/st"
+grep -F 'attach-session -t =supertree' "$ST_TEST_TMUX_LOG" >/dev/null ||
+  fail 'bare st did not fall back to home when recent was stale'
+cd "$TEST_ROOT/repo"
+rm "$ST_STATE/recent"
+
 rm -f "$ST_TEST_TMUX_STATE" "$ST_TEST_TMUX_MARKER"
 if ST_TEST_FAIL_LABEL=1 "$ROOT/bin/st" home >/dev/null 2>&1; then
   fail 'home initialization failure was ignored'
@@ -56,8 +78,16 @@ fi
 
 : > "$ST_TEST_TMUX_LOG"
 TMUX=1 "$ROOT/bin/st" leave /dev/pts/1
-grep -F 'switch-client -c /dev/pts/1 -t =supertree' "$ST_TEST_TMUX_LOG" >/dev/null ||
-  fail 'M-q from a tree did not return home'
+grep -F 'detach-client -t /dev/pts/1' "$ST_TEST_TMUX_LOG" >/dev/null ||
+  fail 'M-q from an outside shell did not detach'
+
+mkdir -p "$ST_STATE/origin"
+printf 'supertree\n' > "$ST_STATE/origin/-dev-pts-1"
+: > "$ST_TEST_TMUX_LOG"
+TMUX=1 "$ROOT/bin/st" leave /dev/pts/1
+grep -F 'detach-client -t /dev/pts/1' "$ST_TEST_TMUX_LOG" >/dev/null ||
+  fail 'M-q from a tree opened from home did not detach'
+[ ! -f "$ST_STATE/origin/-dev-pts-1" ] || fail 'M-q kept a stale origin marker'
 
 : > "$ST_TEST_TMUX_LOG"
 ST_TEST_CURRENT=supertree TMUX=1 "$ROOT/bin/st" leave /dev/pts/1
@@ -76,6 +106,11 @@ if [ -n "$real_tmux" ] && command -v fzf >/dev/null 2>&1; then
   [ "$marker" = 1 ] || fail 'real tmux home session has no ownership marker'
   panes=$(TMUX_TMPDIR="$TEST_ROOT" "$real_tmux" -L "$socket" list-panes -t '=supertree:shell' -F '#{@st_sidebar}')
   printf '%s\n' "$panes" | grep -qx 1 || fail 'real tmux home has no sidebar'
+  cd "$TEST_ROOT"
+  ST_SIDEBAR=1 TMUX_TMPDIR="$TEST_ROOT" "$ROOT/bin/st" </dev/null > "$TEST_ROOT/start.out" 2>&1 || true
+  active=$(TMUX_TMPDIR="$TEST_ROOT" "$real_tmux" -L "$socket" display-message -p -t '=supertree:shell' '#{@st_sidebar}')
+  [ "$active" = 1 ] || fail 'bare st did not focus the home tree list'
+  cd "$TEST_ROOT/repo"
   TMUX_TMPDIR="$TEST_ROOT" "$real_tmux" -L "$socket" kill-server
 fi
 

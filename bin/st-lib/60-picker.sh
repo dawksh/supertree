@@ -25,11 +25,51 @@ picker_choices() {
   if [ "${ST_PICKER_ROWS+x}" = x ]; then
     printf '%s\n' "$ST_PICKER_ROWS"
   else
-    picker_rows | sort_recent
+    picker_rows | sort_recent | awk -F '\t' '
+      {
+        label = $1; sub(/  +[^ ]+$/, "", label)
+        state = $1; sub(/^.*  +/, "", state)
+        if (state == "running") state = "● Running"
+        else if (state == "input") state = "◐ Needs input"
+        else if (state == "done") state = "○ Finished"
+        else state = "· Closed"
+        printf "%s  %s\t%s\t%s\n", label, state, $2, $3
+      }'
   fi
 }
 
 # ---------------------------------------------------------------- commands
+
+# Bare `st` resumes the last tree. With no usable recent tree, enter home with
+# the sidebar focused so the tree list is the first thing to interact with.
+cmd_start() {
+  [ $# -eq 0 ] || die "usage: st"
+  local trees row='' sess here main
+  trees=$(list_trees)
+  if [ -s "$ST_STATE/recent" ]; then
+    while IFS= read -r sess; do
+      [ -n "$sess" ] || continue
+      row=$(printf '%s\n' "$trees" | awk -F '\t' -v s="$sess" '$4 == s { print; exit }')
+      [ -z "$row" ] || break
+    done < "$ST_STATE/recent"
+  fi
+  if [ -z "$row" ]; then
+    here=$(git rev-parse --show-toplevel 2>/dev/null || true)
+    if [ -n "$here" ]; then
+      main=$(main_worktree .) || main=''
+      [ -z "$main" ] || register_repo "$main"
+      trees=$(list_trees)
+      row=$(printf '%s\n' "$trees" | awk -F '\t' -v p="$here" '$3 == p { print; exit }')
+    fi
+  fi
+  if [ -n "$row" ]; then
+    sess=$(printf '%s' "$row" | cut -f4)
+    build_session "$sess" "$(printf '%s' "$row" | cut -f3)"
+    attach "$sess"
+  else
+    cmd_home --picker
+  fi
+}
 
 cmd_go() {
   local query="" popup=0 popup_client=""
@@ -47,7 +87,7 @@ cmd_go() {
     [ -n "$popup_client" ] || die "no tmux client for tree picker"
     local self
     self=$(st_executable)
-    tmux display-popup -c "$popup_client" -d "$PWD" -EE -w 80% -h 70% \
+    tmux display-popup -c "$popup_client" -d "$PWD" -EE -w 72% -h 60% \
       "$(printf '%q go --picker' "$self")"
     return
   fi
@@ -85,8 +125,8 @@ cmd_go() {
     # Cursor starts on the most recent tree so Enter still reopens it.
     sel=$(fzf --delimiter=$'\t' --with-nth=1 --height=100% --reverse \
           --no-sort --bind="load:pos($start)" \
-          --border --border-label=' Trees ' \
-          --prompt='Find tree › ' --preview-window=hidden \
+          --border=rounded --border-label=' Trees ' \
+          --prompt='Search › ' --header='Enter open · Ctrl-D remove · Esc close' \
           --expect=ctrl-d --bind='esc:abort' < <(picker_choices)) || return 0
     key=${sel%%$'\n'*}
     sel=${sel#*$'\n'}
@@ -101,7 +141,7 @@ cmd_go() {
   case $sel in
     '+ new branch'*)
       local b r root
-      printf 'branch: ' >&2; read -r b
+      printf 'New branch name › ' >&2; read -r b
       [ -n "$b" ] || return 0
       r=$(sort -u "$ST_REPOS" | while IFS= read -r root; do
         [ -d "$root" ] || continue
@@ -159,21 +199,23 @@ cmd_roots() {
 
   if [ -n "$popup_client" ]; then
     self=$(st_executable)
-    tmux display-popup -c "$popup_client" -EE -w 80% -h 70% "$(printf '%q roots' "$self")"
+    tmux display-popup -c "$popup_client" -EE -w 72% -h 60% "$(printf '%q roots' "$self")"
     return
   fi
 
   command -v fzf >/dev/null || die "fzf is required for the root picker"
   root=$(printf '%s\n' "$rows" |
     fzf --delimiter=$'\t' --with-nth=1 --height=100% --reverse \
-        --border --border-label=' Roots ' --prompt='Find root › ' \
+        --border=rounded --border-label=' Repositories ' --prompt='Search › ' \
+        --header='Enter select · Esc close' \
         --bind='esc:abort') || return 0
   root=$(printf '%s' "$root" | cut -f2)
-  printf 'branch: ' >&2; read -r branch
+  printf 'New branch name › ' >&2; read -r branch
   [ -n "$branch" ] || return 0
   cmd_new "$branch" --repo "$root"
 }
 
+st_register_command 'start' cmd_start ''
 st_register_command 'open' cmd_open 'open this tree, or the most recent one'
 st_register_command 'go' cmd_go 'pick a tree and switch to it' 'go [query]'
 st_register_command 'resume' cmd_go 'reopen a tree and resume its agent' 'resume [query]'

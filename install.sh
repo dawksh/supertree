@@ -234,9 +234,14 @@ tmux_shell_word() {
 }
 
 render_bindings() {
-  local keys key pair st_word script
+  local keys key pair st_word script split_vertical_key
   case $PREFIX in *$'\n'*) die "ST_PREFIX must not contain a newline";; esac
   keys=$( ( [ ! -f "$CONFIG" ] || . "$CONFIG"
+    split_vertical_key=${ST_KEY_SPLIT_VERTICAL:-M-V}
+    # An older config may already use M-V for the original split key.
+    if [ -z "${ST_KEY_SPLIT_VERTICAL:-}" ] && [ "${ST_KEY_SPLIT:-M-v}" = M-V ]; then
+      split_vertical_key=M-U
+    fi
     for pair in "M-w=${ST_KEY_PICKER:-M-w}" "M-e=${ST_KEY_TOGGLE:-M-e}" \
       "M-Tab=${ST_KEY_LAST:-M-Tab}" "M-r=${ST_KEY_ROOTS:-M-r}" \
       "M-1=${ST_KEY_WINDOW_1:-M-1}" "M-2=${ST_KEY_WINDOW_2:-M-2}" "M-3=${ST_KEY_WINDOW_3:-M-3}" \
@@ -246,6 +251,7 @@ render_bindings() {
       "M-s=${ST_KEY_SIDEBAR:-M-s}" "M-B=${ST_KEY_SIDEBAR_TOGGLE:-M-B}" \
       "M-h=${ST_KEY_PANE_LEFT:-M-h}" "M-l=${ST_KEY_PANE_RIGHT:-M-l}" \
       "M-x=${ST_KEY_CLOSE_PANE:-M-x}" "M-v=${ST_KEY_SPLIT:-M-v}" \
+      "M-V=$split_vertical_key" \
       "M-j=${ST_KEY_NEXT_TREE:-M-j}" "M-k=${ST_KEY_PREV_TREE:-M-k}" "M-/=${ST_KEY_HELP:-M-/}" \
       "M-q=${ST_KEY_LEAVE:-M-q}" "M-Q=${ST_KEY_DETACH:-M-Q}"; do
       key=${pair#*=}

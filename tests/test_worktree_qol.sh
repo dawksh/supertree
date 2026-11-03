@@ -114,8 +114,8 @@ fi
 : > "$ST_TEST_LOG"
 ST_TEST_PANES=$(printf '%s\tcodex\t%%1\trunning\tcodex\tbash\n%s\tcodex\t%%2\tdone\tcodex\tbash' "$alpha_session" "$beta_session") \
   ST_TEST_SCREEN='Working...' ST_TEST_PICK_KEY=escape "$ROOT/bin/st" go --picker
-grep -E 'demo/alpha +running' "$ST_TEST_PICKER_INPUT" >/dev/null || fail 'picker lost running status'
-grep -E 'demo/beta +done' "$ST_TEST_PICKER_INPUT" >/dev/null || fail 'picker lost done status'
+grep -E 'demo/alpha +● Running' "$ST_TEST_PICKER_INPUT" >/dev/null || fail 'picker lost running status'
+grep -E 'demo/beta +○ Finished' "$ST_TEST_PICKER_INPUT" >/dev/null || fail 'picker lost done status'
 [ "$(grep -c '^list-panes -a ' "$ST_TEST_LOG")" = 1 ] || fail 'picker did not use one tmux snapshot'
 if grep -q '^has-session ' "$ST_TEST_LOG"; then
   fail 'picker queried tmux separately for each tree'
