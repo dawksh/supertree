@@ -36,6 +36,7 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 cd "$TEST_ROOT/repo"
 "$ROOT/bin/st"
 grep -F 'new-session -d -s supertree' "$ST_TEST_TMUX_LOG" >/dev/null || fail 'bare st did not create home'
+grep -F 'env -u NO_COLOR HOME=' "$ST_TEST_TMUX_LOG" >/dev/null || fail 'home shell inherited NO_COLOR'
 grep -F 'attach-session -t =supertree' "$ST_TEST_TMUX_LOG" >/dev/null || fail 'bare st did not enter home'
 grep -Fx "$(git -C "$TEST_ROOT/repo" rev-parse --show-toplevel)" "$ST_STATE/repos" >/dev/null ||
   fail 'home did not register current repo'

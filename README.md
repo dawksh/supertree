@@ -550,6 +550,9 @@ worktree root with `ST_WORKTREE_ROOT`, the state dir with `ST_STATE`.
 
 ## Troubleshooting
 
+**Agent colors are missing after updating** — Supertree now clears an inherited
+`NO_COLOR` setting for new panes. Restart an already running agent to apply it.
+
 **`M-w` does nothing** — your terminal is eating Option. In WezTerm, Option must
 send Meta rather than composing characters. Your `M-arrow` pane binds are the
 quick test: if those work, these do.

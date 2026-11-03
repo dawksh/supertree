@@ -61,6 +61,9 @@ ST_HARNESS_COMMAND=${ST_HARNESS_COMMAND:-}
 ST_HARNESS_RESUME_COMMAND=${ST_HARNESS_RESUME_COMMAND:-}
 ST_WINDOWS=${ST_WINDOWS-'agent vim shell'}
 
+# A tmux server started from a no-color environment can pass this to every
+# harness, even when the terminal itself supports color.
+unset NO_COLOR
 
 # Follow source-install symlinks so the command finds modules beside bin/st.
 st_source=$0

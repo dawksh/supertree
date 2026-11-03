@@ -14,14 +14,14 @@ tree_shell() {
 }
 
 shell_command() {
-  printf 'env HOME=%q SHELL=%q %q -l' "$HOME" "$(tree_shell)" "$(tree_shell)"
+  printf 'env -u NO_COLOR HOME=%q SHELL=%q %q -l' "$HOME" "$(tree_shell)" "$(tree_shell)"
 }
 
 # tmux starts panes from its server environment, which can differ from the
 # command that created the session. Pin the resolved choices on this session.
 session_environment() {
   local target="=$1" signature
-  signature="$HOME|$(tree_shell)|$ST_CONFIG|$ST_STATE|$ST_WORKTREE_ROOT|$ST_HARNESS|$ST_WINDOWS|$ST_HARNESS_COMMAND|$ST_HARNESS_RESUME_COMMAND|${ST_SHELL:-}"
+  signature="$HOME|$(tree_shell)|$ST_CONFIG|$ST_STATE|$ST_WORKTREE_ROOT|$ST_HARNESS|$ST_WINDOWS|$ST_HARNESS_COMMAND|$ST_HARNESS_RESUME_COMMAND|${ST_SHELL:-}|color"
   [ "$(tmux show-options -qv -t "$target:" @st_environment 2>/dev/null)" != "$signature" ] || return 0
   tmux set-environment -t "$target" HOME "$HOME"
   tmux set-environment -t "$target" SHELL "$(tree_shell)"
@@ -33,6 +33,7 @@ session_environment() {
   tmux set-environment -t "$target" ST_HARNESS_COMMAND "$ST_HARNESS_COMMAND"
   tmux set-environment -t "$target" ST_HARNESS_RESUME_COMMAND "$ST_HARNESS_RESUME_COMMAND"
   tmux set-environment -t "$target" ST_SHELL "${ST_SHELL:-}"
+  tmux set-environment -t "$target" -r NO_COLOR
   tmux set-option -t "$target:" @st_environment "$signature"
 }
 
