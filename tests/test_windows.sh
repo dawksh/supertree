@@ -159,12 +159,17 @@ assert_log_excludes "set-option -t $main_session "
 
 # A live session from an older harness/layout gets its missing configured tabs
 # when reopened, and the new harness becomes the selected agent tab.
+# The shell is a stub so the check does not depend on zsh being installed.
+login_shell="$TEST_ROOT/bin/zsh"
+mkdir -p "${login_shell%/*}"
+printf '#!/bin/sh\n' > "$login_shell"
+chmod +x "$login_shell"
 : > "$ST_TMUX_LOG"
 ST_TEST_LIVE="$main_session" ST_TEST_WINDOW_NAMES=claude ST_TEST_LAYOUT=7 \
-  ST_TEST_CONFIG='claude|agent|/bin/bash' SHELL=/bin/zsh "$ROOT/bin/st" go main
+  ST_TEST_CONFIG='claude|agent|/bin/bash' SHELL="$login_shell" "$ROOT/bin/st" go main
 assert_log_contains '-n codex'
 assert_log_contains '-n nvim'
-assert_log_contains 'SHELL=/bin/zsh /bin/zsh -l'
+assert_log_contains "SHELL=$(printf '%q' "$login_shell") $(printf '%q' "$login_shell") -l"
 assert_log_contains "@st_agent_window codex"
 assert_log_contains "select-window -t =$main_session:codex"
 
