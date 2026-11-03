@@ -170,7 +170,7 @@ keys_prefix="$TEST_ROOT/keys-bin"
 keys_conf="$TEST_ROOT/keys-config"
 mkdir -p "$keys_conf"
 printf '%s\n' 'ST_KEY_PICKER=M-o' 'ST_KEY_WINDOW_1=M-2' 'ST_KEY_WINDOW_2=M-1' 'ST_KEY_DETACH=C-x' \
-  'ST_KEY_SPLIT=M-V' 'ST_KEY_HELP=F1' 'ST_KEY_PREV_TAB=M-P' > "$keys_conf/config"
+  'ST_KEY_SPLIT=M-U' 'ST_KEY_SPLIT_VERTICAL=M-V' 'ST_KEY_HELP=F1' 'ST_KEY_PREV_TAB=M-P' > "$keys_conf/config"
 install_into "$keys_prefix" "$keys_conf" > "$TEST_ROOT/keys.out" 2>&1 ||
   fail "install with custom keys failed: $(cat "$TEST_ROOT/keys.out")"
 rendered="$keys_conf/supertree.conf"
@@ -179,7 +179,8 @@ grep -q '^bind -n M-w ' "$rendered" && fail 'M-w is still bound after ST_KEY_PIC
 grep -q "^bind -n M-2 run-shell -b .* window 1\"$" "$rendered" || fail 'ST_KEY_WINDOW_1=M-2 was not applied'
 grep -q "^bind -n M-1 run-shell -b .* window 2\"$" "$rendered" || fail 'ST_KEY_WINDOW_2=M-1 was not applied'
 grep -qx 'bind -n C-x detach-client' "$rendered" || fail 'ST_KEY_DETACH was not applied'
-grep -q '^bind -n M-V run-shell -b .* split"$' "$rendered" || fail 'ST_KEY_SPLIT was not applied'
+grep -q '^bind -n M-U run-shell -b .* split"$' "$rendered" || fail 'ST_KEY_SPLIT was not applied'
+grep -q '^bind -n M-V run-shell -b .* split --vertical"$' "$rendered" || fail 'ST_KEY_SPLIT_VERTICAL was not applied'
 grep -q '^bind -n F1 display-popup -EE .* keys --wait"$' "$rendered" || fail 'ST_KEY_HELP was not applied'
 grep -qx 'bind -n M-P previous-window' "$rendered" || fail 'ST_KEY_PREV_TAB was not applied'
 grep -Eq '^bind -n (M-v|M-/|M-p) ' "$rendered" && fail 'a rebound key kept its default binding'
@@ -194,6 +195,15 @@ for key in M-w M-e M-Tab M-r M-1 M-2 M-3 M-q; do
 done
 grep -qx 'bind -n M-Q detach-client' "$odd_conf/supertree.conf" || fail 'default M-Q missing'
 grep -q '^bind -n M-/ display-popup -EE ' "$odd_conf/supertree.conf" || fail 'default M-/ missing'
+
+# Preserve a user's previous M-V split binding when adding the new direction.
+printf '%s\n' 'ST_KEY_SPLIT=M-V' > "$keys_conf/config"
+install_into "$keys_prefix" "$keys_conf" > "$TEST_ROOT/old-split-key.out" 2>&1 ||
+  fail "install with an old M-V split key failed: $(cat "$TEST_ROOT/old-split-key.out")"
+grep -q '^bind -n M-V run-shell -b .* split"$' "$keys_conf/supertree.conf" ||
+  fail 'old M-V split key was replaced'
+grep -q '^bind -n M-U run-shell -b .* split --vertical"$' "$keys_conf/supertree.conf" ||
+  fail 'vertical split did not get a free fallback key'
 
 printf '%s\n' 'ST_KEY_TOGGLE="M-e;kill-server"' > "$keys_conf/config"
 if install_into "$keys_prefix" "$keys_conf" > "$TEST_ROOT/bad-key.out" 2>&1; then

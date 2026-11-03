@@ -4,6 +4,30 @@ set -euo pipefail
 
 ST_VERSION='dev'
 
+# tmux can outlive a test or another shell with a different HOME. Installed
+# bindings invoke ~/.local/bin/st by absolute path, so recover that user's home
+# when the inherited HOME has no Supertree config of its own.
+case $0 in
+  /*/.local/bin/st)
+    st_command_home=${0%/.local/bin/st}
+    if [ ! -f "$HOME/.config/supertree/config" ] &&
+       [ -f "$st_command_home/.config/supertree/config" ]; then
+      HOME=$st_command_home
+      export HOME
+    fi;;
+esac
+
+# A long-lived tmux server may still export a config path from a deleted test
+# fixture. In that case use the installed user's config and matching state.
+st_default_config=${ST_CONFDIR:-$HOME/.config/supertree}/config
+if [ -n "${ST_CONFIG:-}" ] && [ ! -f "$ST_CONFIG" ] &&
+   [ -f "$st_default_config" ]; then
+  st_stale_dir=${ST_CONFIG%/*}
+  unset ST_CONFIG
+  case ${ST_STATE:-} in "$st_stale_dir"/*) unset ST_STATE;; esac
+  case ${ST_WORKTREE_ROOT:-} in "$st_stale_dir"/*) unset ST_WORKTREE_ROOT;; esac
+fi
+
 # tmux may launch this outside an interactive shell
 PATH="$HOME/.local/bin:$HOME/.opencode/bin:/opt/homebrew/bin:$PATH"
 
@@ -37,6 +61,9 @@ ST_HARNESS_COMMAND=${ST_HARNESS_COMMAND:-}
 ST_HARNESS_RESUME_COMMAND=${ST_HARNESS_RESUME_COMMAND:-}
 ST_WINDOWS=${ST_WINDOWS-'agent vim shell'}
 
+# A tmux server started from a no-color environment can pass this to every
+# harness, even when the terminal itself supports color.
+unset NO_COLOR
 
 # Follow source-install symlinks so the command finds modules beside bin/st.
 st_source=$0
@@ -102,11 +129,12 @@ keys (inside tmux; defaults, rebind with ST_KEY_* in the config)
   M-1 … M-9   select configured window (tab) by position
   M-n / M-p   next / previous tab
   M-j / M-k   next / previous open tree
-  M-v         split: another copy of this tab's program side by side
+  M-v         split this tab side by side
+  M-V         split this tab top and bottom
   M-h / M-l   move to the pane on the left / right
   M-x         close the focused pane (asks first)
   M-s         focus the tree sidebar   M-B   hide/show the sidebar
-  M-q         return to Supertree home (or detach from home)
+  M-q         leave tmux; keep the tree running
   M-Q         leave tmux; keep the tree session running
   M-/         show these keys
 
@@ -115,7 +143,7 @@ tree picker
 
 sidebar
   Enter / l   open tree      j / k   move      g / G   first / last
-  d           delete tree    Ctrl-R  reload
+  n           new branch     d       delete tree    Ctrl-R  reload
   Esc / h / q back to the tab
 KEYS
 }
@@ -131,7 +159,7 @@ st_register_command 'keys' cmd_keys 'show the tmux key bindings'
 st_dispatch() {
   local name=${1:-} i
   case $name in
-    '') st_dispatch home; return;;
+    '') st_dispatch start; return;;
     -h|--help|help) usage; return;;
     --version|-V) printf 'st %s\n' "$ST_VERSION"; return;;
   esac

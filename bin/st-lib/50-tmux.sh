@@ -1,7 +1,41 @@
 # shellcheck shell=bash
 # supertree tmux module
 
-ST_LAYOUT_VERSION=5
+ST_LAYOUT_VERSION=7
+
+layout_signature() {
+  printf '%s|%s|%s' "$ST_HARNESS" "$ST_WINDOWS" "${ST_SHELL:-${SHELL:-/bin/zsh}}"
+}
+
+tree_shell() {
+  local shell=${ST_SHELL:-${SHELL:-/bin/zsh}}
+  [ -x "$shell" ] || die "shell is not executable: $shell"
+  printf '%s' "$shell"
+}
+
+shell_command() {
+  printf 'env -u NO_COLOR HOME=%q SHELL=%q %q -l' "$HOME" "$(tree_shell)" "$(tree_shell)"
+}
+
+# tmux starts panes from its server environment, which can differ from the
+# command that created the session. Pin the resolved choices on this session.
+session_environment() {
+  local target="=$1" signature
+  signature="$HOME|$(tree_shell)|$ST_CONFIG|$ST_STATE|$ST_WORKTREE_ROOT|$ST_HARNESS|$ST_WINDOWS|$ST_HARNESS_COMMAND|$ST_HARNESS_RESUME_COMMAND|${ST_SHELL:-}|color"
+  [ "$(tmux show-options -qv -t "$target:" @st_environment 2>/dev/null)" != "$signature" ] || return 0
+  tmux set-environment -t "$target" HOME "$HOME"
+  tmux set-environment -t "$target" SHELL "$(tree_shell)"
+  tmux set-environment -t "$target" ST_CONFIG "$ST_CONFIG"
+  tmux set-environment -t "$target" ST_STATE "$ST_STATE"
+  tmux set-environment -t "$target" ST_WORKTREE_ROOT "$ST_WORKTREE_ROOT"
+  tmux set-environment -t "$target" ST_HARNESS "$ST_HARNESS"
+  tmux set-environment -t "$target" ST_WINDOWS "$ST_WINDOWS"
+  tmux set-environment -t "$target" ST_HARNESS_COMMAND "$ST_HARNESS_COMMAND"
+  tmux set-environment -t "$target" ST_HARNESS_RESUME_COMMAND "$ST_HARNESS_RESUME_COMMAND"
+  tmux set-environment -t "$target" ST_SHELL "${ST_SHELL:-}"
+  tmux set-environment -t "$target" -r NO_COLOR
+  tmux set-option -t "$target:" @st_environment "$signature"
+}
 
 tab_command() {
   local var="ST_TAB_$1"
@@ -13,7 +47,8 @@ window_name() {
   local LC_ALL=C
   case $1 in
     agent) harness_window;;
-    vim|shell) printf '%s' "$1";;
+    vim) printf 'nvim';;
+    shell) printf 'shell';;
     *[!A-Za-z0-9_]*) die "invalid window type '$1' (letters, digits and _ only)";;
     *) [ -n "$(tab_command "$1")" ] ||
          die "unknown window type '$1' (choose from: agent vim shell, or set ST_TAB_$1)"
@@ -56,15 +91,27 @@ home_is_open() {
 }
 
 cmd_home() {
-  [ $# -eq 0 ] || die "usage: st home"
-  local main
+  local picker=0 main pane
+  case ${1:-} in
+    '') [ $# -eq 0 ] || die "usage: st home";;
+    --picker) [ $# -eq 1 ] || die "usage: st home"; picker=1;;
+    *) die "usage: st home";;
+  esac
   main=$(main_worktree .) || main=''
   [ -z "$main" ] || register_repo "$main"
   if tmux has-session -t "=$ST_HOME_SESSION" 2>/dev/null; then
     home_is_open || die "tmux session '$ST_HOME_SESSION' already exists outside Supertree"
+    session_environment "$ST_HOME_SESSION"
+    if [ "$(tmux show-options -qv -t "=$ST_HOME_SESSION:" @st_layout 2>/dev/null)" != "$ST_LAYOUT_VERSION" ]; then
+      style_session "$ST_HOME_SESSION"
+      style_tab "=$ST_HOME_SESSION:shell" ''
+      if declare -F sidebar_session >/dev/null; then sidebar_session "$ST_HOME_SESSION" "$PWD"; fi
+      tmux set-option -t "=$ST_HOME_SESSION:" @st_layout "$ST_LAYOUT_VERSION"
+    fi
   else
-    tmux new-session -d -s "$ST_HOME_SESSION" -c "$PWD" -n shell ||
+    tmux new-session -d -s "$ST_HOME_SESSION" -c "$PWD" -n shell "$(shell_command)" ||
       die "could not create Supertree home session"
+    session_environment "$ST_HOME_SESSION"
     # Mark it as ours only after setup succeeds. On failure, remove the new
     # session so the next `st` can retry instead of seeing a broken home.
     if ! {
@@ -72,13 +119,18 @@ cmd_home() {
       style_session "$ST_HOME_SESSION" &&
       style_tab "=$ST_HOME_SESSION:shell" '' &&
       { ! declare -F sidebar_session >/dev/null || sidebar_session "$ST_HOME_SESSION" "$PWD"; } &&
-      tmux set-option -t "=$ST_HOME_SESSION:" @supertree_home 1
+      tmux set-option -t "=$ST_HOME_SESSION:" @supertree_home 1 &&
+      tmux set-option -t "=$ST_HOME_SESSION:" @st_layout "$ST_LAYOUT_VERSION"
     }; then
       tmux kill-session -t "=$ST_HOME_SESSION" >/dev/null 2>&1 || true
       die "could not initialize Supertree home session"
     fi
   fi
   if declare -F sidebar_poll_start >/dev/null; then sidebar_poll_start; fi
+  if [ "$picker" = 1 ] && declare -F window_sidebar >/dev/null; then
+    pane=$(window_sidebar "=$ST_HOME_SESSION:shell")
+    [ -z "$pane" ] || tmux select-pane -t "$pane"
+  fi
   if [ -n "${TMUX:-}" ]; then
     tmux switch-client -t "=$ST_HOME_SESSION"
   else
@@ -109,11 +161,13 @@ create_window() {
   local cmd=()
   self=$(st_self)
   name=$(window_name "$type")
-  printf -v run '%q _run' "$self"
+  printf -v run 'env HOME=%q SHELL=%q ST_CONFIG=%q ST_STATE=%q ST_WORKTREE_ROOT=%q ST_HARNESS=%q ST_WINDOWS=%q ST_HARNESS_COMMAND=%q ST_HARNESS_RESUME_COMMAND=%q ST_SHELL=%q %q _run' \
+    "$HOME" "$(tree_shell)" "$ST_CONFIG" "$ST_STATE" "$ST_WORKTREE_ROOT" \
+    "$ST_HARNESS" "$ST_WINDOWS" "$ST_HARNESS_COMMAND" "$ST_HARNESS_RESUME_COMMAND" "${ST_SHELL:-}" "$self"
   case $type in
     agent) cmd=("$run _agent");;
     vim) cmd=("$run nvim");;
-    shell) ;;
+    shell) cmd=("$(shell_command)");;
     # Argument form skips tmux's own `sh -c`, so the configured command is parsed once.
     *) cmd=("$self" _run /bin/sh -c "$(tab_command "$type")");;
   esac
@@ -127,10 +181,12 @@ create_window() {
 
 # Tab look is set per session and window so other tmux sessions keep the user's status bar.
 style_session() {
+  tmux set-option -t "=$1:" default-shell "$(tree_shell)" &&
   tmux set-option -t "=$1:" status-position top &&
   tmux set-option -t "=$1:" status-justify left &&
-  tmux set-option -t "=$1:" status-style 'bg=default' &&
-  # Pane title rows now space the tabs off the panes; sessions styled earlier had a blank second line.
+  tmux set-option -t "=$1:" status-style 'fg=default,bg=default' &&
+  tmux set-option -t "=$1:" status-right-length 40 &&
+  tmux set-option -t "=$1:" status-right '#{?@supertree_home,,#[dim]#{@supertree_label}#[default] }' &&
   tmux set-option -t "=$1:" status on &&
   # When a tree's last program exits, switch to the most recent session instead of
   # leaving tmux. Session-scoped, so the global setting is untouched.
@@ -143,52 +199,53 @@ style_tab() {
   label='#{?@st_slot,#{@st_slot}. ,}#W'
   label="$label"'#{?@st_tab_state,#{?#{==:#{@st_tab_state},input}, ◐,#{?#{==:#{@st_tab_state},running}, ●,}},#{?#{==:#{@st_agent_state},running}, ●,}}'
   tmux set-option -w -t "$target" @st_slot "$slot" &&
-  tmux set-option -w -t "$target" window-status-separator ' ' &&
-  tmux set-option -w -t "$target" window-status-format "#[fg=colour245,bg=colour236] $label #[default]" &&
-  tmux set-option -w -t "$target" window-status-current-format "#[fg=colour235,bg=colour252,bold] $label #[default]" &&
+  tmux set-option -w -t "$target" window-status-separator '  ' &&
+  tmux set-option -w -t "$target" window-status-format "#[dim] $label #[default]" &&
+  tmux set-option -w -t "$target" window-status-current-format "#[bold,underscore] $label #[default]" &&
   tmux set-option -w -t "$target" window-status-current-style default &&
-  style_cards "$target"
+  style_panes "$target"
 }
 
-# tmux has no pane padding: a lighter pane background with blank border lines
-# reads as cards separated by gaps, and the border status row titles each card.
-# A left scrollbar in the card colour stands in for left padding; its style takes
-# no formats, so focused and unfocused cards share one colour to keep it invisible.
-style_cards() {
+# Keep program panes on the user's terminal background. Only split panes need a
+# divider; a single program gets the full height without an empty title row.
+style_panes() {
   local target=$1
-  # `spaces` is tmux 3.5+; older servers keep their default border lines.
-  tmux set-option -w -t "$target" pane-border-lines spaces 2>/dev/null || true
-  tmux set-option -w -t "$target" pane-border-status top
-  tmux set-option -w -t "$target" pane-border-style 'bg=default'
-  tmux set-option -w -t "$target" pane-active-border-style 'bg=default'
-  tmux set-option -w -t "$target" pane-border-format \
-    '#{?@st_sidebar,,#{?pane_active,#[fg=colour252#,bold],#[fg=colour242]} #{?#{e|>:#{window_panes},2},#{pane_index},} #[default]}'
-  tmux set-option -w -t "$target" window-style 'bg=colour235'
-  tmux set-option -w -t "$target" window-active-style 'bg=colour235'
-  # Scrollbars are tmux 3.6+; older servers reject the option, so skip the margin there.
-  tmux set-option -w -t "$target" pane-scrollbars on 2>/dev/null || return 0
-  tmux set-option -w -t "$target" pane-scrollbars-position left
-  tmux set-option -w -t "$target" pane-scrollbars-style 'fg=colour235,bg=colour235,width=2,pad=0'
+  tmux set-option -w -t "$target" pane-border-status off
+  tmux set-option -w -t "$target" pane-border-style 'fg=default,bg=default,dim'
+  tmux set-option -w -t "$target" pane-active-border-style 'fg=default,bg=default'
+  tmux set-option -w -t "$target" window-style 'bg=default'
+  tmux set-option -w -t "$target" window-active-style 'bg=default'
+  tmux set-option -w -t "$target" pane-scrollbars off 2>/dev/null || true
 }
 
 cmd_split() {
-  local pane win dir self tab
+  local pane win dir self tab orientation=${1:---horizontal} split_flag
   local cmd=()
+  [ $# -le 1 ] || die "usage: st split [--horizontal|--vertical]"
+  case $orientation in
+    --horizontal) split_flag=-h;;
+    --vertical) split_flag=-v;;
+    *) die "usage: st split [--horizontal|--vertical]";;
+  esac
   self=$(st_self)
   pane=${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}
   # From a key binding the focused pane may be the sidebar; split the rightmost program pane instead.
   pane=$(tmux list-panes -t "$pane" -f '#{!=:#{@st_sidebar},1}' -F '#{pane_id}' | tail -1)
-  is_tree_session "$(tmux display-message -p -t "$pane" '#S')" || { info "not a supertree session"; return 0; }
+  local sess
+  sess=$(tmux display-message -p -t "$pane" '#S')
+  is_tree_session "$sess" || { info "not a supertree session"; return 0; }
+  session_environment "$sess"
   win=$(tmux display-message -p -t "$pane" '#W')
   dir=$(tmux display-message -p -t "$pane" '#{pane_current_path}')
   case $win in
     "$(harness_window)")
       # A fresh session, not the resume command: two panes continuing one conversation would collide.
       case $ST_HARNESS in
-        claude|codex|openrouter) cmd=("$self" _run "$(harness_bin)");;
+        codex) cmd=("$self" _run codex --no-daemon);;
+        claude|openrouter) cmd=("$self" _run "$(harness_bin)");;
         *) cmd=("$self" _run /bin/sh -c "$ST_HARNESS_COMMAND");;
       esac;;
-    vim) cmd=("$self" _run nvim);;
+    nvim) cmd=("$self" _run nvim);;
     shell) ;;
     *) tab=$(tab_command "$win" 2>/dev/null || true)
        [ -z "$tab" ] || cmd=("$self" _run /bin/sh -c "$tab");;
@@ -196,15 +253,18 @@ cmd_split() {
   if declare -F sidebar_poll_start >/dev/null; then sidebar_poll_start; fi
   # Pin the sidebar first so the split halves the program pane evenly.
   if declare -F sidebar_fit >/dev/null; then sidebar_fit "$(tmux display-message -p -t "$pane" '#S')"; fi
-  tmux split-window -h -t "$pane" -c "$dir" ${cmd[@]+"${cmd[@]}"}
+  tmux split-window "$split_flag" -t "$pane" -c "$dir" ${cmd[@]+"${cmd[@]}"}
 }
 
 build_session() {
-  local sess=$1 dir=$2 windows type first_name='' initial=1 branch main label
+  local sess=$1 dir=$2 windows type first_name='' initial=1 branch main label signature
+  signature=$(layout_signature)
   # A current Supertree session already has its label, windows, and sidebar.
   # Switching to it should not inspect the Git checkout again.
   if tmux has-session -t "=$sess" 2>/dev/null &&
-     [ "$(tmux show-options -qv -t "=$sess:" @st_layout 2>/dev/null)" = "$ST_LAYOUT_VERSION" ]; then
+     [ "$(tmux show-options -qv -t "=$sess:" @st_layout 2>/dev/null)" = "$ST_LAYOUT_VERSION" ] &&
+     [ "$(tmux show-options -qv -t "=$sess:" @st_config 2>/dev/null)" = "$signature" ]; then
+    session_environment "$sess"
     return 0
   fi
   branch=$(tree_branch "$dir")
@@ -212,10 +272,14 @@ build_session() {
   label="$(basename "$main")/${branch:-(detached)}"
   [ -z "$main" ] || adopt_hashed_session "$(repo_key "$main")" "${branch:-(detached)}" "$sess"
   if tmux has-session -t "=$sess" 2>/dev/null; then
+    session_environment "$sess"
     tmux set-option -t "=$sess:" @supertree_label "$label"
     # Bump ST_LAYOUT_VERSION when the look changes so open sessions restyle on the next switch.
     # "=name:" not "=name": tmux 3.6 rejects "=name" as a set/show-options target.
-    [ "$(tmux show-options -qv -t "=$sess:" @st_layout)" = "$ST_LAYOUT_VERSION" ] || upgrade_session "$sess" "$dir"
+    if [ "$(tmux show-options -qv -t "=$sess:" @st_layout)" != "$ST_LAYOUT_VERSION" ] ||
+       [ "$(tmux show-options -qv -t "=$sess:" @st_config)" != "$signature" ]; then
+      upgrade_session "$sess" "$dir"
+    fi
     return 0
   fi
   windows=$(configured_windows)
@@ -228,6 +292,7 @@ build_session() {
       tmux set-option -t "=$sess:" @supertree_label "$label"
       return 0
     fi
+    [ "$initial" != 1 ] || session_environment "$sess"
     if [ "$type" = agent ]; then
       tmux set-option -t "=$sess:" @st_agent_window "$(window_name agent)"
     fi
@@ -238,28 +303,52 @@ EOF
   style_session "$sess"
   if declare -F sidebar_session >/dev/null; then sidebar_session "$sess" "$dir"; fi
   tmux set-option -t "=$sess:" @st_layout "$ST_LAYOUT_VERSION"
+  tmux set-option -t "=$sess:" @st_config "$signature"
   tmux set-option -t "=$sess:" @supertree_label "$label"
   tmux select-window -t "=$sess:$first_name"
 }
 
 # Sessions opened before tabs and sidebars get them in place, without restarting their programs.
 upgrade_session() {
-  local sess=$1 dir=$2 win name type slot
+  local sess=$1 dir=$2 win name type slot desired created_agent=0
+  session_environment "$sess"
   style_session "$sess"
+  # The logical window type is still "vim" in user configs, but the program
+  # and tab are Neovim. Rename an existing tab without restarting its editor.
+  if tmux list-windows -t "=$sess" -F '#W' | grep -qxF vim &&
+     ! tmux list-windows -t "=$sess" -F '#W' | grep -qxF nvim; then
+    tmux rename-window -t "=$sess:vim" nvim
+  fi
   tmux list-windows -t "=$sess" -F '#{window_id} #{window_name}' | while read -r win name; do
-    slot=0
+    slot=''
+    local index=0
     while read -r type; do
-      slot=$((slot + 1))
-      [ "$(window_name "$type")" = "$name" ] && break
-      type=''
+      index=$((index + 1))
+      if [ "$(window_name "$type")" = "$name" ]; then slot=$index; break; fi
     done <<EOF
 $(configured_windows)
 EOF
-    [ -n "$type" ] || slot=''
     style_tab "$win" "$slot"
   done
+  # A session can predate the current window layout or harness choice. Add only
+  # missing configured windows so running programs and extra user tabs survive.
+  while read -r type; do
+    [ -n "$type" ] || continue
+    desired=$(window_name "$type")
+    if ! tmux list-windows -t "=$sess" -F '#W' | grep -qxF -- "$desired"; then
+      create_window "$sess" "$dir" "$type" 0
+      [ "$type" != agent ] || created_agent=1
+    fi
+    if [ "$type" = agent ]; then
+      tmux set-option -t "=$sess:" @st_agent_window "$desired"
+    fi
+  done <<EOF
+$(configured_windows)
+EOF
   if declare -F sidebar_session >/dev/null; then sidebar_session "$sess" "$dir"; fi
   tmux set-option -t "=$sess:" @st_layout "$ST_LAYOUT_VERSION"
+  tmux set-option -t "=$sess:" @st_config "$(layout_signature)"
+  if [ "$created_agent" = 1 ]; then tmux select-window -t "=$sess:$(harness_window)"; fi
 }
 
 rewrite_recent() {
@@ -376,7 +465,8 @@ ensure_main_fallbacks() {
     [ -n "$main_sess" ] || continue
     adopt_hashed_session "$repo" "$main_branch" "$main_sess"
     if ! tmux has-session -t "=$main_sess" 2>/dev/null; then
-      tmux new-session -d -s "$main_sess" -c "$main" -n shell
+      tmux new-session -d -s "$main_sess" -c "$main" -n shell "$(shell_command)"
+      session_environment "$main_sess"
       tmux set-option -t "=$main_sess:" @supertree_label "$(basename "$main")/$main_branch"
     fi
   done <<EOF
@@ -469,6 +559,7 @@ select_window_type() {
   pane=${TMUX_PANE:-}
   sess=$(current_session)
   is_tree_session "$sess" || { info "not a supertree session"; return 0; }
+  session_environment "$sess"
   name=$(window_name "$type")
   tmux select-window -t "=$sess:$name" 2>/dev/null && return 0
   dir=$(tmux display-message -p -t "${pane:-$sess}" '#{pane_current_path}')
@@ -511,24 +602,11 @@ cmd_agent() {
 }
 
 cmd_leave() {
-  local tty=${1:-} cur origin origin_file
+  local tty=${1:-} origin_file
   [ -n "${TMUX:-}" ] || die "st leave only works inside tmux"
   [ -n "$tty" ] || tty=$(tmux display-message -p '#{client_tty}')
-  cur=$(tmux display-message -p -c "$tty" '#S' 2>/dev/null || true)
   origin_file="$ST_STATE/origin/$(tty_key "$tty")"
-  origin=$(cat "$origin_file" 2>/dev/null) || origin=""
   rm -f "$origin_file"
-  if [ "$cur" = "$ST_HOME_SESSION" ] && home_is_open; then
-    tmux detach-client -t "$tty"
-    return
-  fi
-  if [ "$cur" != "$ST_HOME_SESSION" ] && home_is_open; then
-    tmux switch-client -c "$tty" -t "=$ST_HOME_SESSION" && return 0
-  fi
-  # Go back to the session st was opened from; detach only when there is none.
-  if [ -n "$origin" ] && [ "$origin" != "$cur" ] && tmux has-session -t "=$origin" 2>/dev/null; then
-    tmux switch-client -c "$tty" -t "=$origin" && return 0
-  fi
   tmux detach-client -t "$tty"
 }
 
@@ -538,6 +616,6 @@ st_register_command 'toggle' cmd_toggle ''
 st_register_command 'window' cmd_window ''
 st_register_command 'last' cmd_last 'switch to the previous tree'
 st_register_command 'agent' cmd_agent ''
-st_register_command 'split' cmd_split 'open another copy of this tab side by side'
+st_register_command 'split' cmd_split 'open another copy of this tab' 'split [--horizontal|--vertical]'
 st_register_command 'leave' cmd_leave ''
 st_register_command '_sessions' known_sessions ''

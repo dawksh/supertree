@@ -49,6 +49,10 @@ case ${1:-} in
   list-sessions)
     for s in ${ST_TEST_LIVE:-}; do printf "%s\n" "$s"; done;;
   show-options)
+    case " $* " in
+      *' @st_layout '*) [ -z "${ST_TEST_LAYOUT:-}" ] || printf '%s\n' "$ST_TEST_LAYOUT"; exit 0;;
+      *' @st_config '*) [ -z "${ST_TEST_CONFIG:-}" ] || printf '%s\n' "$ST_TEST_CONFIG"; exit 0;;
+    esac
     case " ${ST_TEST_PLAIN_SESSIONS:-} " in
       *" $target "*) ;;
       *) printf "%s\n" "${ST_TEST_LABEL-supertree/main}";;
@@ -61,6 +65,10 @@ case ${1:-} in
       "#{pane_current_path}") printf "%s\n" "$ST_TEST_PATH";;
       "#{client_tty}") printf "%s\n" "${ST_TEST_TTY:-}";;
     esac;;
+  list-windows)
+    case " $* " in *' -F #W '*) [ -z "${ST_TEST_WINDOW_NAMES:-}" ] || printf '%s\n' "$ST_TEST_WINDOW_NAMES"; exit 0;; esac;;
+  list-panes)
+    [ "${ST_TEST_SPLIT:-0}" != 1 ] || printf '%%5\n';;
 esac
 exit 0
 STUB
@@ -94,7 +102,7 @@ run_layout() {
 # Existing configs keep the original three-window layout.
 run_layout
 assert_log_contains '-n codex'
-assert_log_contains '-n vim'
+assert_log_contains '-n nvim'
 assert_log_contains '-n shell'
 assert_log_contains "select-window -t =$main_session:codex"
 
@@ -102,7 +110,7 @@ assert_log_contains "select-window -t =$main_session:codex"
 run_layout 'agent shell'
 assert_log_contains '-n codex'
 assert_log_contains '-n shell'
-assert_log_excludes '-n vim'
+assert_log_excludes '-n nvim'
 [ "$(grep -cE '^(new-session|new-window) ' "$ST_TMUX_LOG")" = 2 ] ||
   fail 'agent shell did not create exactly two windows'
 
@@ -122,6 +130,14 @@ assert_log_contains "select-window -t =$main_session:shell"
 ST_TEST_CURRENT_WINDOW=codex "$ROOT/bin/st" toggle
 assert_log_contains "select-window -t =$main_session:shell"
 
+# Both split directions use the current program pane, never the sidebar.
+: > "$ST_TMUX_LOG"
+ST_TEST_SPLIT=1 ST_SIDEBAR=0 TMUX_PANE=%5 "$ROOT/bin/st" split
+assert_log_contains 'split-window -h -t %5'
+: > "$ST_TMUX_LOG"
+ST_TEST_SPLIT=1 ST_SIDEBAR=0 TMUX_PANE=%5 "$ROOT/bin/st" split --vertical
+assert_log_contains 'split-window -v -t %5'
+
 # Disabled tools are not reported as dependencies.
 printf 'ST_HARNESS=codex\nST_WINDOWS=shell\n' > "$ST_CONFIG"
 doctor_output=$("$ROOT/bin/st" doctor 2>&1 || true)
@@ -140,6 +156,17 @@ run_layout
 assert_log_contains "set-option -t =$main_session: @supertree_label"
 assert_log_contains "set-option -t =$main_session: @st_agent_window"
 assert_log_excludes "set-option -t $main_session "
+
+# A live session from an older harness/layout gets its missing configured tabs
+# when reopened, and the new harness becomes the selected agent tab.
+: > "$ST_TMUX_LOG"
+ST_TEST_LIVE="$main_session" ST_TEST_WINDOW_NAMES=claude ST_TEST_LAYOUT=7 \
+  ST_TEST_CONFIG='claude|agent|/bin/bash' SHELL=/bin/zsh "$ROOT/bin/st" go main
+assert_log_contains '-n codex'
+assert_log_contains '-n nvim'
+assert_log_contains 'SHELL=/bin/zsh /bin/zsh -l'
+assert_log_contains "@st_agent_window codex"
+assert_log_contains "select-window -t =$main_session:codex"
 
 # The launch command quotes the st path, so a path with a space still runs.
 mkdir -p "$TEST_ROOT/with space"
@@ -164,13 +191,13 @@ rm "$odd_dir/st"
 
 # A real, isolated tmux server runs those commands, with a stub st that logs its arguments.
 real_tmux=$(command -v tmux || true)
-if [ -n "$real_tmux" ]; then
+if [ -n "$real_tmux" ] && [ "${ST_SKIP_E2E:-0}" != 1 ]; then
   socket="st-windows-test-$$"
   trap 'TMUX_TMPDIR="$TEST_ROOT" "$real_tmux" -L "$socket" kill-server >/dev/null 2>&1 || true; rm -rf "$TEST_ROOT"' EXIT
   e2e_log="$TEST_ROOT/e2e.log"
   mkdir -p "$TEST_ROOT/e2e/.local/bin"
   # A sidebar pane stays open like the real one; st sets options on it after the split.
-  printf '%s\n' '#!/bin/sh' 'printf "%s|" "$@" >> "$ST_E2E_LOG"; echo >> "$ST_E2E_LOG"' \
+  printf '%s\n' '#!/bin/sh' 'line=$(printf "%s|" "$@")' 'printf "%s\n" "$line" >> "$ST_E2E_LOG"' \
     '[ "$1" != _sidebar ] || exec sleep 60' > "$odd_dir/st"
   printf '#!/bin/sh\nexec %q -L %q -f /dev/null "$@"\n' "$real_tmux" "$socket" > "$TEST_ROOT/e2e/.local/bin/tmux"
   chmod +x "$odd_dir/st" "$TEST_ROOT/e2e/.local/bin/tmux"
@@ -244,12 +271,12 @@ rm -rf "$ST_STATE/origin"
 TMUX=fake ST_TEST_TTY=$tty ST_TEST_SESSION="$feature_session" "$ROOT/bin/st" go main
 [ ! -e "$origin_file" ] || fail 'a tree session was recorded as the origin'
 
-# Leaving returns to the origin and forgets it.
+# Leaving detaches in one step and forgets the origin.
 mkdir -p "$ST_STATE/origin"
 printf 'work\n' > "$origin_file"
 : > "$ST_TMUX_LOG"
 TMUX=fake ST_TEST_LIVE=work ST_TEST_SESSION="$main_session" "$ROOT/bin/st" leave "$tty"
-assert_log_contains "switch-client -c $tty -t =work"
+assert_log_contains "detach-client -t $tty"
 [ ! -e "$origin_file" ] || fail 'st leave kept the origin file'
 
 # Modules share one namespace; a reused helper name silently replaces the other.

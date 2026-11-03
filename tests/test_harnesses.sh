@@ -41,7 +41,7 @@ run_builtin() {
 }
 
 run_builtin claude 'claude|' 'claude|--continue'
-run_builtin codex 'codex|' 'codex|resume --last'
+run_builtin codex 'codex|--no-daemon' 'codex|--no-daemon resume --last'
 run_builtin openrouter 'opencode|' 'opencode|--continue'
 
 printf '%s\n' \
@@ -57,7 +57,7 @@ assert_log "$(printf '%s\n%s' 'aider|--new' 'aider|--resume')"
 printf 'ST_HARNESS=claude\n' > "$ST_CONFIG"
 : > "$ST_TEST_LOG"
 ST_HARNESS=codex ST_STATE="$TEST_ROOT/override-state" "$ROOT/bin/st" _agent
-assert_log 'codex|'
+assert_log 'codex|--no-daemon'
 
 # A failed `claude --continue` falls through instead of starting a new session.
 printf 'ST_HARNESS=claude\n' > "$ST_CONFIG"
@@ -70,17 +70,18 @@ case $out in *"run 'claude' to start fresh"*) ;; *) fail "missing start-fresh hi
 
 # Codex and OpenCode resume failures also fall through without a fresh launch.
 run_resume_failure() {
-  local harness=$1 command=$2 resume_args=$3
+  local harness=$1 command=$2 resume_args=$3 start_args=''
+  [ "$harness" != codex ] || start_args=--no-daemon
   printf 'ST_HARNESS=%s\n' "$harness" > "$ST_CONFIG"
   : > "$ST_TEST_LOG"
   ST_STATE="$TEST_ROOT/$harness-fail-state" "$ROOT/bin/st" _agent
   out=$(ST_TEST_FAIL_ARGS="$resume_args" ST_STATE="$TEST_ROOT/$harness-fail-state" \
     "$ROOT/bin/st" _agent 2>&1) || fail "failed $command $resume_args made st _agent fail"
-  assert_log "$(printf '%s\n%s' "$command|" "$command|$resume_args")"
+  assert_log "$(printf '%s\n%s' "$command|$start_args" "$command|$resume_args")"
   case $out in *"run '$command' to start fresh"*) ;; *) fail "missing $command start-fresh hint: [$out]";; esac
 }
 
-run_resume_failure codex codex 'resume --last'
+run_resume_failure codex codex '--no-daemon resume --last'
 run_resume_failure openrouter opencode --continue
 
 # Outside a git repository the pane's harness refuses, writes no markers,
@@ -95,7 +96,7 @@ out=$(cd "$outside" && GIT_CEILING_DIRECTORIES="$TEST_ROOT" SHELL="$TEST_ROOT/sh
   fail 'st _run _agent failed outside a git repository'
 case $out in *'not inside a git repository'*) ;; *) fail "unexpected outside-repo output: [$out]";; esac
 [ ! -e "$TEST_ROOT/nogit-state/seen" ] || fail 'markers were written outside a git repository'
-assert_log 'shell|-i'
+assert_log 'shell|-l'
 
 if out=$(cd "$outside" && GIT_CEILING_DIRECTORIES="$TEST_ROOT" \
   ST_STATE="$TEST_ROOT/nogit-state" "$ROOT/bin/st" _agent 2>&1); then

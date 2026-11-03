@@ -32,7 +32,7 @@ cmd_doctor() {
   printf '  --    worktree root %s\n' "$ST_WORKTREE_ROOT"
   printf '  --    repos known   %s\n' "$( [ -f "$ST_REPOS" ] && wc -l < "$ST_REPOS" | tr -d ' ' || echo 0)"
   printf '  --    harness       %s (%s)\n' "$(harness_label)" "$ST_HARNESS"
-  printf '  --    windows       %s\n' "$(printf '%s' "$windows" | tr '\n' ' ')"
+  printf '  --    windows       %s\n' "$(printf '%s\n' "$windows" | while read -r type; do window_name "$type"; printf ' '; done | sed 's/ $//')"
   printf '  --    config        %s\n' "$ST_CONFIG"
   return $ok
 }
@@ -187,7 +187,7 @@ EOF
   rm -f -- "$fragment" "$config"
   [ ! -d "$confdir" ] || rmdir "$confdir" 2>/dev/null || true
   if command -v tmux >/dev/null 2>&1 && tmux list-sessions >/dev/null 2>&1; then
-    for key in M-w M-e M-Tab M-r M-1 M-2 M-3 M-4 M-5 M-6 M-7 M-8 M-9 M-q M-s M-B M-j M-k M-v M-/ $fragment_keys; do
+    for key in M-w M-e M-Tab M-r M-1 M-2 M-3 M-4 M-5 M-6 M-7 M-8 M-9 M-q M-s M-B M-j M-k M-v M-V M-/ $fragment_keys; do
       binding=$(tmux list-keys -T root "$key" 2>/dev/null || true)
       case $binding in *"$self"*) tmux unbind-key -n "$key" 2>/dev/null || true;; esac
     done

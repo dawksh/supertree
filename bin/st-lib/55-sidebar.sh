@@ -2,7 +2,7 @@
 # supertree sidebar module
 
 ST_SIDEBAR=${ST_SIDEBAR:-1}
-ST_SIDEBAR_WIDTH=${ST_SIDEBAR_WIDTH:-20}
+ST_SIDEBAR_WIDTH=${ST_SIDEBAR_WIDTH:-24}
 ST_SIDEBAR_DIR="$ST_STATE/sidebar"
 
 sidebar_enabled() {
@@ -102,11 +102,10 @@ sidebar_session() {
   for win in $(tmux list-windows -t "=$sess" -F '#{window_id}'); do
     add_sidebar "$win" "$dir"
   done
-  # Pad the tree label to the sidebar's width so the tabs start above the program panes.
-  # tmux 3.6 pads on the right for a positive width, the reverse of its man page.
+  # Align the tabs with the program pane while the sidebar is visible.
   tmux set-option -t "=$sess:" status-left-length $((ST_SIDEBAR_WIDTH + 1))
   tmux set-option -t "=$sess:" status-left \
-    "#{?@st_sidebar_off, #{@supertree_label} ,#[fg=colour245]#{p$((ST_SIDEBAR_WIDTH + 1)):#{=/$((ST_SIDEBAR_WIDTH - 1))/…: #{@supertree_label}}}#[default]}"
+    "#{?@st_sidebar_off, Supertree ,#[dim]#{p$((ST_SIDEBAR_WIDTH + 1)): Supertree}#[default]}"
   tmux set-hook -t "$sess" after-new-window "run-shell \"$(tmux_cmd_word "$self" dq) _sidebar-attach '#{window_id}'\""
 }
 
@@ -137,17 +136,14 @@ sidebar_rows() {
       else if ($3 == "input") glyph = "\033[33m◐\033[0m"
       else if ($3 == "done") glyph = "○"
       else glyph = "\033[2m·\033[0m"
-      # Last path segment only: "user/ticket-123-..." prefixes would eat the narrow column.
-      name = $2; sub(/.*\//, "", name)
-      if ($5 == cur) name = "\033[1;36m" name "\033[0m"
-      rows[$1] = rows[$1] "  " glyph " " name "\t" $5 "\t" $4 "\t" ($5 == cur) "\n"
+      name = $2
+      if ($5 == cur) name = "\033[1m" name "\033[0m"
+      rows[$1] = rows[$1] " " glyph " " name "\t" $5 "\t" $4 "\t" ($5 == cur) "\n"
     }
     END {
       for (i = 1; i <= n; i++) {
-        if (i > 1) printf " \t#gap%d\t\n", i
-        printf "%s\t#%s\t\n%s", order[i], order[i], rows[order[i]]
+        printf "\033[2m%s\033[0m\t#%s\t\n%s", order[i], order[i], rows[order[i]]
       }
-      printf " \t#gap\t\n\033[2m+ new\033[0m\t+new\t\n"
     }' "$cache"
 }
 
@@ -285,9 +281,11 @@ cmd_sidebar() {
     printf '%s\n' "$rows" |
       fzf --ansi --no-input --no-sort --reverse --info=hidden --no-scrollbar \
           --delimiter=$'\t' --with-nth=1 --track --id-nth=2 \
-          ${listen[@]+"${listen[@]}"} --pointer='▌' --gutter=' ' --ellipsis='…' --padding=1,0,0,0 \
+          ${listen[@]+"${listen[@]}"} --pointer='›' --gutter=' ' --ellipsis='…' \
+          --header='n new · d remove' \
           --bind="load:pos(${start:-1})+unbind(load)" \
           --bind='j:down,k:up,g:first,G:last' \
+          --bind="n:execute-silent:$self _sidebar-open +new" \
           --bind="enter:execute-silent:$self _sidebar-open {2} {3}" \
           --bind="l:execute-silent:$self _sidebar-open {2} {3}" \
           --bind="double-click:execute-silent:$self _sidebar-open {2} {3}" \
@@ -319,7 +317,7 @@ cmd_sidebar_rm() {
   local sess=${1:-} dir=${2:-} tty
   case $sess in ''|'#'*|+new) return 0;; esac
   tty=$(tmux display-message -p -t "$TMUX_PANE" '#{client_tty}')
-  tmux display-popup -c "$tty" -E -w 70 -h 16 -T ' Remove tree ' "$(st_self)" _sidebar-rm-run "$dir"
+  tmux display-popup -c "$tty" -E -w 64 -h 14 -T ' Remove tree ' "$(st_self)" _sidebar-rm-run "$dir"
 }
 
 cmd_sidebar_rm_run() {
