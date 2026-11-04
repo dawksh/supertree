@@ -64,11 +64,12 @@ case ${1:-} in
       "#S") printf "%s\n" "$ST_TEST_SESSION";;
       "#{pane_current_path}") printf "%s\n" "$ST_TEST_PATH";;
       "#{client_tty}") printf "%s\n" "${ST_TEST_TTY:-}";;
+      "#{@st_sidebar}") printf "%s\n" "${ST_TEST_FOCUSED_SIDEBAR:-}";;
     esac;;
   list-windows)
     case " $* " in *' -F #W '*) [ -z "${ST_TEST_WINDOW_NAMES:-}" ] || printf '%s\n' "$ST_TEST_WINDOW_NAMES"; exit 0;; esac;;
   list-panes)
-    [ "${ST_TEST_SPLIT:-0}" != 1 ] || printf '%%5\n';;
+    [ "${ST_TEST_SPLIT:-0}" != 1 ] || printf '%s\n' ${ST_TEST_PANES:-%5};;
 esac
 exit 0
 STUB
@@ -137,6 +138,12 @@ assert_log_contains 'split-window -h -t %5'
 : > "$ST_TMUX_LOG"
 ST_TEST_SPLIT=1 ST_SIDEBAR=0 TMUX_PANE=%5 "$ROOT/bin/st" split --vertical
 assert_log_contains 'split-window -v -t %5'
+: > "$ST_TMUX_LOG"
+ST_TEST_SPLIT=1 ST_TEST_PANES='%5 %7' TMUX_PANE=%5 "$ROOT/bin/st" split
+assert_log_contains 'split-window -h -t %5'
+: > "$ST_TMUX_LOG"
+ST_TEST_SPLIT=1 ST_TEST_PANES='%5 %7' ST_TEST_FOCUSED_SIDEBAR=1 TMUX_PANE=%2 "$ROOT/bin/st" split
+assert_log_contains 'split-window -h -t %7'
 
 # Disabled tools are not reported as dependencies.
 printf 'ST_HARNESS=codex\nST_WINDOWS=shell\n' > "$ST_CONFIG"
