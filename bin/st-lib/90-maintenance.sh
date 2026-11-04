@@ -44,8 +44,7 @@ cmd_update() {
   command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 ||
     die "sha256sum or shasum is required to update st"
 
-  local release_root latest_url latest self prefix tmp candidate staged staged_lib cleanup previous_lib
-  local expected_sum actual_sum
+  local release_root latest_url latest self prefix confdir manifest tmp cleanup expected_sum actual_sum
   release_root=${ST_RELEASE_ROOT:-https://github.com/dawksh/supertree}
   latest_url=$(curl -fsS -o /dev/null -w '%{redirect_url}' "$release_root/releases/latest") ||
     die "could not check for updates"
@@ -54,81 +53,40 @@ cmd_update() {
     ''|*[!A-Za-z0-9._-]*) die "could not determine the latest release";;
   esac
 
+  [ "$ST_VERSION" != dev ] || die "development install detected — update it with git"
   if [ "$ST_VERSION" = "$latest" ]; then
     printf 'st: %s is already the latest version\n' "$ST_VERSION"
     return 0
   fi
-  [ "$ST_VERSION" != dev ] || die "development install detected — update it with git"
 
   self=$(st_executable)
   [ ! -L "$self" ] || die "source install detected — update it with git"
   prefix=$(dirname "$self")
   [ -w "$prefix" ] || die "cannot update $self (directory is not writable)"
-
+  manifest="$self.install"
+  confdir=${ST_CONFDIR:-}
+  [ -n "$confdir" ] || [ ! -f "$manifest" ] || confdir=$(sed -n '1p' "$manifest")
+  confdir=${confdir:-$HOME/.config/supertree}
   tmp=$(mktemp -d)
-  staged=$(mktemp "$prefix/.st.update.XXXXXX")
-  staged_lib=$(mktemp -d "$prefix/.st-lib.update.XXXXXX")
-  printf -v cleanup 'rm -rf %q %q %q' "$tmp" "$staged" "$staged_lib"
+  printf -v cleanup 'rm -rf %q' "$tmp"
   trap "$cleanup" EXIT
-
-  curl -fsSL "$release_root/releases/download/$latest/st.tar.gz" -o "$tmp/st.tar.gz" ||
-    die "could not download st $latest"
+  curl -fsSL "$release_root/releases/download/$latest/install.sh" -o "$tmp/install.sh" ||
+    die "could not download installer for st $latest"
   curl -fsSL "$release_root/releases/download/$latest/SHA256SUMS" -o "$tmp/SHA256SUMS" ||
     die "could not download checksums for st $latest"
-  expected_sum=$(awk '$2 == "st.tar.gz" { print $1 }' "$tmp/SHA256SUMS")
-  if command -v sha256sum >/dev/null 2>&1; then actual_sum=$(sha256sum "$tmp/st.tar.gz")
-  else actual_sum=$(shasum -a 256 "$tmp/st.tar.gz"); fi
+  expected_sum=$(awk '$2 == "install.sh" { print $1 }' "$tmp/SHA256SUMS")
+  if command -v sha256sum >/dev/null 2>&1; then actual_sum=$(sha256sum "$tmp/install.sh")
+  else actual_sum=$(shasum -a 256 "$tmp/install.sh"); fi
   [ -n "$expected_sum" ] && [ "$expected_sum" = "${actual_sum%% *}" ] ||
-    die "st $latest does not match its published checksum; nothing was changed"
-  tar -tzf "$tmp/st.tar.gz" | awk '
-    $0 == "st" || $0 == "st-lib/" || $0 ~ /^st-lib\/[A-Za-z0-9_.-]+\.sh$/ { next }
-    { exit 1 }
-  ' || die "downloaded update archive has unexpected paths"
-  mkdir "$tmp/package"
-  tar -xzf "$tmp/st.tar.gz" -C "$tmp/package" ||
-    die "could not unpack st $latest"
-  candidate="$tmp/package/st"
-  head -1 "$candidate" | grep -q '^#!/usr/bin/env bash$' ||
-    die "downloaded update does not look like st"
-  sed "s|^ST_VERSION='dev'$|ST_VERSION='$latest'|" "$candidate" > "$tmp/stamped"
-  candidate="$tmp/stamped"
-  grep -qx "ST_VERSION='$latest'" "$candidate" ||
-    die "downloaded update has invalid version metadata"
-  bash -n "$candidate" || die "downloaded update is not valid bash"
-  [ -f "$tmp/package/st-lib/00-core.sh" ] ||
-    die "downloaded update is missing its modules"
-  for module in "$tmp/package"/st-lib/*.sh; do
-    bash -n "$module" || die "downloaded module is not valid bash: $module"
-  done
-
-  install -m 0755 "$candidate" "$staged" || die "could not stage update beside $self"
-  cp "$tmp/package"/st-lib/*.sh "$staged_lib/" ||
-    die "could not stage update modules"
-  previous_lib=''
-  if [ -e "$prefix/st-lib-$latest" ]; then
-    previous_lib=$(mktemp -d "$prefix/.st-lib.previous.XXXXXX")
-    rmdir "$previous_lib"
-    mv "$prefix/st-lib-$latest" "$previous_lib" ||
-      die "could not stage existing update modules"
-  fi
-  if ! mv "$staged_lib" "$prefix/st-lib-$latest"; then
-    [ -z "$previous_lib" ] || mv "$previous_lib" "$prefix/st-lib-$latest"
-    die "could not install update modules"
-  fi
-  if ! mv -f "$staged" "$self"; then
-    rm -rf "$prefix/st-lib-$latest"
-    [ -z "$previous_lib" ] || mv "$previous_lib" "$prefix/st-lib-$latest"
-    die "could not replace $self"
-  fi
+    die "installer for st $latest does not match its published checksum; nothing was changed"
+  bash -n "$tmp/install.sh" || die "downloaded installer is not valid bash"
+  (
+    unset ST_HARNESS ST_WINDOWS ST_CONFIG
+    ST_VERSION=$latest ST_PREFIX=$prefix ST_CONFDIR=$confdir \
+      TMUX_CONF="$(installed_tmux_conf)" ST_YES=1 ST_UPDATE=1 \
+      bash "$tmp/install.sh"
+  ) || die "could not install st $latest"
   printf 'st: updated %s -> %s\n' "$ST_VERSION" "$latest"
-  if [ -n "$previous_lib" ]; then
-    rm -rf -- "$previous_lib" ||
-      printf 'st: warning: could not remove staged old modules: %s\n' "$previous_lib" >&2
-  fi
-  if [ -d "$prefix/st-lib-$ST_VERSION" ] && [ ! -L "$prefix/st-lib-$ST_VERSION" ]; then
-    rm -rf -- "$prefix/st-lib-$ST_VERSION" ||
-      printf 'st: warning: could not remove old modules: %s\n' "$prefix/st-lib-$ST_VERSION" >&2
-  fi
 }
 
 cmd_version() { printf "st %s\n" "$ST_VERSION"; }

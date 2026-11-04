@@ -36,6 +36,8 @@ or OpenRouter via OpenCode. It writes the choice and default window layout to
 `~/.config/supertree/config`, checks the dependencies required by that layout,
 and offers to install anything missing. Nothing is installed without a yes; if
 there is no terminal to answer on, it skips and carries on.
+In an interactive terminal, each stage fills the screen and downloads show a
+branching ASCII animation. Redirected output remains a plain log.
 
 Then it installs `st` and its versioned `st-lib-*` module directory to
 `~/.local/bin`, the tmux fragment to
@@ -127,9 +129,10 @@ st update
 ```
 
 `st update` checks GitHub for the latest release and installs it immediately when
-a newer version is available. The archive and modules are validated and staged
-before the current executable is replaced. The previous version's modules remain
-available if an update fails. Run `st --version` to see the installed version.
+a newer version is available. It verifies the release installer, then uses it to
+refresh the command, modules, and tmux bindings together while keeping your
+chosen harness and window layout. Release assets are checked before the current
+executable is replaced. Run `st --version` to see the installed version.
 
 Older single-file installations migrate on the first command after `st update`.
 The compatibility entrypoint installs the module bundle and then runs that command.
