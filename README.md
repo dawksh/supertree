@@ -66,7 +66,17 @@ tmux source-file ~/.tmux.conf      # or prefix + r
 ```
 
 Needs `tmux`, `git`, `fzf`, the programs used by the configured windows, and
-`~/.local/bin` on `PATH`. `st doctor` checks the active layout.
+`~/.local/bin` on `PATH`. `st doctor` checks the active layout, generated split
+binding, and live tmux binding. If files or bindings are damaged, run `st repair`.
+It downloads and verifies the installer for the **installed release**, reinstalls
+its command and modules, regenerates bindings from your config, and reloads tmux.
+A config with invalid shell syntax is saved as `config.broken.*` before defaults
+are restored. Repair reports live keys overridden by other tmux bindings and
+duplicate `ST_KEY_*` assignments, naming each affected key and the active tmux
+action. Move the Supertree `source-file` line after conflicting bindings or
+choose a different `ST_KEY_*` value, then run repair again. Run `st update`
+separately to move to a newer release. Source installs should restore their
+checkout with Git and reload their tmux config.
 
 ### Modules
 
@@ -183,7 +193,8 @@ st rm feat-otp         # done with it: session, worktree and branch go away
 | `st remove all [--force]` | List and remove Git checkouts under `ST_WORKTREE_ROOT`, including standalone repositories. Asks before removal. |
 | `st update` | Check for the latest release and install it automatically when available. |
 | `st uninstall` | Remove the installed command, Supertree config, tmux source line, and state. |
-| `st doctor` | Check dependencies, `PATH`, the symlink, the `~/.tmux.conf` line. |
+| `st doctor` | Check dependencies, config syntax, generated bindings, and live tmux keys. |
+| `st repair` | Reinstall this release and reload its tmux bindings. |
 | `st keys` | Print every tmux key binding (`M-/` shows the same list in a popup). |
 | `st help` | List commands and keys. `st --version` prints the installed version. |
 
@@ -560,6 +571,11 @@ worktree root with `ST_WORKTREE_ROOT`, the state dir with `ST_STATE`.
 **`M-w` does nothing** — your terminal is eating Option. In WezTerm, Option must
 send Meta rather than composing characters. Your `M-arrow` pane binds are the
 quick test: if those work, these do.
+
+**Option-V does not split** — run `st split` from a Supertree pane. If that
+works, run `st doctor` to check the generated and live `M-v` binding, then
+`st repair` if either is missing. If the binding is present, set the terminal's
+Option key to send Meta (or bind `ST_KEY_SPLIT` to a key your terminal sends).
 
 **`M-Tab` or `M-1`–`M-9` do nothing on Linux** — the desktop or terminal
 already uses them (Alt-Tab switches apps; Alt-digit switches terminal tabs).

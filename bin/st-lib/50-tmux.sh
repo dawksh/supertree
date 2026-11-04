@@ -229,8 +229,12 @@ cmd_split() {
   esac
   self=$(st_self)
   pane=${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}
-  # From a key binding the focused pane may be the sidebar; split the rightmost program pane instead.
-  pane=$(tmux list-panes -t "$pane" -f '#{!=:#{@st_sidebar},1}' -F '#{pane_id}' | tail -1)
+  # Only redirect a sidebar split to a program pane. Keep the focused pane
+  # when there are already several program panes in the window.
+  if [ "$(tmux display-message -p -t "$pane" '#{@st_sidebar}')" = 1 ]; then
+    pane=$(tmux list-panes -t "$pane" -f '#{!=:#{@st_sidebar},1}' -F '#{pane_id}' | tail -1)
+  fi
+  [ -n "$pane" ] || die "no program pane to split"
   local sess
   sess=$(tmux display-message -p -t "$pane" '#S')
   is_tree_session "$sess" || { info "not a supertree session"; return 0; }

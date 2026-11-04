@@ -25,6 +25,11 @@ CONFIG="$CONFDIR/config"
 HARNESS_OVERRIDE=${ST_HARNESS:-}
 WINDOWS_OVERRIDE_SET=${ST_WINDOWS+x}
 WINDOWS_OVERRIDE=${ST_WINDOWS:-}
+CONFIG_BROKEN=0
+if [ "${ST_REPAIR:-0}" = 1 ] && [ -f "$CONFIG" ] && ! bash -n "$CONFIG"; then
+  CONFIG_BROKEN=1
+  printf 'st: config has invalid shell syntax; it will be backed up and replaced\n' >&2
+fi
 
 command -v curl >/dev/null 2>&1 || { printf 'st: curl is required\n' >&2; exit 1; }
 command -v tar >/dev/null 2>&1 || { printf 'st: tar is required\n' >&2; exit 1; }
@@ -200,7 +205,7 @@ select_harness() {
     CONFIG_HARNESS_NEEDS_WRITE=1
     return
   fi
-  if [ -f "$CONFIG" ]; then
+  if [ -f "$CONFIG" ] && [ "$CONFIG_BROKEN" = 0 ]; then
     configured=$( ( unset ST_HARNESS; . "$CONFIG"; printf '%s' "${ST_HARNESS:-}" ) )
     if harness_valid "$configured"; then
       HARNESS=$configured
@@ -247,10 +252,19 @@ select_windows() {
     CONFIG_WINDOWS_NEEDS_WRITE=1
     return
   fi
-  if [ -f "$CONFIG" ]; then
+  if [ -f "$CONFIG" ] && [ "$CONFIG_BROKEN" = 0 ]; then
     configured=$( ( unset ST_WINDOWS; . "$CONFIG"; printf '%s' "${ST_WINDOWS-__ST_UNSET__}" ) )
     if [ "$configured" != __ST_UNSET__ ]; then
-      windows_valid "$configured" || die "invalid ST_WINDOWS in $CONFIG: $configured"
+      if ! windows_valid "$configured"; then
+        if [ "${ST_REPAIR:-0}" != 1 ]; then
+          die "invalid ST_WINDOWS in $CONFIG: $configured"
+        fi
+        printf 'st: invalid ST_WINDOWS in %s; it will be backed up and replaced\n' "$CONFIG" >&2
+        CONFIG_BROKEN=1
+        WINDOWS='agent vim shell'
+        CONFIG_WINDOWS_NEEDS_WRITE=1
+        return
+      fi
       WINDOWS=$configured
       return
     fi
@@ -325,7 +339,7 @@ render_bindings() {
       key=${pair#*=}
       case $key in (''|*[!A-Za-z0-9_/-]*) die "invalid key binding in $CONFIG: $key";; esac
       printf '%s ' "$pair"
-    done ) )
+    done ) ) || return 1
   st_word=$(tmux_shell_word "$PREFIX/st" | sed 's/[\\&|]/\\&/g')
   script="s|~/.local/bin/st|$st_word|g"
   for pair in $keys; do
@@ -514,6 +528,11 @@ sed "s|^ST_VERSION='dev'$|ST_VERSION='$VERSION'|" "$tmpdir/package/st" > "$tmpdi
 grep -qx "ST_VERSION='$VERSION'" "$tmpdir/stamped" || die "downloaded st has invalid version metadata"
 
 mkdir -p "$PREFIX" "$CONFDIR"
+if [ "$CONFIG_BROKEN" = 1 ]; then
+  broken_backup=$(mktemp "$CONFIG.broken.XXXXXX")
+  mv "$CONFIG" "$broken_backup"
+  printf 'st: saved damaged config to %s\n' "$broken_backup" >&2
+fi
 previous_version=''
 [ ! -f "$PREFIX/st" ] ||
   previous_version=$(sed -n "s/^ST_VERSION='\([A-Za-z0-9._-]*\)'$/\1/p" "$PREFIX/st" | head -1)
@@ -545,7 +564,19 @@ fi
 printf '%s\n%s\n' "$CONFDIR" "$TMUX_CONF" > "$PREFIX/st.install"
 row "command" "${GRN}✔${R}" "$PREFIX/st"
 
-render_bindings
+if [ "${ST_REPAIR:-0}" = 1 ] && [ "$CONFIG_BROKEN" = 0 ]; then
+  if ! render_bindings 2>"$tmpdir/render-error"; then
+    cat "$tmpdir/render-error" >&2
+    grep -q 'invalid key binding in' "$tmpdir/render-error" ||
+      die "could not render tmux bindings"
+    broken_backup=$(mktemp "$CONFIG.broken.XXXXXX")
+    mv "$CONFIG" "$broken_backup"
+    printf 'st: saved invalid key config to %s\n' "$broken_backup" >&2
+    render_bindings
+  fi
+else
+  render_bindings
+fi
 row "bindings" "${GRN}✔${R}" "$CONFDIR/supertree.conf"
 
 write_config
@@ -553,7 +584,7 @@ row "harness" "${GRN}✔${R}" "$(harness_label "$HARNESS") · $CONFIG"
 row "windows" "${GRN}✔${R}" "${WINDOWS// / · }"
 
 if [ "${ST_NO_TMUX_CONF:-0}" != 1 ]; then
-  if [ -f "$TMUX_CONF" ] && grep -q 'supertree.conf' "$TMUX_CONF"; then
+  if [ -f "$TMUX_CONF" ] && grep -qxF "source-file $CONFDIR/supertree.conf" "$TMUX_CONF"; then
     ok "tmux config  already wired up"
   else
     [ -f "$TMUX_CONF" ] && cp "$TMUX_CONF" "$TMUX_CONF.pre-supertree"
@@ -561,7 +592,18 @@ if [ "${ST_NO_TMUX_CONF:-0}" != 1 ]; then
     ok "tmux config  $TMUX_CONF (backup: .pre-supertree)"
   fi
   if command -v tmux >/dev/null 2>&1 && tmux list-sessions >/dev/null 2>&1; then
-    tmux source-file "$TMUX_CONF" >/dev/null 2>&1 && ok "tmux         reloaded"
+    if tmux source-file "$TMUX_CONF" >/dev/null 2>&1; then
+      ok "tmux         reloaded"
+    else
+      warn "tmux could not reload $TMUX_CONF"
+    fi
+    if [ "${ST_REPAIR:-0}" = 1 ]; then
+      "$PREFIX/st" _binding-audit repair || true
+      tmux source-file "$CONFDIR/supertree.conf" >/dev/null 2>&1 ||
+        die "tmux could not load repaired bindings from $CONFDIR/supertree.conf"
+    fi
+  elif [ "${ST_REPAIR:-0}" = 1 ]; then
+    "$PREFIX/st" _binding-audit repair || true
   fi
 fi
 

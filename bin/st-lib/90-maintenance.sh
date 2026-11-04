@@ -8,8 +8,73 @@ installed_tmux_conf() {
   printf '%s' "${tmux_conf:-$HOME/.tmux.conf}"
 }
 
+installed_fragment() {
+  local confdir=${ST_CONFDIR:-} manifest
+  manifest="$(st_executable).install"
+  [ -n "$confdir" ] || [ ! -f "$manifest" ] || confdir=$(sed -n '1p' "$manifest")
+  printf '%s/supertree.conf' "${confdir:-$HOME/.config/supertree}"
+}
+
+# Compare the live root key table with tmux's own parsing of the generated
+# fragment on an isolated server. This catches later bindings, unbinds, and
+# sourced files that replace Supertree keys without guessing tmux syntax.
+audit_bindings() {
+  local fragment=$1 mode=${2:-doctor} socket key expected actual duplicates=0 mismatches=0
+  local keys
+  [ -f "$fragment" ] || { printf '  MISS  bindings file missing: %s\n' "$fragment"; return 1; }
+  keys=$(awk '$1 == "bind" && $2 == "-n" { print $3 }' "$fragment" | sort -u)
+  [ -n "$keys" ] || { printf '  MISS  no Supertree keys in %s\n' "$fragment"; return 1; }
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    if [ "$(awk -v key="$key" '$1 == "bind" && $2 == "-n" && $3 == key { n++ } END { print n+0 }' "$fragment")" -gt 1 ]; then
+      printf '  WARN  %s is assigned more than once in %s; the last binding wins\n' "$key" "$fragment"
+      duplicates=1
+    fi
+  done <<EOF
+$keys
+EOF
+  [ "$duplicates" = 0 ] ||
+    printf '  --    assign unique ST_KEY_* values in %s, then run st repair\n' "$ST_CONFIG"
+  if ! tmux list-sessions >/dev/null 2>&1; then
+    printf '  --    no live tmux server; key overrides cannot be checked\n'
+    [ "$duplicates" = 0 ]; return $?
+  fi
+  socket="st-binding-audit-$$-$RANDOM"
+  if ! tmux -L "$socket" -f /dev/null new-session -d -s audit 'sleep 30' >/dev/null 2>&1 ||
+     ! tmux -L "$socket" source-file "$fragment" >/dev/null 2>&1; then
+    tmux -L "$socket" kill-server >/dev/null 2>&1 || true
+    printf '  MISS  tmux could not parse %s\n' "$fragment"
+    return 1
+  fi
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    expected=$(tmux -L "$socket" list-keys -T root "$key" 2>/dev/null || true)
+    actual=$(tmux list-keys -T root "$key" 2>/dev/null || true)
+    [ "$expected" != "$actual" ] || continue
+    mismatches=1
+    if [ -n "$actual" ]; then
+      printf '  WARN  %s is overridden by: %s\n' "$key" "$actual"
+    else
+      printf '  WARN  %s is unbound in the live tmux server\n' "$key"
+    fi
+    printf '        Supertree expects: %s\n' "$expected"
+  done <<EOF
+$keys
+EOF
+  tmux -L "$socket" kill-server >/dev/null 2>&1 || true
+  if [ "$mismatches" = 1 ]; then
+    if [ "$mode" = repair ]; then
+      printf '  --    reloading Supertree keys; move its source line after conflicting bindings in %s\n' "$(installed_tmux_conf)"
+    else
+      printf '  --    run st repair, then check bindings after the Supertree source line in %s\n' "$(installed_tmux_conf)"
+    fi
+  fi
+  [ "$duplicates" = 0 ] && [ "$mismatches" = 0 ]
+}
+
 cmd_doctor() {
   local ok=0 b deps='tmux git fzf' agent_bin windows type tab tmux_conf
+  local self fragment split_key
   windows=$(configured_windows)
   window_enabled vim && deps="$deps nvim"
   if window_enabled agent; then agent_bin=$(harness_bin); deps="$deps $agent_bin"; fi
@@ -23,12 +88,30 @@ cmd_doctor() {
     if command -v "$b" >/dev/null 2>&1; then printf '  ok    %s\n' "$b"
     else printf '  MISS  %s\n' "$b"; ok=1; fi
   done
-  local self; self=$(command -v st 2>/dev/null) || self=""
+  self=$(command -v st 2>/dev/null) || self=""
   if [ -n "$self" ]; then printf '  ok    st on PATH (%s)\n' "$self"
   else printf '  MISS  st not on PATH\n'; ok=1; fi
   tmux_conf=$(installed_tmux_conf)
-  if grep -q 'supertree.conf' "$tmux_conf" 2>/dev/null; then printf '  ok    %s sources supertree.conf\n' "$tmux_conf"
+  fragment=$(installed_fragment)
+  if [ -f "$ST_CONFIG" ] && ! bash -n "$ST_CONFIG" >/dev/null 2>&1; then
+    printf '  MISS  %s has invalid shell syntax\n' "$ST_CONFIG"; ok=1
+  fi
+  if { [ "$ST_VERSION" = dev ] && grep -qF 'supertree.conf' "$tmux_conf" 2>/dev/null; } ||
+     grep -qxF "source-file $fragment" "$tmux_conf" 2>/dev/null; then
+    printf '  ok    %s sources supertree.conf\n' "$tmux_conf"
   else printf '  MISS  %s does not source supertree.conf\n' "$tmux_conf"; ok=1; fi
+  if [ "$ST_VERSION" != dev ]; then
+    split_key=${ST_KEY_SPLIT:-M-v}
+    if [ -f "$fragment" ] && awk -v key="$split_key" '
+      index($0, "bind -n " key " ") == 1 && / split"$/ { found=1 }
+      END { exit !found }
+    ' "$fragment"; then
+      printf '  ok    %s binds %s to split\n' "$fragment" "$split_key"
+    else
+      printf '  MISS  %s does not bind %s to split\n' "$fragment" "$split_key"; ok=1
+    fi
+    audit_bindings "$fragment" doctor || ok=1
+  fi
   printf '  --    worktree root %s\n' "$ST_WORKTREE_ROOT"
   printf '  --    repos known   %s\n' "$( [ -f "$ST_REPOS" ] && wc -l < "$ST_REPOS" | tr -d ' ' || echo 0)"
   printf '  --    harness       %s (%s)\n' "$(harness_label)" "$ST_HARNESS"
@@ -192,4 +275,6 @@ EOF
 st_register_command 'update' cmd_update 'install the latest release'
 st_register_command 'uninstall' cmd_uninstall 'remove the command, config, bindings, and state'
 st_register_command 'doctor' cmd_doctor 'check the installation'
+cmd_binding_audit() { audit_bindings "$(installed_fragment)" "${1:-doctor}"; }
+st_register_command '_binding-audit' cmd_binding_audit
 st_register_command 'version' cmd_version 'show the installed version'

@@ -31,6 +31,64 @@ fi
 # tmux may launch this outside an interactive shell
 PATH="$HOME/.local/bin:$HOME/.opencode/bin:/opt/homebrew/bin:$PATH"
 
+# Repair must be available before config and modules are loaded: either may be
+# damaged on an installed machine. Reuse the verified release installer so the
+# command, modules, generated bindings, and tmux source line are restored as a set.
+if [ "${1:-}" = repair ]; then
+  [ "$#" -eq 1 ] || { printf 'st: usage: st repair\n' >&2; exit 1; }
+  [ "$ST_VERSION" != dev ] || {
+    printf 'st: source install detected; restore the checkout with git and reload its tmux config\n' >&2
+    exit 1
+  }
+  for st_tool in curl tar; do
+    command -v "$st_tool" >/dev/null 2>&1 || {
+      printf 'st: %s is required to repair st\n' "$st_tool" >&2; exit 1;
+    }
+  done
+  command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || {
+    printf 'st: sha256sum or shasum is required to repair st\n' >&2; exit 1
+  }
+  st_self=$0
+  case $st_self in */*) ;; *) st_self=$(command -v -- "$st_self");; esac
+  [ ! -L "$st_self" ] || {
+    printf 'st: source install detected; restore the checkout with git\n' >&2; exit 1
+  }
+  st_prefix=$(cd "$(dirname "$st_self")" && pwd)
+  [ -w "$st_prefix" ] || { printf 'st: cannot repair %s (directory is not writable)\n' "$st_self" >&2; exit 1; }
+  st_manifest="$st_self.install"
+  st_confdir=${ST_CONFDIR:-}
+  [ -n "$st_confdir" ] || [ ! -f "$st_manifest" ] || st_confdir=$(sed -n '1p' "$st_manifest")
+  st_confdir=${st_confdir:-$HOME/.config/supertree}
+  st_tmux_conf=${TMUX_CONF:-}
+  [ -n "$st_tmux_conf" ] || [ ! -f "$st_manifest" ] || st_tmux_conf=$(sed -n '2p' "$st_manifest")
+  st_tmux_conf=${st_tmux_conf:-$HOME/.tmux.conf}
+  st_release_root=${ST_RELEASE_ROOT:-https://github.com/dawksh/supertree}
+  st_tmp=$(mktemp -d)
+  trap 'rm -rf "$st_tmp"' EXIT
+  printf 'st: downloading and verifying %s for repair...\n' "$ST_VERSION"
+  curl -fsSL --connect-timeout 10 --max-time 60 \
+    "$st_release_root/releases/download/$ST_VERSION/install.sh" -o "$st_tmp/install.sh" ||
+    { printf 'st: could not download installer for %s\n' "$ST_VERSION" >&2; exit 1; }
+  curl -fsSL --connect-timeout 10 --max-time 60 \
+    "$st_release_root/releases/download/$ST_VERSION/SHA256SUMS" -o "$st_tmp/SHA256SUMS" ||
+    { printf 'st: could not download checksums for %s\n' "$ST_VERSION" >&2; exit 1; }
+  st_expected=$(awk '$2 == "install.sh" { print $1 }' "$st_tmp/SHA256SUMS")
+  if command -v sha256sum >/dev/null 2>&1; then st_actual=$(sha256sum "$st_tmp/install.sh")
+  else st_actual=$(shasum -a 256 "$st_tmp/install.sh"); fi
+  [ -n "$st_expected" ] && [ "$st_expected" = "${st_actual%% *}" ] || {
+    printf 'st: installer checksum mismatch; nothing was changed\n' >&2; exit 1
+  }
+  bash -n "$st_tmp/install.sh" || { printf 'st: downloaded installer has invalid syntax\n' >&2; exit 1; }
+  (
+    unset ST_HARNESS ST_WINDOWS ST_CONFIG
+    ST_VERSION=$ST_VERSION ST_PREFIX=$st_prefix ST_CONFDIR=$st_confdir \
+      TMUX_CONF=$st_tmux_conf ST_YES=1 ST_UPDATE=1 ST_REPAIR=1 \
+      bash "$st_tmp/install.sh"
+  ) || { printf 'st: repair failed\n' >&2; exit 1; }
+  printf 'st: repaired %s; run st doctor to check dependencies\n' "$ST_VERSION"
+  exit 0
+fi
+
 ST_WORKTREE_ROOT="${ST_WORKTREE_ROOT:-$HOME/projects/.worktrees}"
 ST_STATE="${ST_STATE:-$HOME/.local/state/supertree}"
 ST_REPOS="$ST_STATE/repos"
@@ -113,6 +171,7 @@ done
 usage() {
   local i
   printf 'st — supertree: worktree + tmux + coding-agent harness\n\n'
+  printf '  %-43s %s\n' 'repair' 'restore this release and reload tmux bindings'
   for ((i=0; i<${#ST_COMMAND_NAMES[@]}; i++)); do
     [ -n "${ST_COMMAND_HELP[i]}" ] || continue
     printf '  %-43s %s\n' "${ST_COMMAND_USAGE[i]}" "${ST_COMMAND_HELP[i]}"
