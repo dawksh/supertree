@@ -54,15 +54,25 @@ else
 fi
 
 WIDTH=56
-# progress lines overwrite themselves on a terminal, stack up in a pipe or log
-if [ -t 1 ]; then CLEAR='\033[2K\r'; else CLEAR='\n'; fi
+UI_TTY=0
+if [ -t 1 ] && [ "${TERM:-dumb}" != dumb ]; then UI_TTY=1; fi
+if [ "$UI_TTY" = 1 ]; then
+  WIDTH=$(tput cols 2>/dev/null || echo 80)
+  [ "$WIDTH" -gt 100 ] && WIDTH=100
+  [ "$WIDTH" -lt 40 ] && WIDTH=40
+  WIDTH=$((WIDTH - 8))
+  CLEAR='\033[2K\r'
+else CLEAR='\n'; fi
 rule() {
   local i=0
   printf '  %s' "$D"
-  while [ "$i" -lt "$WIDTH" ]; do printf '─'; i=$((i + 1)); done
+  while [ "$i" -lt "$WIDTH" ]; do printf '-'; i=$((i + 1)); done
   printf '%s\n' "$R"
 }
 title() {
+  local role=installer
+  [ "$UI_TTY" = 1 ] && return
+  [ "${ST_UPDATE:-0}" != 1 ] || role=updater
   printf '\n%s%s' "$CYN" "$B"
   printf '%s\n' \
     '   ___  _   _  ___  ___  ___  _____  ___  ___  ___' \
@@ -70,10 +80,45 @@ title() {
     '  \__ \| |_| ||  _/| _| |   /  | |  |   /| _| | _|' \
     '  |___/ \___/ |_|  |___||_|_\  |_|  |_|_\|___||___|'
   printf '%s\n' "$R"
-  printf '  %sworktrees × tmux × coding agents%s   %sinstaller %s%s\n' "$D" "$R" "$D" "$VERSION" "$R"
+  printf '  %sworktrees × tmux × coding agents%s   %s%s %s%s\n' "$D" "$R" "$D" "$role" "$VERSION" "$R"
   rule
 }
+screen() { # phase, heading, description
+  local phase=$1 heading=$2 description=$3 lines cols total=4 progress='' i=1
+  [ "$UI_TTY" = 1 ] || return 0
+  [ "${ST_UPDATE:-0}" != 1 ] || total=3
+  cols=$(tput cols 2>/dev/null || echo 80)
+  lines=$(tput lines 2>/dev/null || echo 24)
+  printf '\033[H\033[2J'
+  printf '\n  %s+%s+%s\n' "$D" "$(printf '%*s' "$WIDTH" '' | tr ' ' '-')" "$R"
+  if [ "$cols" -ge 68 ]; then
+    printf '  %s|%s  %s%s  ___ _   _ ___ ___ ___ _____ ___ ___ ___%s\n' "$D" "$R" "$CYN" "$B" "$R"
+    printf '  %s|%s      / __| | | | _ \ __| _ \_   _| _ \ __| __|\n' "$D" "$R"
+    printf '  %s|%s      \__ \ |_| |  _/ _||   / | | |   / _|| _|\n' "$D" "$R"
+    printf '  %s|%s      |___/\___/|_| |___|_|_\ |_| |_|_\___|___|\n' "$D" "$R"
+  else
+    printf '  %s|%s  %s%sSUPERTREE%s\n' "$D" "$R" "$CYN" "$B" "$R"
+  fi
+  printf '  %s|%s  %sWORKTREES / TMUX / AGENTS%s\n' "$D" "$R" "$D" "$R"
+  rule
+  while [ "$i" -le "$total" ]; do
+    if [ "$i" -le "$phase" ]; then progress="${progress}==="
+    else progress="${progress}---"; fi
+    i=$((i + 1))
+  done
+  printf '  %s%s%s\n' "$CYN" "$progress" "$R"
+  printf '  %s%02d / %02d%s   %s%s%s\n' "$CYN" "$phase" "$total" "$R" "$B" "$heading" "$R"
+  printf '  %s%s%s\n' "$D" "$description" "$R"
+  rule
+  if [ "$lines" -ge 30 ]; then
+    printf '\033[s\033[%d;1H  %ssupertree %s  /  %s  /  %s%s\033[u' \
+      "$((lines - 1))" "$D" "$VERSION" "${ST_UPDATE:+UPDATE}${ST_UPDATE:-INSTALL}" \
+      "github.com/dawksh/supertree" "$R"
+  fi
+  printf '\n'
+}
 step() { # number, title, description
+  if [ "$UI_TTY" = 1 ]; then screen "$((10#$1))" "$2" "$3"; return; fi
   printf '\n  %s%s%s  %s%s%s\n' "$CYN" "$1" "$R" "$B" "$2" "$R"
   [ -z "${3:-}" ] || printf '      %s%s%s\n' "$D" "$3" "$R"
   printf '\n'
@@ -85,6 +130,28 @@ die()  { printf '\n      %s✘ %s%s\n\n' "$RED" "$1" "$R" >&2; exit 1; }
 
 row() { # name, status glyph+color, detail
   printf '      %s  %-10s %s%s%s\n' "$2" "$1" "$D" "$3" "$R"
+}
+
+# A small branching tree grows while a command runs. Only animate on a terminal;
+# redirected installs remain a readable, stable log.
+activity() { # label, command...
+  local label=$1 pid frame=0 status
+  shift
+  if [ "$UI_TTY" != 1 ]; then "$@"; return; fi
+  "$@" & pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    case $frame in
+      0) printf '\r\033[2K      %s[o]       %s%s' "$CYN" "$label" "$R";;
+      1) printf '\r\033[2K      %s[o--+]    %s%s' "$CYN" "$label" "$R";;
+      2) printf '\r\033[2K      %s[o--+--o] %s%s' "$CYN" "$label" "$R";;
+      3) printf '\r\033[2K      %s[o--+--o--+] %s%s' "$CYN" "$label" "$R";;
+    esac
+    frame=$(((frame + 1) % 4))
+    sleep 0.14
+  done
+  status=0; wait "$pid" || status=$?
+  printf '\r\033[2K'
+  return "$status"
 }
 
 ask() { # question -> 0 yes, 1 no
@@ -370,6 +437,7 @@ harness_cmd=$(harness_bin "$HARNESS")
 windows_include vim && DEPS="$DEPS nvim"
 windows_include agent && [ -n "$harness_cmd" ] && DEPS="$DEPS $harness_cmd"
 
+if [ "${ST_UPDATE:-0}" != 1 ]; then
 step "02" "Dependencies" "Checking the tools this workspace needs."
 
 missing=""
@@ -394,7 +462,7 @@ if [ -n "$missing" ]; then
     printf '\n'
     for d in $missing; do
       printf '      %s…%s installing %-8s' "$D" "$R" "$d"
-      if install_one "$d" "$pm" "$LOG"; then printf "$CLEAR"; ok "installed $d"
+      if activity "installing $d" install_one "$d" "$pm" "$LOG"; then printf "$CLEAR"; ok "installed $d"
       else printf "$CLEAR"; bad "failed $d — see log below"; fi
     done
     hash -r 2>/dev/null || true
@@ -410,14 +478,19 @@ if [ -n "$missing" ]; then
     printf '\n'; warn "skipped — supertree installs anyway, some features stay dark"
   fi
 fi
+fi
 
 # ------------------------------------------------------------- supertree
 
-step "03" "Install" "Putting supertree in the right places."
+if [ "${ST_UPDATE:-0}" = 1 ]; then
+  step "02" "Update" "Downloading and verifying the latest release."
+else
+  step "03" "Install" "Putting supertree in the right places."
+fi
 
-curl -fsSL "$BASE/st.tar.gz"     -o "$tmpdir/st.tar.gz"     || die "could not download st from $BASE"
-curl -fsSL "$BASE/supertree.conf" -o "$tmpdir/supertree.conf" || die "could not download supertree.conf from $BASE"
-curl -fsSL "$BASE/SHA256SUMS"     -o "$tmpdir/SHA256SUMS"     || die "could not download checksums from $BASE"
+activity "fetching command + modules" curl -fsSL "$BASE/st.tar.gz" -o "$tmpdir/st.tar.gz" || die "could not download st from $BASE"
+activity "fetching tmux bindings" curl -fsSL "$BASE/supertree.conf" -o "$tmpdir/supertree.conf" || die "could not download supertree.conf from $BASE"
+activity "fetching checksums" curl -fsSL "$BASE/SHA256SUMS" -o "$tmpdir/SHA256SUMS" || die "could not download checksums from $BASE"
 verify_asset st.tar.gz
 verify_asset supertree.conf
 tar -tzf "$tmpdir/st.tar.gz" | awk '
@@ -498,7 +571,11 @@ case ":$PATH:" in
 esac
 
 rule
-step "04" "Ready" "supertree $VERSION is installed."
+if [ "${ST_UPDATE:-0}" = 1 ]; then
+  step "03" "Updated" "supertree $VERSION is ready."
+else
+  step "04" "Ready" "supertree $VERSION is installed."
+fi
 printf '      %sst doctor%s          verify the install\n' "$B" "$R"
 printf '      %sst new <branch>%s    start from any git repo\n' "$B" "$R"
 if [ "$HARNESS" = openrouter ]; then
