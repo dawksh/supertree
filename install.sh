@@ -32,7 +32,8 @@ command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 ||
   { printf 'st: sha256sum or shasum is required\n' >&2; exit 1; }
 
 if [ "$VERSION" = latest ]; then
-  latest_url=$(curl -fsS -o /dev/null -w '%{redirect_url}' "$RELEASE_ROOT/releases/latest") || {
+  printf 'st: checking for the latest release...\n'
+  latest_url=$(curl -fsS --connect-timeout 10 --max-time 30 -o /dev/null -w '%{redirect_url}' "$RELEASE_ROOT/releases/latest") || {
     printf 'st: could not determine the latest release\n' >&2
     exit 1
   }
@@ -488,9 +489,9 @@ else
   step "03" "Install" "Putting supertree in the right places."
 fi
 
-activity "fetching command + modules" curl -fsSL "$BASE/st.tar.gz" -o "$tmpdir/st.tar.gz" || die "could not download st from $BASE"
-activity "fetching tmux bindings" curl -fsSL "$BASE/supertree.conf" -o "$tmpdir/supertree.conf" || die "could not download supertree.conf from $BASE"
-activity "fetching checksums" curl -fsSL "$BASE/SHA256SUMS" -o "$tmpdir/SHA256SUMS" || die "could not download checksums from $BASE"
+activity "fetching command + modules" curl -fsSL --connect-timeout 10 --max-time 60 "$BASE/st.tar.gz" -o "$tmpdir/st.tar.gz" || die "could not download st from $BASE"
+activity "fetching tmux bindings" curl -fsSL --connect-timeout 10 --max-time 60 "$BASE/supertree.conf" -o "$tmpdir/supertree.conf" || die "could not download supertree.conf from $BASE"
+activity "fetching checksums" curl -fsSL --connect-timeout 10 --max-time 60 "$BASE/SHA256SUMS" -o "$tmpdir/SHA256SUMS" || die "could not download checksums from $BASE"
 verify_asset st.tar.gz
 verify_asset supertree.conf
 tar -tzf "$tmpdir/st.tar.gz" | awk '

@@ -26,6 +26,7 @@ done
 
 case $url in
   */releases/latest)
+    [ "${ST_TEST_CURL_TIMEOUT:-0}" != 1 ] || exit 28
     printf '%s/releases/tag/%s' "${ST_RELEASE_ROOT:?}" "${ST_TEST_LATEST:?}"
     ;;
   */releases/download/*/st.tar.gz)
@@ -73,6 +74,8 @@ export ST_TEST_LATEST=v1.1.0
 
 output=$(HOME="$TMP/home" PATH="$TMP/fakebin:$PATH" \
   "$installed" update 2>"$TMP/update-stderr")
+grep -q '^st: checking for updates\.\.\.$' <<<"$output" || fail 'update did not report its release check'
+grep -q '^st: downloading v1\.1\.0\.\.\.$' <<<"$output" || fail 'update did not report its download'
 grep -q 'st: updated v1.0.0 -> v1.1.0' <<<"$output" || fail 'update did not report success on stdout'
 [ ! -s "$TMP/update-stderr" ] || fail 'successful update wrote to stderr'
 [ "$("$installed" --version)" = 'st v1.1.0' ]
@@ -84,8 +87,16 @@ grep -qx "ST_WINDOWS='agent shell'" "$TMP/config/config" || fail 'update changed
 
 output=$(HOME="$TMP/home" PATH="$TMP/fakebin:$PATH" \
   "$installed" update 2>"$TMP/update-stderr")
-[ "$output" = 'st: v1.1.0 is already the latest version' ] || fail 'current release did not report status on stdout'
+grep -q '^st: checking for updates\.\.\.$' <<<"$output" || fail 'current release did not report its release check'
+grep -q '^st: v1.1.0 is already the latest version$' <<<"$output" || fail 'current release did not report status on stdout'
 [ ! -s "$TMP/update-stderr" ] || fail 'current release wrote to stderr'
+
+if output=$(HOME="$TMP/home" PATH="$TMP/fakebin:$PATH" \
+  ST_TEST_CURL_TIMEOUT=1 "$installed" update 2>&1); then
+  fail 'update unexpectedly succeeded after a release lookup timeout'
+fi
+grep -q 'st: checking for updates' <<<"$output" || fail 'timed out update gave no initial feedback'
+grep -q 'could not check for updates' <<<"$output" || fail 'timed out update gave no clear error'
 
 stamp "$ROOT/bin/st" v1.0.0 "$installed"
 cp -R "$ROOT/bin/st-lib" "$TMP/install/st-lib-v1.0.0"
