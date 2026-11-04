@@ -55,8 +55,9 @@ tar -czf "$TMP/release.tar.gz" -C "$ROOT/bin" st st-lib
 output=$(HOME="$TMP/home" PATH="$TMP/fakebin:$PATH" \
   ST_RELEASE_ROOT=https://example.invalid/supertree \
   ST_TEST_LATEST=v1.1.0 ST_TEST_ASSET="$TMP/release.tar.gz" \
-  "$installed" update 2>&1)
-grep -q 'updated st v1.0.0 -> v1.1.0' <<<"$output"
+  "$installed" update 2>"$TMP/update-stderr")
+[ "$output" = 'st: updated v1.0.0 -> v1.1.0' ] || fail "update did not report success on stdout: $output"
+[ ! -s "$TMP/update-stderr" ] || fail 'successful update wrote to stderr'
 [ "$("$installed" --version)" = 'st v1.1.0' ]
 [ -f "$TMP/install/st-lib-v1.1.0/00-core.sh" ]
 [ ! -e "$TMP/install/st-lib-v1.0.0" ] || fail 'successful update left the old st-lib-v1.0.0'
@@ -64,8 +65,9 @@ grep -q 'updated st v1.0.0 -> v1.1.0' <<<"$output"
 output=$(HOME="$TMP/home" PATH="$TMP/fakebin:$PATH" \
   ST_RELEASE_ROOT=https://example.invalid/supertree \
   ST_TEST_LATEST=v1.1.0 ST_TEST_ASSET="$TMP/release.tar.gz" \
-  "$installed" update 2>&1)
-grep -q 'already the latest version' <<<"$output"
+  "$installed" update 2>"$TMP/update-stderr")
+[ "$output" = 'st: v1.1.0 is already the latest version' ] || fail "current release did not report status on stdout: $output"
+[ ! -s "$TMP/update-stderr" ] || fail 'current release wrote to stderr'
 
 stamp "$ROOT/bin/st" v1.0.0 "$installed"
 cp -R "$ROOT/bin/st-lib" "$TMP/install/st-lib-v1.0.0"

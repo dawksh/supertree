@@ -55,7 +55,7 @@ cmd_update() {
   esac
 
   if [ "$ST_VERSION" = "$latest" ]; then
-    info "st $ST_VERSION is already the latest version"
+    printf 'st: %s is already the latest version\n' "$ST_VERSION"
     return 0
   fi
   [ "$ST_VERSION" != dev ] || die "development install detected — update it with git"
@@ -120,11 +120,15 @@ cmd_update() {
     [ -z "$previous_lib" ] || mv "$previous_lib" "$prefix/st-lib-$latest"
     die "could not replace $self"
   fi
-  [ -z "$previous_lib" ] || rm -rf "$previous_lib"
-  if [ -d "$prefix/st-lib-$ST_VERSION" ] && [ ! -L "$prefix/st-lib-$ST_VERSION" ]; then
-    rm -rf -- "$prefix/st-lib-$ST_VERSION"
+  printf 'st: updated %s -> %s\n' "$ST_VERSION" "$latest"
+  if [ -n "$previous_lib" ]; then
+    rm -rf -- "$previous_lib" ||
+      printf 'st: warning: could not remove staged old modules: %s\n' "$previous_lib" >&2
   fi
-  info "updated st $ST_VERSION -> $latest"
+  if [ -d "$prefix/st-lib-$ST_VERSION" ] && [ ! -L "$prefix/st-lib-$ST_VERSION" ]; then
+    rm -rf -- "$prefix/st-lib-$ST_VERSION" ||
+      printf 'st: warning: could not remove old modules: %s\n' "$prefix/st-lib-$ST_VERSION" >&2
+  fi
 }
 
 cmd_version() { printf "st %s\n" "$ST_VERSION"; }
