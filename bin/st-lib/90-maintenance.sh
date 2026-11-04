@@ -46,7 +46,8 @@ cmd_update() {
 
   local release_root latest_url latest self prefix confdir manifest tmp cleanup expected_sum actual_sum
   release_root=${ST_RELEASE_ROOT:-https://github.com/dawksh/supertree}
-  latest_url=$(curl -fsS -o /dev/null -w '%{redirect_url}' "$release_root/releases/latest") ||
+  printf 'st: checking for updates...\n'
+  latest_url=$(curl -fsS --connect-timeout 10 --max-time 30 -o /dev/null -w '%{redirect_url}' "$release_root/releases/latest") ||
     die "could not check for updates"
   latest=${latest_url##*/}
   case $latest in
@@ -70,9 +71,10 @@ cmd_update() {
   tmp=$(mktemp -d)
   printf -v cleanup 'rm -rf %q' "$tmp"
   trap "$cleanup" EXIT
-  curl -fsSL "$release_root/releases/download/$latest/install.sh" -o "$tmp/install.sh" ||
+  printf 'st: downloading %s...\n' "$latest"
+  curl -fsSL --connect-timeout 10 --max-time 60 "$release_root/releases/download/$latest/install.sh" -o "$tmp/install.sh" ||
     die "could not download installer for st $latest"
-  curl -fsSL "$release_root/releases/download/$latest/SHA256SUMS" -o "$tmp/SHA256SUMS" ||
+  curl -fsSL --connect-timeout 10 --max-time 60 "$release_root/releases/download/$latest/SHA256SUMS" -o "$tmp/SHA256SUMS" ||
     die "could not download checksums for st $latest"
   expected_sum=$(awk '$2 == "install.sh" { print $1 }' "$tmp/SHA256SUMS")
   if command -v sha256sum >/dev/null 2>&1; then actual_sum=$(sha256sum "$tmp/install.sh")

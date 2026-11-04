@@ -132,7 +132,8 @@ st update
 a newer version is available. It verifies the release installer, then uses it to
 refresh the command, modules, and tmux bindings together while keeping your
 chosen harness and window layout. Release assets are checked before the current
-executable is replaced. Run `st --version` to see the installed version.
+executable is replaced. The update reports its network steps immediately and
+times out if a release request stalls. Run `st --version` to see the installed version.
 
 Older single-file installations migrate on the first command after `st update`.
 The compatibility entrypoint installs the module bundle and then runs that command.
