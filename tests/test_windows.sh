@@ -106,9 +106,6 @@ assert_log_contains '-n codex'
 assert_log_contains '-n nvim'
 assert_log_contains '-n shell'
 assert_log_contains "select-window -t =$main_session:codex"
-assert_log_contains 'status-style fg=#e2e8f0,bg=#111827'
-assert_log_contains 'window-status-current-format #[fg=#e2e8f0,bg=#1e293b,bold,underscore]'
-assert_log_contains 'window-style fg=#e2e8f0,bg=#0b1220'
 
 # External-editor users can omit vim entirely.
 run_layout 'agent shell'

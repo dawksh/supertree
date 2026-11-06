@@ -13,7 +13,7 @@ the tree running. Closing a tree with `st down` lets you reopen the agent in the
 same conversation.
 
 ```
- Trees                     1. codex ●   2. nvim   3. shell      webauth/feat-otp
+ Supertree                 1. codex ●   2. nvim   3. shell      webauth/feat-otp
  n new · d remove
  webauth                │
    · main               │  claude
@@ -89,7 +89,7 @@ The numbered modules make the boundaries explicit:
 
 | Module | Responsibility |
 | --- | --- |
-| `00-core` through `50-tmux` | Shared helpers for identity, repository state, bootstrap, agent, and the Supertree UI |
+| `00-core` through `50-tmux` | Shared helpers for identity, repository state, bootstrap, agent, and tmux |
 | `55-sidebar` | Tree sidebar panes and their refresher |
 | `60-picker` | Tree picker and `go`/`resume` |
 | `70-worktrees` | Worktree creation, trust, listing, status, and removal |
@@ -262,8 +262,8 @@ In the tree picker, press Enter to open a tree, Ctrl-D to delete the selected
 worktree, or Escape to close the picker.
 
 Prefix stays `C-a`. `M-arrow` pane movement and `S-Enter` are untouched.
-The top bar shows the current repository and branch on the right, so the tree
-you are typing into is always on screen.
+`status-left` shows the current repository and branch, so the tree you are typing into is
+always on screen.
 
 Agent state appears in `st ls` and the `M-w` picker. `running` means the agent
 process is active, `input` means its pane shows a prompt, `done` means the agent
@@ -328,12 +328,8 @@ ST_TAB_dev='npm run dev'
 ST_TAB_git='lazygit'
 ```
 
-Supertree uses the same dark slate palette for its top bar, tree sidebar,
-program canvas, pickers, and popups in Ghostty, cmux, and other terminals with
-256-color support. It does not rely on the terminal's default foreground and
-background colors or your `FZF_DEFAULT_OPTS` theme. Programs can still draw
-their own colors. Program panes have no card padding or title rows; split panes
-get a quiet divider, and a single program uses the full area.
+Program panes use your terminal's background, without card padding or title
+rows. Split panes get a quiet divider; a single program uses the full area.
 
 Tree sessions show their windows as tabs at the top (`1. codex ●`, `2. nvim`,
 `3. shell`). The active tab is underlined, and the current repository and branch

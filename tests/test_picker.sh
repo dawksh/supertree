@@ -136,8 +136,6 @@ panes=$(printf '%s\n' \
 : > "$ST_FZF_LOG"
 ST_TEST_PANES=$panes ST_TEST_INPUT_PANES=%3 ST_FZF_PICK=no-such-row with_fzf go >/dev/null 2>&1 ||
   fail 'picker failed while reading agent statuses'
-grep -F -- '--color=bg:#111827,bg+:#1e293b' "$ST_FZF_LOG" >/dev/null ||
-  fail 'picker did not apply the Supertree palette'
 for want in 'plain +○ Finished' 'harness +● Running' 'prompt +◐ Needs input' 'custom +● Running' 'picked +· Closed'; do
   grep -Eq "^demo/$want"$'\t' "$ST_FZF_LOG" || fail "picker row missing: demo/$want"
 done
