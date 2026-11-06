@@ -103,11 +103,9 @@ sidebar_session() {
     add_sidebar "$win" "$dir"
   done
   # Align the tabs with the program pane while the sidebar is visible.
-  if [ "$ST_SIDEBAR" != 0 ]; then
-    tmux set-option -t "=$sess:" status-left-length $((ST_SIDEBAR_WIDTH + 1))
-    tmux set-option -t "=$sess:" status-left \
-      "#{?@st_sidebar_off,#[fg=$ST_UI_ACCENT,bold] Supertree #[default],#[fg=$ST_UI_MUTED]#{p$((ST_SIDEBAR_WIDTH + 1)): Trees}#[default]}"
-  fi
+  tmux set-option -t "=$sess:" status-left-length $((ST_SIDEBAR_WIDTH + 1))
+  tmux set-option -t "=$sess:" status-left \
+    "#{?@st_sidebar_off, Supertree ,#[dim]#{p$((ST_SIDEBAR_WIDTH + 1)): Supertree}#[default]}"
   tmux set-hook -t "$sess" after-new-window "run-shell \"$(tmux_cmd_word "$self" dq) _sidebar-attach '#{window_id}'\""
 }
 
@@ -134,8 +132,8 @@ sidebar_rows() {
   awk -F '\t' -v cur="$sess" '
     !($1 in seen) { seen[$1] = 1; order[++n] = $1 }
     {
-      if ($3 == "running") glyph = "\033[38;5;78m●\033[0m"
-      else if ($3 == "input") glyph = "\033[38;5;214m◐\033[0m"
+      if ($3 == "running") glyph = "\033[32m●\033[0m"
+      else if ($3 == "input") glyph = "\033[33m◐\033[0m"
       else if ($3 == "done") glyph = "○"
       else glyph = "\033[2m·\033[0m"
       name = $2
@@ -282,7 +280,6 @@ cmd_sidebar() {
     start=$(printf '%s\n' "$rows" | awk -F '\t' '$4 == 1 { print NR; exit }')
     printf '%s\n' "$rows" |
       fzf --ansi --no-input --no-sort --reverse --info=hidden --no-scrollbar \
-          --color="$ST_FZF_COLORS" \
           --delimiter=$'\t' --with-nth=1 --track --id-nth=2 \
           ${listen[@]+"${listen[@]}"} --pointer='›' --gutter=' ' --ellipsis='…' \
           --header='n new · d remove' \
@@ -320,9 +317,7 @@ cmd_sidebar_rm() {
   local sess=${1:-} dir=${2:-} tty
   case $sess in ''|'#'*|+new) return 0;; esac
   tty=$(tmux display-message -p -t "$TMUX_PANE" '#{client_tty}')
-  tmux display-popup -c "$tty" -E -w 64 -h 14 \
-    -s "fg=$ST_UI_FG,bg=$ST_UI_BG" -S "fg=$ST_UI_BORDER,bg=$ST_UI_BG" \
-    -T ' Remove tree ' "$(st_self)" _sidebar-rm-run "$dir"
+  tmux display-popup -c "$tty" -E -w 64 -h 14 -T ' Remove tree ' "$(st_self)" _sidebar-rm-run "$dir"
 }
 
 cmd_sidebar_rm_run() {
