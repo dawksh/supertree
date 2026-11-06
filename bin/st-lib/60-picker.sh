@@ -88,6 +88,7 @@ cmd_go() {
     local self
     self=$(st_executable)
     tmux display-popup -c "$popup_client" -d "$PWD" -EE -w 72% -h 60% \
+      -s "fg=$ST_UI_FG,bg=$ST_UI_BG" -S "fg=$ST_UI_BORDER,bg=$ST_UI_BG" \
       "$(printf '%q go --picker' "$self")"
     return
   fi
@@ -124,6 +125,7 @@ cmd_go() {
     fi
     # Cursor starts on the most recent tree so Enter still reopens it.
     sel=$(fzf --delimiter=$'\t' --with-nth=1 --height=100% --reverse \
+          --color="$ST_FZF_COLORS" \
           --no-sort --bind="load:pos($start)" \
           --border=rounded --border-label=' Trees ' \
           --prompt='Search › ' --header='Enter open · Ctrl-D remove · Esc close' \
@@ -149,7 +151,9 @@ cmd_go() {
       done)
       [ -n "$r" ] || die "no roots known yet — run 'st new <branch>' inside a repo"
       if [ "$(printf '%s\n' "$r" | wc -l)" -gt 1 ]; then
-        r=$(printf '%s\n' "$r" | fzf --prompt='repo> ' --height=100% --reverse) || return 0
+        r=$(printf '%s\n' "$r" | fzf --prompt='repo> ' --color="$ST_FZF_COLORS" \
+          --border=rounded --border-label=' Repositories ' \
+          --height=100% --reverse) || return 0
       fi
       cmd_new "$b" --repo "$r"
       return;;
@@ -199,13 +203,16 @@ cmd_roots() {
 
   if [ -n "$popup_client" ]; then
     self=$(st_executable)
-    tmux display-popup -c "$popup_client" -EE -w 72% -h 60% "$(printf '%q roots' "$self")"
+    tmux display-popup -c "$popup_client" -EE -w 72% -h 60% \
+      -s "fg=$ST_UI_FG,bg=$ST_UI_BG" -S "fg=$ST_UI_BORDER,bg=$ST_UI_BG" \
+      "$(printf '%q roots' "$self")"
     return
   fi
 
   command -v fzf >/dev/null || die "fzf is required for the root picker"
   root=$(printf '%s\n' "$rows" |
     fzf --delimiter=$'\t' --with-nth=1 --height=100% --reverse \
+        --color="$ST_FZF_COLORS" \
         --border=rounded --border-label=' Repositories ' --prompt='Search › ' \
         --header='Enter select · Esc close' \
         --bind='esc:abort') || return 0

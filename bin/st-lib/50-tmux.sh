@@ -1,7 +1,18 @@
 # shellcheck shell=bash
 # supertree tmux module
 
-ST_LAYOUT_VERSION=7
+ST_LAYOUT_VERSION=8
+
+# Supertree chrome has its own palette so terminal defaults and FZF_DEFAULT_OPTS
+# do not change the navigation UI between terminal emulators.
+ST_UI_BG='#111827'
+ST_UI_CANVAS='#0b1220'
+ST_UI_SELECTED='#1e293b'
+ST_UI_FG='#e2e8f0'
+ST_UI_MUTED='#94a3b8'
+ST_UI_ACCENT='#7dd3fc'
+ST_UI_BORDER='#334155'
+ST_FZF_COLORS='bg:#111827,bg+:#1e293b,fg:#e2e8f0,fg+:#f8fafc,hl:#7dd3fc,hl+:#7dd3fc,info:#94a3b8,marker:#6ee7b7,prompt:#7dd3fc,pointer:#7dd3fc,header:#94a3b8,border:#334155,label:#e2e8f0,query:#f8fafc,gutter:#111827'
 
 layout_signature() {
   printf '%s|%s|%s' "$ST_HARNESS" "$ST_WINDOWS" "${ST_SHELL:-${SHELL:-/bin/zsh}}"
@@ -184,9 +195,11 @@ style_session() {
   tmux set-option -t "=$1:" default-shell "$(tree_shell)" &&
   tmux set-option -t "=$1:" status-position top &&
   tmux set-option -t "=$1:" status-justify left &&
-  tmux set-option -t "=$1:" status-style 'fg=default,bg=default' &&
+  tmux set-option -t "=$1:" status-style "fg=$ST_UI_FG,bg=$ST_UI_BG" &&
+  tmux set-option -t "=$1:" status-left-length 32 &&
+  tmux set-option -t "=$1:" status-left "#[fg=$ST_UI_ACCENT,bold] Supertree #[default]" &&
   tmux set-option -t "=$1:" status-right-length 40 &&
-  tmux set-option -t "=$1:" status-right '#{?@supertree_home,,#[dim]#{@supertree_label}#[default] }' &&
+  tmux set-option -t "=$1:" status-right "#{?@supertree_home,,#[fg=$ST_UI_MUTED]#{@supertree_label}#[default] }" &&
   tmux set-option -t "=$1:" status on &&
   # When a tree's last program exits, switch to the most recent session instead of
   # leaving tmux. Session-scoped, so the global setting is untouched.
@@ -199,22 +212,23 @@ style_tab() {
   label='#{?@st_slot,#{@st_slot}. ,}#W'
   label="$label"'#{?@st_tab_state,#{?#{==:#{@st_tab_state},input}, ◐,#{?#{==:#{@st_tab_state},running}, ●,}},#{?#{==:#{@st_agent_state},running}, ●,}}'
   tmux set-option -w -t "$target" @st_slot "$slot" &&
-  tmux set-option -w -t "$target" window-status-separator '  ' &&
-  tmux set-option -w -t "$target" window-status-format "#[dim] $label #[default]" &&
-  tmux set-option -w -t "$target" window-status-current-format "#[bold,underscore] $label #[default]" &&
+  tmux set-option -w -t "$target" window-status-separator ' ' &&
+  tmux set-option -w -t "$target" window-status-format "#[fg=$ST_UI_MUTED,bg=$ST_UI_BG] $label #[default]" &&
+  tmux set-option -w -t "$target" window-status-current-format "#[fg=$ST_UI_FG,bg=$ST_UI_SELECTED,bold,underscore] $label #[default]" &&
+  tmux set-option -w -t "$target" window-status-style default &&
   tmux set-option -w -t "$target" window-status-current-style default &&
   style_panes "$target"
 }
 
-# Keep program panes on the user's terminal background. Only split panes need a
-# divider; a single program gets the full height without an empty title row.
+# Use a shared canvas in program panes; a single program still gets the full
+# height without an empty title row.
 style_panes() {
   local target=$1
   tmux set-option -w -t "$target" pane-border-status off
-  tmux set-option -w -t "$target" pane-border-style 'fg=default,bg=default,dim'
-  tmux set-option -w -t "$target" pane-active-border-style 'fg=default,bg=default'
-  tmux set-option -w -t "$target" window-style 'bg=default'
-  tmux set-option -w -t "$target" window-active-style 'bg=default'
+  tmux set-option -w -t "$target" pane-border-style "fg=$ST_UI_BORDER,bg=$ST_UI_CANVAS"
+  tmux set-option -w -t "$target" pane-active-border-style "fg=$ST_UI_ACCENT,bg=$ST_UI_CANVAS"
+  tmux set-option -w -t "$target" window-style "fg=$ST_UI_FG,bg=$ST_UI_CANVAS"
+  tmux set-option -w -t "$target" window-active-style "fg=$ST_UI_FG,bg=$ST_UI_CANVAS"
   tmux set-option -w -t "$target" pane-scrollbars off 2>/dev/null || true
 }
 
