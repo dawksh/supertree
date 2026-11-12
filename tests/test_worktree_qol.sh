@@ -78,8 +78,8 @@ beta_session=$("$ROOT/bin/st" _sessions | grep -x 'demo/beta')
 [ "$(sed -n '2p' "$ST_STATE/recent")" = "$beta_session" ] || fail 'recent order did not put beta second'
 
 list=$("$ROOT/bin/st" ls)
-printf '%s\n' "$list" | grep -Eq '^TREE +SESSION +AGENT +CHANGES +TYPE$' || fail 'list has no grid headings'
-printf '%s\n' "$list" | grep -Eq '^demo/alpha +closed +- +clean +worktree$' || fail 'list did not show a readable tree row'
+if printf '%s\n' "$list" | grep -q '^TREE'; then fail 'piped list printed grid headings'; fi
+printf '%s\n' "$list" | grep -qx $'demo/alpha\tclosed\t-\tclean\tworktree' || fail 'list did not show a tab-separated tree row'
 if printf '%s\n' "$list" | grep -Eq '[[:xdigit:]]{32}|/demo-[[:xdigit:]]'; then
   fail 'list exposed internal identity hashes'
 fi
@@ -88,18 +88,18 @@ main_branch=$(git -C "$TEST_ROOT/demo" branch --show-current)
 : > "$ST_TEST_LOG"
 list=$(ST_TEST_SCREEN='Working...' ST_TEST_PANES=$(printf '%s\tcodex\t%%1\trunning\tcodex\tbash\n%s\tcodex\t%%2\tdone\tcodex\tbash\n%s\tcodex\t%%3\tdone\tcodex\tcodex' \
   "$alpha_session" "$beta_session" "$ST_TEST_MAIN_SESSION") "$ROOT/bin/st" ls)
-printf '%s\n' "$list" | grep -Eq "^demo/$main_branch +open +done +clean +main\$" || fail 'list did not mark the main checkout'
-printf '%s\n' "$list" | grep -Eq '^demo/alpha +open +running +clean +worktree$' || fail 'list lost running agent'
-printf '%s\n' "$list" | grep -Eq '^demo/beta +open +done +clean +worktree$' || fail 'list lost done agent'
+printf '%s\n' "$list" | grep -qx "demo/$main_branch"$'\topen\tdone\tclean\tmain' || fail 'list did not mark the main checkout'
+printf '%s\n' "$list" | grep -qx $'demo/alpha\topen\trunning\tclean\tworktree' || fail 'list lost running agent'
+printf '%s\n' "$list" | grep -qx $'demo/beta\topen\tdone\tclean\tworktree' || fail 'list lost done agent'
 [ "$(grep -c '^list-panes -a ' "$ST_TEST_LOG")" = 1 ] || fail 'list did not use one tmux snapshot'
 if grep -q '^has-session ' "$ST_TEST_LOG"; then fail 'list queried tmux separately for each tree'; fi
 ST_TEST_SCREEN='› ' ST_TEST_PANES=$(printf '%s\tcodex\t%%1\trunning\tcodex\tbash' "$alpha_session") \
-  "$ROOT/bin/st" ls | grep -Eq '^demo/alpha +open +input +clean +worktree$' || fail 'list lost input status'
+  "$ROOT/bin/st" ls | grep -qx $'demo/alpha\topen\tinput\tclean\tworktree' || fail 'list lost input status'
 # Empty @st_agent_state and @st_agent_window leave consecutive tabs in the snapshot.
 list=$(ST_TEST_SCREEN='Working...' ST_TEST_PANES=$(printf '%s\tcodex\t%%1\t\t\tcodex\n%s\tcodex\t%%2\t\t\tbash' \
   "$alpha_session" "$beta_session") "$ROOT/bin/st" ls)
-printf '%s\n' "$list" | grep -Eq '^demo/alpha +open +running +clean +worktree$' || fail 'list lost untracked running agent'
-printf '%s\n' "$list" | grep -Eq '^demo/beta +open +done +clean +worktree$' || fail 'list showed an untracked shell as running'
+printf '%s\n' "$list" | grep -qx $'demo/alpha\topen\trunning\tclean\tworktree' || fail 'list lost untracked running agent'
+printf '%s\n' "$list" | grep -qx $'demo/beta\topen\tdone\tclean\tworktree' || fail 'list showed an untracked shell as running'
 
 : > "$ST_TEST_LOG"
 ST_TEST_PICK_KEY=escape "$ROOT/bin/st" go --picker
@@ -251,7 +251,7 @@ alpha_hash=$(printf '%s' alpha | { shasum -a 256 2>/dev/null || sha256sum; } | c
 hashed_alpha="$repo/alpha-$alpha_hash"
 list=$(ST_TEST_SESSIONS=$hashed_alpha ST_TEST_SCREEN='Working...' \
   ST_TEST_PANES=$(printf '%s\tcodex\t%%1\tdone\tcodex\tbash' "$hashed_alpha") "$ROOT/bin/st" ls)
-printf '%s\n' "$list" | grep -Eq '^demo/alpha +open +done ' || fail 'list did not see a session under its old hashed name'
+printf '%s\n' "$list" | grep -q $'^demo/alpha\topen\tdone\t' || fail 'list did not see a session under its old hashed name'
 : > "$ST_TEST_LOG"
 ST_TEST_SESSIONS=$hashed_alpha "$ROOT/bin/st" down demo/alpha > "$TEST_ROOT/down-hashed.out" 2>&1 ||
   fail 'down failed on an old hashed session'

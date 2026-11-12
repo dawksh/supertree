@@ -187,7 +187,7 @@ st rm feat-otp         # done with it: session, worktree and branch go away
 | `st down [branch]` | Close a tree's tmux session. Worktree, branch and agent history stay. No branch = the tree you are in. |
 | `st down --all` | Close every tree session. Lists them and asks first. |
 | `st down --subtrees` | Close linked worktree sessions and keep main sessions open. Lists them and asks first. |
-| `st ls` | A readable grid of every known tree: session state, agent state, changes, and checkout type. Use a tree name with `st go` to switch to it. |
+| `st ls` | Every known tree grouped by repo: agent state, uncommitted (`±`) and unpushed (`↑`) counts, `⌂` for the main checkout. Trees waiting on you come first. Piped output is one tab-separated line per tree: `tree, session, agent, changes, type`. Use a tree name with `st go` to switch to it. |
 | `st status [tree]` | Check one agent: `running`, `input`, `done`, or `closed`. Omit the tree name inside its tmux session. |
 | `st rm <branch>` | Destructive: kills the session, removes the worktree, deletes the branch if merged. |
 | `st remove all [--force]` | List and remove Git checkouts under `ST_WORKTREE_ROOT`, including standalone repositories. Asks before removal. |

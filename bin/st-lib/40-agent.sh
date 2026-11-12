@@ -92,6 +92,67 @@ agent_statuses() {
   done
 }
 
+# Same rule as st rm: trees branched off origin/dev track it, so `@{u}..` would
+# count commits merged in from other remote branches as unpushed.
+unpushed_count() {
+  local dir=$1
+  [ -n "$(git -C "$dir" remote 2>/dev/null)" ] || { printf '0\n'; return 0; }
+  git -C "$dir" rev-list --count HEAD --not --remotes 2>/dev/null || printf '0\n'
+}
+
+# Rows: status, repo key, repo name, branch, main|worktree, path, session,
+# recency rank, then with --git the uncommitted and unpushed counts.
+tree_rows() {
+  local with_git=0 trees statuses mains recent
+  local status repo rname branch kind path sess rank dirty unpushed
+  [ "${1:-}" != --git ] || with_git=1
+  trees=$(list_trees)
+  [ -n "$trees" ] || return 0
+  statuses=$(agent_statuses)
+  mains=$(main_checkouts)
+  recent="$ST_STATE/recent"
+  [ -f "$recent" ] || recent=/dev/null
+
+  printf '%s\n' "$trees" | awk -F '\t' '
+    FILENAME == ARGV[1] { rank[$0] = ++r; next }
+    FILENAME == ARGV[2] { if ($1 != "") status_of[$1] = $2; next }
+    FILENAME == ARGV[3] { main[$0] = 1; next }
+    $0 != "" {
+      s = $4
+      repo_name = $1
+      sub(/-[^-]*$/, "", repo_name)
+      n++
+      print ((s in status_of) ? status_of[s] : "closed") "\t" $1 "\t" repo_name "\t" $2 "\t" \
+        (($3 in main) ? "main" : "worktree") "\t" $3 "\t" s "\t" ((s in rank) ? rank[s] : 100000 + n)
+    }
+  ' "$recent" <(printf '%s\n' "$statuses") <(printf '%s\n' "$mains") - |
+  while IFS=$'\t' read -r status repo rname branch kind path sess rank; do
+    dirty='' unpushed=''
+    if [ "$with_git" = 1 ]; then
+      dirty=$(git -C "$path" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+      unpushed=$(unpushed_count "$path")
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$status" "$repo" "$rname" "$branch" "$kind" "$path" "$sess" "$rank" "$dirty" "$unpushed"
+  done
+}
+
+# Trees waiting on the user first, then most recently opened.
+order_by_need() {
+  awk -F '\t' '{ print ($1 == "input" ? 0 : 1) "\t" $8 "\t" $0 }' |
+    sort -s -t $'\t' -k1,1n -k2,2n | cut -f3-
+}
+
+# Repos by their most recent tree; inside a repo, the same order as order_by_need.
+order_by_repo() {
+  awk -F '\t' '
+    { row[NR] = $0; repo[NR] = $2; need[NR] = ($1 == "input" ? 0 : 1); rank[NR] = $8 + 0
+      if (!($2 in best) || rank[NR] < best[$2]) best[$2] = rank[NR] }
+    END { for (i = 1; i <= NR; i++)
+            print best[repo[i]] "\t" repo[i] "\t" need[i] "\t" rank[i] "\t" row[i] }
+  ' | sort -s -t $'\t' -k1,1n -k2,2 -k3,3n -k4,4n | cut -f5-
+}
+
 set_agent_status() {
   [ -n "${TMUX_PANE:-}" ] || return 0
   tmux set-option -pq -t "$TMUX_PANE" @st_agent_state "$1" 2>/dev/null || true

@@ -85,38 +85,71 @@ cmd_trust() {
 }
 
 cmd_ls() {
-  local repo branch path s live changes agent kind repos statuses
-  repos=$(main_checkouts)
-  statuses=$(agent_statuses)
-  list_trees | while IFS=$'\t' read -r repo branch path s; do
-    agent=$(printf '%s\n' "$statuses" | awk -F '\t' -v s="$s" '$1 == s { print $2; exit }')
-    if [ -n "$agent" ]; then live='open'; else live='closed'; agent='-'; fi
-    if [ -n "$(git -C "$path" status --porcelain 2>/dev/null)" ]; then changes='modified'; else changes='clean'; fi
-    case $'\n'"$repos"$'\n' in
-      *$'\n'"$path"$'\n'*) kind='main';;
-      *) kind='worktree';;
-    esac
-    printf '%s\t%s\t%s\t%s\t%s\n' "$(tree_label "$repo" "$branch")" "$live" "$agent" "$changes" "$kind"
-  done | awk -F '\t' '
-    { for (i = 1; i <= 5; i++) { cell[NR,i] = $i; if (length($i) > width[i]) width[i] = length($i) } }
-    END {
-      title[1] = "TREE"; title[2] = "SESSION"; title[3] = "AGENT"
-      title[4] = "CHANGES"; title[5] = "TYPE"
-      for (i = 1; i <= 5; i++) if (length(title[i]) > width[i]) width[i] = length(title[i])
-      for (row = 0; row <= NR; row++) {
-        for (i = 1; i <= 5; i++) {
-          value = row ? cell[row,i] : title[i]
-          if (i == 5) printf "%s\n", value
-          else printf "%-*s  ", width[i], value
-        }
-        if (row == 0) {
-          for (i = 1; i <= 5; i++) {
-            for (j = 0; j < width[i]; j++) printf "-"
-            printf "%s", (i == 5 ? "\n" : "  ")
-          }
-        }
-      }
+  local rows
+  rows=$(tree_rows --git | order_by_repo)
+  if [ ! -t 1 ]; then
+    [ -z "$rows" ] || printf '%s\n' "$rows" | awk -F '\t' '{
+      open = $1 != "closed"
+      print $3 "/" $4 "\t" (open ? "open" : "closed") "\t" (open ? $1 : "-") "\t" \
+        ($9 > 0 ? "modified" : "clean") "\t" $5
     }'
+    return 0
+  fi
+  [ -n "$rows" ] || { ui_info "no trees yet — run st new <branch> inside a repo"; return 0; }
+  ls_grid "$rows"
+}
+
+ls_grid() {
+  local rows=$1 width=14 group='' main mark_width changes changes_color changes_width
+  local status repo rname branch kind path sess rank dirty unpushed
+  local total=0 need=0 run=0 finished=0 closed=0
+  while IFS=$'\t' read -r status repo rname branch kind path sess rank dirty unpushed; do
+    [ $(( ${#branch} + 4 )) -le "$width" ] || width=$(( ${#branch} + 4 ))
+  done <<ROWS
+$rows
+ROWS
+
+  while IFS=$'\t' read -r status repo rname branch kind path sess rank dirty unpushed; do
+    if [ "$repo" != "$group" ]; then
+      group=$repo
+      main=$(main_worktree "$path")
+      printf '  %s%s%s%s  %s%s\n' "$UI_REPO$UI_B" "$rname" "$UI_R" "$UI_DIM" "$(ui_path "${main:-$path}")" "$UI_R"
+    fi
+    printf '    %s%s%s%s' "$(ui_status "$status" 11)" "$UI_B" "$branch" "$UI_R"
+    mark_width=0
+    if [ "$kind" = main ]; then
+      printf ' %s%s%s' "$UI_DIM" "$G_MAIN" "$UI_R"
+      mark_width=2
+    fi
+    printf '%*s' $(( width - ${#branch} - mark_width )) ''
+    if [ "$dirty" -gt 0 ]; then
+      changes="$G_DIRTY$dirty" changes_color=$UI_WARN changes_width=$((1 + ${#dirty}))
+    else
+      changes=clean changes_color=$UI_DIM changes_width=5
+    fi
+    if [ "$unpushed" -eq 0 ]; then
+      printf '%s%s%s\n' "$changes_color" "$changes" "$UI_R"
+    else
+      printf '%s%s%s%*s%s%s%s%s\n' "$changes_color" "$changes" "$UI_R" $((6 - changes_width)) '' \
+        "$UI_WARN" "$G_AHEAD" "$unpushed" "$UI_R"
+    fi
+    total=$((total + 1))
+    case $status in
+      input) need=$((need + 1));;
+      running) run=$((run + 1));;
+      done) finished=$((finished + 1));;
+      *) closed=$((closed + 1));;
+    esac
+  done <<ROWS
+$rows
+ROWS
+
+  printf '\n  %s%s trees%s' "$UI_DIM" "$total" "$UI_R"
+  [ "$need" = 0 ] || printf '%s · %s%s %s need you%s' "$UI_DIM" "$UI_IN" "$G_IN" "$need" "$UI_R"
+  [ "$run" = 0 ] || printf '%s · %s%s %s%s' "$UI_DIM" "$UI_RUN" "$G_RUN" "$run" "$UI_R"
+  [ "$finished" = 0 ] || printf '%s · %s%s %s%s' "$UI_DIM" "$UI_OK" "$G_DONE" "$finished" "$UI_R"
+  [ "$closed" = 0 ] || printf '%s · %s %s%s' "$UI_DIM" "$G_OFF" "$closed" "$UI_R"
+  printf '\n'
 }
 
 cmd_status() {
@@ -133,6 +166,10 @@ cmd_status() {
     esac
   else
     die "usage: st status <tree>  (omit tree inside tmux)"
+  fi
+  if [ -t 1 ]; then
+    printf '%s  %s\n' "$(label_for_session "$s" "$trees")" "$(ui_status "$(agent_status "$s")")"
+    return 0
   fi
   printf '%s\t%s\n' "$(label_for_session "$s" "$trees")" "$(agent_status "$s")"
 }
