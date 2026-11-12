@@ -81,7 +81,7 @@ cmd_trust() {
   fingerprint=$(config_fingerprint "$file")
   mkdir -p "$ST_STATE/trust"
   ( umask 077; printf '%s\n' "$fingerprint" > "$ST_STATE/trust/$(repo_key "$main")" )
-  info "trusted $file; changes will require trusting it again"
+  ui_ok trusted "$file; changes will require trusting it again"
 }
 
 cmd_ls() {
@@ -124,7 +124,7 @@ cmd_status() {
   trees=$(list_trees)
   all=$(printf '%s\n' "$trees" | cut -f4)
   if [ $# -gt 0 ]; then
-    s=$(resolve_session "$1" "$trees") || die "no tree matching: $1"
+    s=$(resolve_session "$1" "$trees") || ui_fail "no tree matching: $1" "st ls  ·  M-w"
   elif [ -n "${TMUX:-}" ]; then
     s=$(current_session)
     case $'\n'"$all"$'\n' in
@@ -172,8 +172,7 @@ cmd_rm() {
   fi
 
   printf 'will remove:\n  tree      %s/%s\n  session   close\n  checkout  remove\n  branch    delete if merged\n' "$(basename "$main")" "$branch" >&2
-  printf 'proceed? [y/N] ' >&2; read -r ans
-  case ${ans:-n} in y|Y|yes) ;; *) die "aborted";; esac
+  ui_ask 'proceed?' n || die "aborted"
 
   current=$(branch_worktree "$main" "$branch" || true)
   [ "$current" = "$dir" ] || die "worktree for $branch changed; refusing to remove $dir"
@@ -186,9 +185,9 @@ cmd_rm() {
     # Killing our own session kills this process, so close it only after cleanup.
     if [ "$sess" != "$current_sess" ]; then tmux kill-session -t "=$sess" 2>/dev/null || true; fi
   fi
-  git -C "$main" branch -d "$branch" >/dev/null 2>&1 || info "branch $branch kept (not merged)"
+  git -C "$main" branch -d "$branch" >/dev/null 2>&1 || ui_warn branch "$branch kept (not merged)"
   clear_tree_state "$repo" "$slug" "$sess"
-  info "removed $(basename "$main")/$branch"
+  ui_ok removed "$(basename "$main")/$branch"
   if [ -n "$sess" ] && [ "$sess" = "$current_sess" ]; then tmux kill-session -t "=$sess" 2>/dev/null || true; fi
 }
 
@@ -300,8 +299,7 @@ cmd_remove_all() {
       die "refusing to remove $(basename "${mains[i]}")/${branches[i]:-(detached)} with uncommitted or unpushed work; pass --force"
     fi
   done
-  printf 'proceed? [y/N] ' >&2; read -r ans
-  case ${ans:-n} in y|Y|yes) ;; *) die "aborted";; esac
+  ui_ask 'proceed?' n || die "aborted"
   [ -z "${TMUX:-}" ] || current_sess=$(current_session)
 
   # Linked worktrees must go first when a standalone repo under the root owns
@@ -328,7 +326,7 @@ cmd_remove_all() {
           else tmux kill-session -t "=$sess" 2>/dev/null || true; fi
         fi
         [ -z "$branch" ] || git -C "$main" branch -d "$branch" >/dev/null 2>&1 ||
-          info "branch $branch kept (not merged)"
+          ui_warn branch "$branch kept (not merged)"
         clear_tree_state "$repo" "$(branch_key "${branch:-(detached)}")" "$sess"
       else
         rm -rf -- "$dir"
@@ -344,9 +342,9 @@ cmd_remove_all() {
         fi
       fi
       if [ "$kind" = worktree ]; then
-        info "removed $(basename "$main")/${branch:-(detached)}"
+        ui_ok removed "$(basename "$main")/${branch:-(detached)}"
       else
-        info "removed $dir"
+        ui_ok removed "$dir"
       fi
     done
   done

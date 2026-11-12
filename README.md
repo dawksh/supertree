@@ -89,7 +89,7 @@ The numbered modules make the boundaries explicit:
 
 | Module | Responsibility |
 | --- | --- |
-| `00-core` through `50-tmux` | Shared helpers for identity, repository state, bootstrap, agent, and tmux |
+| `00-core` through `50-tmux` | Shared helpers for output styling (`05-ui`), identity, repository state, bootstrap, agent, and tmux |
 | `55-sidebar` | Tree sidebar panes and their refresher |
 | `60-picker` | Tree picker and `go`/`resume` |
 | `70-worktrees` | Worktree creation, trust, listing, status, and removal |
@@ -562,6 +562,13 @@ A repo only shows up in `st go` / `st ls` after `st new` or `st home` registers 
 worktree root with `ST_WORKTREE_ROOT`, the state dir with `ST_STATE`.
 
 ---
+
+## Output
+
+In a terminal, messages are styled rows (`✓ removed …`, `! branch …`, `✗ …` with a
+`try` hint). Set `NO_COLOR=1` to drop colour, or `ST_ASCII=1` for ASCII glyphs.
+When output is piped or redirected, `st` prints the plain `:: msg` and `st: msg`
+lines it always has, so scripts keep working.
 
 ## Troubleshooting
 

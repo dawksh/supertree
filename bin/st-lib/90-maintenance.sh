@@ -205,8 +205,7 @@ cmd_uninstall() {
   printf 'will uninstall:\n  command  %s\n  bindings %s\n  config   %s\n  state    %s\n' \
     "$self" "$fragment" "$config" "$ST_STATE" >&2
   [ -f "$tmux_conf" ] && printf '  tmux     %s (Supertree source line)\n' "$tmux_conf" >&2
-  printf 'proceed? [y/N] ' >&2; read -r ans
-  case ${ans:-n} in y|Y|yes) ;; *) die "aborted";; esac
+  ui_ask 'proceed?' n || die "aborted"
 
   sessions=$(known_sessions)
   if home_is_open; then sessions=$(printf '%s\n%s' "$sessions" "$ST_HOME_SESSION"); fi
@@ -265,7 +264,7 @@ EOF
     done
   fi
   rm -f -- "$self" "$manifest"
-  info "uninstalled st"
+  ui_ok uninstalled st
   if [ "$close_current" = 1 ]; then
     tmux kill-session -t "=$current_sess" 2>/dev/null || true
   fi

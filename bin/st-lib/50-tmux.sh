@@ -499,8 +499,7 @@ cmd_down() {
 $live
 EOF
     if [ "$yes" = 0 ]; then
-      printf 'unsaved editor buffers are lost. proceed? [y/N] ' >&2; read -r ans
-      case ${ans:-n} in y|Y|yes) ;; *) die "aborted";; esac
+      ui_ask 'unsaved editor buffers are lost. proceed?' n || die "aborted"
     fi
     [ "$target" != --subtrees ] || ensure_main_fallbacks "$trees"
     [ -z "${TMUX:-}" ] || current=$(current_session)
@@ -511,7 +510,7 @@ EOF
     done <<EOF
 $live
 EOF
-    info "closed selected tree sessions (worktrees kept)"
+    ui_ok closed "selected tree sessions (worktrees kept)"
     [ "$close_current" = 0 ] || tmux kill-session -t "=$current"
     return 0
   fi
@@ -520,7 +519,7 @@ EOF
   all=$(printf '%s\n' "$trees" | cut -f4)
 
   if [ -n "$target" ]; then
-    s=$(resolve_session "$target" "$trees") || die "no tree matching: $target"
+    s=$(resolve_session "$target" "$trees") || ui_fail "no tree matching: $target" "st ls  ·  M-w"
   elif [ -n "${TMUX:-}" ]; then
     s=$(current_session)
   else
@@ -537,7 +536,7 @@ EOF
   tmux has-session -t "=$s" 2>/dev/null || { info "$label already closed"; return 0; }
   evacuate_clients "$s"
   tmux kill-session -t "=$s"
-  info "closed $label (worktree kept — 'st resume' brings it back)"
+  ui_ok closed "$label (worktree kept — 'st resume' brings it back)"
 }
 
 cmd_toggle() {
