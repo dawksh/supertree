@@ -101,7 +101,7 @@ no_fzf go main 2>/dev/null || fail 'lowercase query did not match demo/Main'
 grep -qxF '=demo/Main' "$ST_TMUX_LOG" || fail 'lowercase query did not attach demo/Main'
 
 # "+ new branch" offers only repos that still exist.
-export ST_FZF_PICK='+ new branch'
+export ST_FZF_PICK='new tree'
 printf '%s\n' "$TEST_ROOT/one/demo" "$TEST_ROOT/gone/demo" "$TEST_ROOT/two/demo" > "$ST_STATE/repos"
 printf 'picked\n' | with_fzf go >/dev/null 2>&1 || fail '+ new branch failed with one missing repo'
 repo_choices=$(awk '/^args: --prompt=repo> /{on=1; next} /^args: /{on=0} on' "$ST_FZF_LOG")
@@ -136,8 +136,8 @@ panes=$(printf '%s\n' \
 : > "$ST_FZF_LOG"
 ST_TEST_PANES=$panes ST_TEST_INPUT_PANES=%3 ST_FZF_PICK=no-such-row with_fzf go >/dev/null 2>&1 ||
   fail 'picker failed while reading agent statuses'
-for want in 'plain +○ Finished' 'harness +● Running' 'prompt +◐ Needs input' 'custom +● Running' 'picked +· Closed'; do
-  grep -Eq "^demo/$want"$'\t' "$ST_FZF_LOG" || fail "picker row missing: demo/$want"
+for want in 'done:plain' 'running:harness' 'input:prompt' 'running:custom' 'closed:picked'; do
+  grep -Eq "${want%%:*}.*demo/.*${want#*:}"$'.*\t' "$ST_FZF_LOG" || fail "picker row missing: ${want#*:} ${want%%:*}"
 done
 [ "$(grep -cx 'list-panes' "$ST_TMUX_LOG")" = 1 ] || fail 'agent statuses did not use one list-panes call'
 captured=$(grep -A3 -x 'capture-pane' "$ST_TMUX_LOG" | grep '^%' | sort | tr '\n' ' ')

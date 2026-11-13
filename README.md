@@ -222,7 +222,7 @@ and the `st _sidebar*` commands are called by the tmux bindings and the sidebar,
 
 | key | does |
 |---|---|
-| `M-w` | tree picker, ordered by most recently opened tree, with a `+ new branch…` row |
+| `M-w` | tree picker: trees waiting on you first, then most recently opened, with a `+ new tree…` row |
 | `M-e` | toggle between the first two configured windows |
 | `M-Tab` | switch to the tree you were in before; press again to come back |
 | `M-r` | pick any repo you have used `st new` in, enter a branch, and create a tree there — no `cd` needed |
@@ -258,8 +258,13 @@ The others are `ST_KEY_PICKER` (`M-w`), `ST_KEY_TOGGLE` (`M-e`),
 If an existing config uses `M-V` for `ST_KEY_SPLIT`, the installer assigns
 `M-U` to the vertical split unless you set `ST_KEY_SPLIT_VERTICAL` yourself.
 
-In the tree picker, press Enter to open a tree, Ctrl-D to delete the selected
-worktree, or Escape to close the picker.
+In the tree picker, press Enter to open a tree, Ctrl-N for a new tree, Ctrl-D to
+delete the selected worktree without leaving the picker, Ctrl-R to pick a repo,
+Ctrl-/ to show or hide the preview, or Escape to close. The preview shows the
+tree's uncommitted files, unpushed commits, and the agent's last lines; it hides
+itself in narrow terminals. The picker needs fzf 0.42 or newer. With fzf 0.73 or
+newer it refreshes every two seconds while open and fills in the uncommitted
+(`±`) and unpushed (`↑`) counts shortly after it opens.
 
 Prefix stays `C-a`. `M-arrow` pane movement and `S-Enter` are untouched.
 `status-left` shows the current repository and branch, so the tree you are typing into is
@@ -526,8 +531,8 @@ this survives a hard `kill-session`, not just a clean exit.
 **Delete the tree** — `st rm <branch>`. Refuses while there are uncommitted
 changes or unpushed commits unless you pass `--force`, prints what it will
 remove, and asks. The branch is deleted only if it is merged. In the `M-w`
-picker, highlight a tree and press Ctrl-D to run the same guarded removal.
-The main worktree cannot be deleted from the picker.
+picker, highlight a tree and press Ctrl-D to run the same guarded removal; the
+picker stays open afterwards. The main worktree cannot be deleted from the picker.
 
 **Clear the worktree root** — `st remove all` inventories Git checkouts at the
 root and one directory below it. It removes linked worktrees through Git and

@@ -20,22 +20,155 @@ picker_rows() {
   ' <(printf '%s\n' "$statuses") -
 }
 
+# Row fields: display, path, session. fzf shows only the display.
+picker_display_rows() {
+  local rows width=0 label pad mark_width
+  local status repo rname branch kind path sess rank dirty unpushed
+  rows=$(tree_rows "$@" | order_by_need)
+  [ -n "$rows" ] || return 0
+  while IFS=$'\t' read -r status repo rname branch kind path sess rank dirty unpushed; do
+    label="$rname/$branch"
+    [ "${#label}" -le "$width" ] || width=${#label}
+  done <<ROWS
+$rows
+ROWS
+
+  while IFS=$'\t' read -r status repo rname branch kind path sess rank dirty unpushed; do
+    label="$rname/$branch"
+    printf '%s%s%s/%s%s%s%s' "$(ui_status "$status" 11)" "$UI_REPO" "$rname" "$UI_R" "$UI_B" "$branch" "$UI_R"
+    mark_width=0
+    if [ "$kind" = main ]; then
+      printf ' %s%s%s' "$UI_DIM" "$G_MAIN" "$UI_R"
+      mark_width=2
+    fi
+    if [ "${dirty:-0}" -gt 0 ] || [ "${unpushed:-0}" -gt 0 ]; then
+      pad=$((width - ${#label} - mark_width + 4))
+      printf '%*s' "$pad" ''
+      [ "${dirty:-0}" -eq 0 ] || printf '%s%s%s%s ' "$UI_WARN" "$G_DIRTY" "$dirty" "$UI_R"
+      [ "${unpushed:-0}" -eq 0 ] || printf '%s%s%s%s' "$UI_DIM" "$G_AHEAD" "$unpushed" "$UI_R"
+    fi
+    printf '\t%s\t%s\n' "$path" "$sess"
+  done <<ROWS
+$rows
+ROWS
+}
+
+# --git adds uncommitted and unpushed counts; that costs a git call per tree.
 picker_choices() {
-  if declare -F cmd_new >/dev/null; then printf '+ new branch…\t\t\n'; fi
-  if [ "${ST_PICKER_ROWS+x}" = x ]; then
-    printf '%s\n' "$ST_PICKER_ROWS"
-  else
-    picker_rows | sort_recent | awk -F '\t' '
-      {
-        label = $1; sub(/  +[^ ]+$/, "", label)
-        state = $1; sub(/^.*  +/, "", state)
-        if (state == "running") state = "● Running"
-        else if (state == "input") state = "◐ Needs input"
-        else if (state == "done") state = "○ Finished"
-        else state = "· Closed"
-        printf "%s  %s\t%s\t%s\n", label, state, $2, $3
-      }'
+  if [ "${ST_PICKER_ROWS+x}" = x ]; then printf '%s\n' "$ST_PICKER_ROWS"
+  else picker_display_rows "$@"; fi
+  declare -F cmd_new >/dev/null || return 0
+  printf '%s+%s          new tree…\t+new\t\n' "$UI_A" "$UI_R"
+}
+
+# Prints "MAJOR MINOR", or nothing when the version can't be read.
+fzf_version() {
+  local v major minor
+  v=$(fzf --version </dev/null 2>/dev/null) || v=''
+  v=${v%% *}
+  major=${v%%.*}
+  minor=${v#*.}
+  minor=${minor%%.*}
+  case $major in ''|*[!0-9]*) return 0;; esac
+  case $minor in ''|*[!0-9]*) return 0;; esac
+  printf '%s %s\n' "$major" "$minor"
+}
+
+version_at_least() { # "major minor" wanted_major wanted_minor
+  local major=${1% *} minor=${1#* }
+  [ -n "$1" ] || return 1
+  [ "$major" -gt "$2" ] || { [ "$major" -eq "$2" ] && [ "$minor" -ge "$3" ]; }
+}
+
+picker_hold() {
+  [ -t 0 ] || return 0
+  printf '\n  %sany key to go back%s' "$UI_DIM" "$UI_R" >&2
+  IFS= read -rsn1 _ || true
+  printf '\n' >&2
+}
+
+# fzf versions per https://github.com/junegunn/fzf/blob/master/CHANGELOG.md:
+# --info=inline-right 0.42, --gutter (default '▌') 0.66, --id-nth 0.71, every(N) 0.73.
+pick_tree() {
+  local rows=$1 version self need label refresh cache='' refresher='' rc=0
+  version=$(fzf_version)
+  if [ -n "$version" ] && ! version_at_least "$version" 0 42; then
+    ui_fail "the tree picker needs fzf 0.42 or newer (found ${version% *}.${version#* })" "brew upgrade fzf"
   fi
+  self=$(printf '%q' "$(st_executable)")
+  need=$(printf '%s\n' "$rows" | awk -F '\t' '$1 ~ / input/' | wc -l | tr -d ' ')
+  label=' Trees '
+  [ "$need" = 0 ] || label=" Trees · $G_IN $need need you "
+  refresh=0
+  if version_at_least "$version" 0 73; then refresh=1; fi
+  if [ "$refresh" = 1 ]; then
+    mkdir -p "$ST_STATE"
+    cache=$(mktemp "$ST_STATE/.rows.XXXXXX")
+    printf '%s\n' "$rows" > "$cache"
+  fi
+
+  local -a opts=(
+    --ansi --delimiter=$'\t' --with-nth=1 --height=100% --reverse --no-sort --sync
+    --border=rounded --border-label="$label" --border-label-pos=3
+    --prompt='Find tree › ' --pointer='▌' --info=inline-right
+    --header='⏎ open  ^n new  ^d delete  ^r repos  ^/ preview  esc' --header-first
+    --preview="$self _preview {3} {2}" --preview-window='right,45%,border-left,<40(hidden)'
+    --expect=ctrl-n,ctrl-r
+    --bind='esc:abort,ctrl-/:toggle-preview'
+  )
+  # The design's ▌ marks only the selected row; 0.66 also draws it down every row.
+  if version_at_least "$version" 0 66; then opts+=(--gutter=' '); fi
+  if [ "$refresh" = 0 ]; then
+    opts+=("--bind=ctrl-d:execute($self _pick_rm {2} </dev/tty >/dev/tty 2>&1)+reload:$self _rows")
+    printf '%s\n' "$rows" | fzf "${opts[@]}"
+    return
+  fi
+
+  # --track blocks keys while a reload runs, and rows with git counts take ~50ms per tree,
+  # so a background loop builds them and fzf only reads the file. After a delete,
+  # _pick_rm rewrites the file so the timer cannot bring the deleted row back.
+  local qcache
+  qcache=$(printf '%q' "$cache")
+  opts+=(
+    "--bind=ctrl-d:execute(ST_PICK_CACHE=$qcache $self _pick_rm {2} </dev/tty >/dev/tty 2>&1)+reload:cat $qcache"
+    --track --id-nth=3 "--bind=every(2):reload:cat $qcache"
+  )
+  # First paint skips the per-tree git counts; this loop fills them in, starting at once.
+  # It stops by itself if the picker dies without cleaning up (e.g. the popup is killed).
+  (
+    while kill -0 $$ 2>/dev/null && [ -f "$cache" ]; do
+      : > "$cache.building"
+      # _pick_rm removes the marker after a delete; these rows are then older than the cache.
+      if "$(st_executable)" _rows --git > "$cache.next" 2>/dev/null &&
+         [ -f "$cache" ] && [ -f "$cache.building" ]; then
+        mv "$cache.next" "$cache"
+      else
+        rm -f "$cache.next"
+      fi
+      sleep 2
+    done
+  ) >/dev/null 2>&1 &
+  refresher=$!
+  printf '%s\n' "$rows" | fzf "${opts[@]}" || rc=$?
+  kill "$refresher" 2>/dev/null || true
+  rm -f "$cache" "$cache.next" "$cache.building"
+  return "$rc"
+}
+
+pick_new() {
+  local b r root
+  declare -F cmd_new >/dev/null || { info "worktree module is unavailable"; return 0; }
+  printf 'New branch name › ' >&2; read -r b
+  [ -n "$b" ] || return 0
+  r=$(sort -u "$ST_REPOS" | while IFS= read -r root; do
+    [ -d "$root" ] || continue
+    printf '%s\n' "$root"
+  done)
+  [ -n "$r" ] || die "no roots known yet — run 'st new <branch>' inside a repo"
+  if [ "$(printf '%s\n' "$r" | wc -l)" -gt 1 ]; then
+    r=$(printf '%s\n' "$r" | fzf --prompt='repo> ' --height=100% --reverse) || return 0
+  fi
+  cmd_new "$b" --repo "$r"
 }
 
 # ---------------------------------------------------------------- commands
@@ -82,7 +215,7 @@ cmd_go() {
     esac
   done
 
-  local rows sel dir sess key start live_dir
+  local rows sel dir sess key live_dir
   if [ "$popup" = 1 ]; then
     [ -n "$popup_client" ] || die "no tmux client for tree picker"
     local self
@@ -118,44 +251,18 @@ cmd_go() {
     command -v fzf >/dev/null || die "fzf is required for the tree picker"
     [ -f "$ST_REPOS" ] || [ "${ST_PICKER_ROWS+x}" = x ] ||
       die "no worktrees known yet — run 'st new <branch>' inside a repo"
-    start=1
-    if declare -F cmd_new >/dev/null; then
-      start=2
-    fi
-    # Cursor starts on the most recent tree so Enter still reopens it.
-    sel=$(fzf --delimiter=$'\t' --with-nth=1 --height=100% --reverse \
-          --no-sort --bind="load:pos($start)" \
-          --border=rounded --border-label=' Trees ' \
-          --prompt='Search › ' --header='Enter open · Ctrl-D remove · Esc close' \
-          --expect=ctrl-d --bind='esc:abort' < <(picker_choices)) || return 0
+    ui_colour_on
+    sel=$(pick_tree "$(picker_choices)") || return 0
     key=${sel%%$'\n'*}
     sel=${sel#*$'\n'}
-    if [ "$key" = ctrl-d ]; then
-      declare -F remove_tree_at >/dev/null || { info "remove module is unavailable"; return 0; }
-      case $sel in '+ new branch'*) return 0;; esac
-      remove_tree_at "$(printf '%s' "$sel" | cut -f2)"
-      return
-    fi
+    case $key in
+      ctrl-n) pick_new; return;;
+      ctrl-r) cmd_roots; return;;
+    esac
   fi
 
-  case $sel in
-    '+ new branch'*)
-      local b r root
-      printf 'New branch name › ' >&2; read -r b
-      [ -n "$b" ] || return 0
-      r=$(sort -u "$ST_REPOS" | while IFS= read -r root; do
-        [ -d "$root" ] || continue
-        printf '%s\n' "$root"
-      done)
-      [ -n "$r" ] || die "no roots known yet — run 'st new <branch>' inside a repo"
-      if [ "$(printf '%s\n' "$r" | wc -l)" -gt 1 ]; then
-        r=$(printf '%s\n' "$r" | fzf --prompt='repo> ' --height=100% --reverse) || return 0
-      fi
-      cmd_new "$b" --repo "$r"
-      return;;
-  esac
-
   dir=$(printf '%s' "$sel" | cut -f2)
+  [ "$dir" != +new ] || { pick_new; return; }
   sess=$(printf '%s' "$sel" | cut -f3)
   build_session "$sess" "$dir"
   attach "$sess"
@@ -180,6 +287,63 @@ cmd_open() {
   [ -n "$row" ] || row=$(printf '%s\n' "$rows" | sort_recent | head -1)
   build_session "$(printf '%s' "$row" | cut -f3)" "$(printf '%s' "$row" | cut -f2)"
   attach "$(printf '%s' "$row" | cut -f3)"
+}
+
+cmd_rows() {
+  ui_colour_on
+  picker_choices "$@"
+}
+
+cmd_preview() {
+  local sess=${1:-} dir=${2:-} status changes unpushed
+  ui_colour_on
+  if [ -z "$sess" ]; then
+    printf '\n  %sstart a tree in any known repo%s\n' "$UI_DIM" "$UI_R"
+    return 0
+  fi
+  status=$(agent_status "$sess")
+  printf '%s%s%s\n' "$UI_DIM" "$(ui_path "$dir")" "$UI_R"
+  case $status in
+    input) printf '%s%s waiting for you%s\n' "$UI_IN" "$G_IN" "$UI_R";;
+    running) printf '%s%s working%s\n' "$UI_RUN" "$G_RUN" "$UI_R";;
+    done) printf '%s%s agent exited%s\n' "$UI_OK" "$G_DONE" "$UI_R";;
+    *) printf '%s%s session closed%s\n' "$UI_DIM" "$G_OFF" "$UI_R";;
+  esac
+
+  changes=$(git -C "$dir" status --porcelain 2>/dev/null || true)
+  if [ -n "$changes" ]; then
+    printf '\n%s─ changes %s ─%s\n' "$UI_DIM" "$(printf '%s\n' "$changes" | wc -l | tr -d ' ')" "$UI_R"
+    printf '%s\n' "$changes" | head -8 |
+      awk -v c="$UI_WARN" -v r="$UI_R" '{ print "  " c substr($0, 1, 2) r substr($0, 3) }'
+  fi
+
+  unpushed=''
+  # Same rule as st rm: count against every remote, not the tracked branch.
+  if [ -n "$(git -C "$dir" remote 2>/dev/null)" ]; then
+    unpushed=$(git -C "$dir" log --format='%h %s' HEAD --not --remotes 2>/dev/null || true)
+  fi
+  if [ -n "$unpushed" ]; then
+    printf '\n%s─ unpushed %s ─%s\n' "$UI_DIM" "$(printf '%s\n' "$unpushed" | wc -l | tr -d ' ')" "$UI_R"
+    printf '%s\n' "$unpushed" | head -5 |
+      awk -v c="$UI_DIM" -v r="$UI_R" '{ hash = $1; sub(/^[^ ]* /, ""); print "  " c hash r " " $0 }'
+  fi
+
+  [ "$status" != closed ] || return 0
+  printf '\n%s─ agent ─%s\n' "$UI_DIM" "$UI_R"
+  # awk, not sed: macOS sed rejects the multibyte bar outside a UTF-8 locale.
+  agent_tail "$sess" 10 | awk -v c="$UI_DIM" -v r="$UI_R" '{ print c "│" r " " $0 }'
+}
+
+# Runs inside the picker via execute(), so refusals wait for a key instead of flashing.
+cmd_pick_rm() {
+  case ${1:-} in ''|+new) return 0;; esac
+  declare -F remove_tree_at >/dev/null || { info "remove module is unavailable"; picker_hold; return 1; }
+  ( remove_tree_at "$1" ) || { picker_hold; return 1; }
+  [ -z "${ST_PICK_CACHE:-}" ] || [ ! -f "$ST_PICK_CACHE" ] || {
+    rm -f "$ST_PICK_CACHE.building"
+    ui_colour_on
+    picker_choices > "$ST_PICK_CACHE"
+  }
 }
 
 cmd_roots() {
@@ -220,3 +384,6 @@ st_register_command 'open' cmd_open 'open this tree, or the most recent one'
 st_register_command 'go' cmd_go 'pick a tree and switch to it' 'go [query]'
 st_register_command 'resume' cmd_go 'reopen a tree and resume its agent' 'resume [query]'
 st_register_command 'roots' cmd_roots 'pick a known repo and create a tree in it'
+st_register_command '_rows' cmd_rows ''
+st_register_command '_preview' cmd_preview ''
+st_register_command '_pick_rm' cmd_pick_rm ''

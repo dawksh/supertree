@@ -62,6 +62,16 @@ agent_status() {
   if agent_needs_input "$pane"; then printf 'input'; else printf 'running'; fi
 }
 
+agent_tail() {
+  local sess=$1 lines=${2:-8} pane
+  tmux has-session -t "=$sess" 2>/dev/null || return 0
+  pane=$(agent_pane "$sess")
+  [ -n "$pane" ] || return 0
+  tmux capture-pane -p -t "$pane" -S -60 2>/dev/null |
+    awk 'NF { last = NR } { line[NR] = $0 } END { for (i = 1; i <= last; i++) print line[i] }' |
+    tail -n "$lines"
+}
+
 agent_statuses() {
   local format panes name bin sess status pane
   format='#{session_name}'$'\t''#{window_name}'$'\t''#{pane_id}'$'\t''#{@st_agent_state}'$'\t''#{@st_agent_window}'$'\t''#{pane_current_command}'$'\t''#{@st_sidebar}'

@@ -53,8 +53,6 @@ cat > "$ST_TEST_PICKER_INPUT"
 case ${ST_TEST_PICK_KEY:-escape} in
   escape) exit 130;;
   enter) printf '\n'; sed -n '1p' "$ST_TEST_PICKER_INPUT";;
-  delete) printf 'ctrl-d\n'; grep -F 'demo/beta' "$ST_TEST_PICKER_INPUT" | head -1;;
-  delete-main) printf 'ctrl-d\n'; grep -F "${ST_TEST_MAIN_SESSION:-demo/master}" "$ST_TEST_PICKER_INPUT" | head -1;;
 esac
 EOF
 chmod +x "$HOME/.local/bin/fzf"
@@ -103,8 +101,8 @@ printf '%s\n' "$list" | grep -qx $'demo/beta\topen\tdone\tclean\tworktree' || fa
 
 : > "$ST_TEST_LOG"
 ST_TEST_PICK_KEY=escape "$ROOT/bin/st" go --picker
-first=$(sed -n '2p' "$ST_TEST_PICKER_INPUT")
-second=$(sed -n '3p' "$ST_TEST_PICKER_INPUT")
+first=$(sed -n '1p' "$ST_TEST_PICKER_INPUT")
+second=$(sed -n '2p' "$ST_TEST_PICKER_INPUT")
 case $first in *'demo/alpha'*) ;; *) fail 'picker did not start with alpha';; esac
 case $second in *'demo/beta'*) ;; *) fail 'picker did not put beta second';; esac
 if grep -Eq '^(attach-session|switch-client) ' "$ST_TEST_LOG"; then
@@ -114,8 +112,8 @@ fi
 : > "$ST_TEST_LOG"
 ST_TEST_PANES=$(printf '%s\tcodex\t%%1\trunning\tcodex\tbash\n%s\tcodex\t%%2\tdone\tcodex\tbash' "$alpha_session" "$beta_session") \
   ST_TEST_SCREEN='Working...' ST_TEST_PICK_KEY=escape "$ROOT/bin/st" go --picker
-grep -E 'demo/alpha +● Running' "$ST_TEST_PICKER_INPUT" >/dev/null || fail 'picker lost running status'
-grep -E 'demo/beta +○ Finished' "$ST_TEST_PICKER_INPUT" >/dev/null || fail 'picker lost done status'
+grep -E 'running.*demo/alpha' "$ST_TEST_PICKER_INPUT" >/dev/null || fail 'picker lost running status'
+grep -E 'done.*demo/beta' "$ST_TEST_PICKER_INPUT" >/dev/null || fail 'picker lost done status'
 [ "$(grep -c '^list-panes -a ' "$ST_TEST_LOG")" = 1 ] || fail 'picker did not use one tmux snapshot'
 if grep -q '^has-session ' "$ST_TEST_LOG"; then
   fail 'picker queried tmux separately for each tree'
@@ -158,19 +156,19 @@ if grep -F "kill-session -t =$ST_TEST_MAIN_SESSION" "$ST_TEST_LOG" >/dev/null; t
   fail 'main session was closed'
 fi
 
-if ST_TEST_PICK_KEY=delete-main "$ROOT/bin/st" go --picker > "$TEST_ROOT/main.out" 2>&1; then
+if "$ROOT/bin/st" _pick_rm "$TEST_ROOT/demo" > "$TEST_ROOT/main.out" 2>&1; then
   fail 'picker allowed deleting the main worktree'
 fi
 [ -d "$TEST_ROOT/demo" ] || fail 'main worktree disappeared'
 
 printf 'uncommitted\n' > "$ST_WORKTREE_ROOT/demo/beta/new-file"
-if printf 'y\n' | ST_TEST_PICK_KEY=delete "$ROOT/bin/st" go --picker > "$TEST_ROOT/dirty.out" 2>&1; then
+if printf 'y\n' | "$ROOT/bin/st" _pick_rm "$ST_WORKTREE_ROOT/demo/beta" > "$TEST_ROOT/dirty.out" 2>&1; then
   fail 'picker deleted a dirty worktree without force'
 fi
 [ -d "$ST_WORKTREE_ROOT/demo/beta" ] || fail 'dirty worktree disappeared'
 rm "$ST_WORKTREE_ROOT/demo/beta/new-file"
 
-printf 'y\n' | ST_TEST_PICK_KEY=delete "$ROOT/bin/st" go --picker
+printf 'y\n' | "$ROOT/bin/st" _pick_rm "$ST_WORKTREE_ROOT/demo/beta"
 [ ! -d "$ST_WORKTREE_ROOT/demo/beta" ] || fail 'picker did not delete beta'
 if grep -Fx "$beta_session" "$ST_STATE/recent" >/dev/null; then
   fail 'deleted tree stayed in recent list'
