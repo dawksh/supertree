@@ -178,10 +178,10 @@ st rm feat-otp         # done with it: session, worktree and branch go away
 | `st home` | Open the persistent Supertree home shell and sidebar. Registers the current repository if needed. |
 | `st open` | Go directly to the current tree, or the most recently used tree outside a known checkout. |
 | `st new <branch>` | Create the worktree, bootstrap it, build the tmux session, switch to it. Reuses the branch if it already exists, otherwise creates it. |
-| `st trust` | Trust the current contents of this repository's reviewed `.supertree` file. Run again if the file changes. |
+| `st trust [--show]` | Trust the current contents of this repository's reviewed `.supertree` file. Run again if the file changes. `--show` prints what changed since you last trusted it. |
 | `st go [query]` | Switch to a tree. No query opens an fzf picker; a query picks the first match. Builds the session first if the tree is closed. |
 | `st resume [query]` | Same as `go`. Named for the case where you closed a tree earlier and want it back. |
-| `st roots` | Pick a known repository, type a branch, and create a tree there (what `M-r` runs). |
+| `st roots` | Create a tree in any known repository: pick the repo, then a branch (what `M-r` runs). |
 | `st last` | Switch to the tree you were in before (what `M-Tab` runs). |
 | `st split [--horizontal\|--vertical]` | Open another copy of this tab's program side by side or stacked (`M-v` / `M-V`). |
 | `st down [branch]` | Close a tree's tmux session. Worktree, branch and agent history stay. No branch = the tree you are in. |
@@ -225,7 +225,7 @@ and the `st _sidebar*` commands are called by the tmux bindings and the sidebar,
 | `M-w` | tree picker: trees waiting on you first, then most recently opened, with a `+ new tree…` row |
 | `M-e` | toggle between the first two configured windows |
 | `M-Tab` | switch to the tree you were in before; press again to come back |
-| `M-r` | pick any repo you have used `st new` in, enter a branch, and create a tree there — no `cd` needed |
+| `M-r` | new tree in any repo you have used `st new` in — pick the repo, then the branch; no `cd` needed |
 | `M-1` … `M-9` | select a configured window (tab) by position |
 | `M-n` / `M-p` | next / previous tab |
 | `M-j` / `M-k` | next / previous open tree, in sidebar order |
@@ -258,11 +258,17 @@ The others are `ST_KEY_PICKER` (`M-w`), `ST_KEY_TOGGLE` (`M-e`),
 If an existing config uses `M-V` for `ST_KEY_SPLIT`, the installer assigns
 `M-U` to the vertical split unless you set `ST_KEY_SPLIT_VERTICAL` yourself.
 
+New trees (`M-r`, Ctrl-N in the picker, or its `+ new tree…` row) take two steps:
+pick the repo (the one you are in comes first; skipped when there is only one), then
+pick a local or remote branch or type a new name. Tab picks the branch to start
+from, Ctrl-B toggles a bare tree (no deps, env, or agent). Names are checked with
+`git check-ref-format`.
+
 In the tree picker, press Enter to open a tree, Ctrl-N for a new tree, Ctrl-D to
 delete the selected worktree without leaving the picker, Ctrl-R to pick a repo,
 Ctrl-/ to show or hide the preview, or Escape to close. The preview shows the
 tree's uncommitted files, unpushed commits, and the agent's last lines; it hides
-itself in narrow terminals. The picker needs fzf 0.42 or newer. With fzf 0.73 or
+itself in narrow terminals. The picker needs fzf 0.45 or newer. With fzf 0.73 or
 newer it refreshes every two seconds while open and fills in the uncommitted
 (`±`) and unpushed (`↑`) counts shortly after it opens.
 
@@ -447,6 +453,10 @@ one invocation.
    not symlinks, so a tree can diverge.
 5. **Hook** — runs `ST_POST_CREATE`.
 
+In a terminal, the install and the hook each show as one live line with the time
+taken so far and their last three lines of output. If one fails, choose Enter to
+open the tree anyway, `r` to run it again, or Escape to stop; the worktree is kept.
+
 Build output (`.next`, `dist`) is never shared between trees.
 
 ### Per-repo config
@@ -460,8 +470,11 @@ st trust          # records this version for the repository
 st new feat-otp
 ```
 
-If `.supertree` changes, `st new` stops before creating a worktree until you
-review it and run `st trust` again. `st new --bare` does not execute it.
+If `.supertree` changes, `st new` stops before creating a worktree. In a
+terminal it shows what changed since you last trusted it (the whole file the
+first time) and lets you press `t` to trust it, `v` to open it in your editor,
+or Escape to stop; elsewhere it fails until you run `st trust` again.
+`st trust --show` prints the same view. `st new --bare` does not execute it.
 
 Example `.supertree`:
 
@@ -529,10 +542,13 @@ agent's continuation command. Agent transcripts live in their native stores, so
 this survives a hard `kill-session`, not just a clean exit.
 
 **Delete the tree** — `st rm <branch>`. Refuses while there are uncommitted
-changes or unpushed commits unless you pass `--force`, prints what it will
-remove, and asks. The branch is deleted only if it is merged. In the `M-w`
-picker, highlight a tree and press Ctrl-D to run the same guarded removal; the
-picker stays open afterwards. The main worktree cannot be deleted from the picker.
+changes or unpushed commits unless you pass `--force`, lists what it will
+remove, says up front whether the branch will be deleted (only if it is merged),
+and asks. With `--force` and work that would be lost, you type the branch name
+instead of `y`. In the `M-w` picker, highlight a tree and press Ctrl-D to run
+the same guarded removal; the picker stays open afterwards. If the tree has
+unsaved work, the picker lists it and offers Enter to open the tree, Ctrl-F to
+force delete, or Escape to go back. The main checkout cannot be deleted.
 
 **Clear the worktree root** — `st remove all` inventories Git checkouts at the
 root and one directory below it. It removes linked worktrees through Git and
@@ -561,6 +577,7 @@ the `st` symlink, not the checkout.
 | `~/.local/state/supertree/idx/<repo-id>/<branch-id>` | that tree's `ST_TREE_INDEX` |
 | `~/.local/state/supertree/seen/<repo-id>/<branch-id>.<harness>` | marker meaning that agent has run here, drives continuation |
 | `~/.local/state/supertree/trust/<repo-id>` | hash of the reviewed `.supertree` contents |
+| `~/.local/state/supertree/trust/<repo-id>.sh` | copy of that version, used to show what changed |
 | `~/.local/state/supertree/origin/<tty>` | which session a client came from, so closing a tree returns it there |
 
 A repo only shows up in `st go` / `st ls` after `st new` or `st home` registers it. Override the

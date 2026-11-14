@@ -73,15 +73,19 @@ cmd_new() {
 }
 
 cmd_trust() {
-  [ $# -eq 0 ] || die "usage: st trust"
-  local main fingerprint file
+  local main file show=0 snapshot
+  case ${1:-} in --show) show=1; shift;; esac
+  [ $# -eq 0 ] || die "usage: st trust [--show]"
   main=$(require_repo .)
   file="$main/.supertree"
   [ -f "$file" ] || die "no .supertree in $main"
-  fingerprint=$(config_fingerprint "$file")
-  mkdir -p "$ST_STATE/trust"
-  ( umask 077; printf '%s\n' "$fingerprint" > "$ST_STATE/trust/$(repo_key "$main")" )
-  ui_ok trusted "$file; changes will require trusting it again"
+  if [ "$show" = 1 ]; then trust_view "$main" "$file"; return 0; fi
+  # Trust exactly the bytes fingerprinted, even if the file changes meanwhile.
+  snapshot=$(mktemp)
+  cp "$file" "$snapshot"
+  trust_config "$main" "$snapshot"
+  rm -f "$snapshot"
+  ui_ok trusted "$(ui_path "$file"); changes will require trusting it again"
 }
 
 cmd_ls() {
@@ -185,7 +189,7 @@ cmd_rm() {
   done
   [ -n "$branch" ] || die "usage: st rm <branch> [--force]"
 
-  local main repo slug dir sess report current old_sess current_sess=''
+  local main repo slug dir sess report current old_sess current_sess='' label fate
   main=$(require_repo "${repo_arg:-.}")
   repo=$(repo_key "$main")
   slug=$(branch_key "$branch")
@@ -202,14 +206,39 @@ cmd_rm() {
   fi
 
   ! git_op_in_progress "$dir" || die "$branch is mid rebase or bisect; finish or abort it first"
+  label="$(basename "$main")/$branch"
   report=$(tree_dirty_report "$dir")
   if [ "$force" = 0 ] && [ -n "$report" ]; then
-    printf '%s\n' "$report" >&2
-    die "refusing to remove $branch — commit/push, or pass --force"
+    if [ "$UI_ROWS" = 1 ]; then
+      ui_title "$label has work that exists only here"
+      show_unsaved_work "$dir"
+      printf '\n' >&2
+    else
+      printf '%s\n' "$report" >&2
+    fi
+    # Exit 3 tells the picker this refusal can be overridden with force.
+    ui_fail "refusing to remove $branch — commit/push, or pass --force" "st rm $branch --force" 3
   fi
 
-  printf 'will remove:\n  tree      %s/%s\n  session   close\n  checkout  remove\n  branch    delete if merged\n' "$(basename "$main")" "$branch" >&2
-  ui_ask 'proceed?' n || die "aborted"
+  fate=keep
+  if branch_merged "$main" "$branch"; then fate=delete; fi
+  if [ "$UI_ROWS" = 1 ]; then
+    ui_title "Remove $label"
+    ui_info session close
+    ui_info checkout "remove $(ui_path "$dir")"
+    if [ "$fate" = delete ]; then ui_info branch "delete (merged)"
+    else ui_info branch "keep (not merged)"; fi
+    if [ "$force" = 1 ] && [ -n "$report" ]; then
+      show_unsaved_work "$dir"
+      ui_warn lost "these changes and commits go away for good"
+      ui_type_confirm "$branch" || ui_abort
+    else
+      ui_ask 'proceed?' n || ui_abort
+    fi
+  else
+    printf 'will remove:\n  tree      %s\n  session   close\n  checkout  remove\n  branch    %s\n' "$label" "$fate" >&2
+    ui_ask 'proceed?' n || die "aborted"
+  fi
 
   current=$(branch_worktree "$main" "$branch" || true)
   [ "$current" = "$dir" ] || die "worktree for $branch changed; refusing to remove $dir"
@@ -236,23 +265,46 @@ git_op_in_progress() {
 }
 
 # Picker and sidebar rows carry a tree's path, not its branch.
-remove_tree_at() {
+remove_tree_at() { # dir [--force]
   local dir=$1 branch main
-  [ -d "$dir" ] || die "already removed: $dir"
-  branch=$(tree_branch "$dir")
-  [ -n "$branch" ] || die "cannot delete a detached worktree"
+  [ -d "$dir" ] || ui_fail "already removed: $(ui_path "$dir")"
   main=$(main_worktree "$dir")
-  [ "$dir" != "$main" ] || die "cannot delete the main worktree"
-  cmd_rm "$branch" --repo "$main"
+  branch=$(tree_branch "$dir")
+  [ -n "$branch" ] ||
+    ui_fail "$(basename "$dir") is a detached checkout, not a tree st can delete" "git -C $(ui_path "$main") worktree remove $(ui_path "$dir")"
+  [ "$dir" != "$main" ] ||
+    ui_fail "$(basename "$main")/$branch $G_MAIN is the main checkout and can't be deleted" "st down $branch  to close its session"
+  cmd_rm "$branch" --repo "$main" ${2:+"$2"}
+}
+
+# Same test as `git branch -d`: merged into its upstream, or into HEAD when it
+# has none. https://git-scm.com/docs/git-branch#Documentation/git-branch.txt--d
+branch_merged() {
+  local main=$1 branch=$2 target
+  target=$(git -C "$main" rev-parse --abbrev-ref "$branch@{u}" 2>/dev/null) || target=HEAD
+  git -C "$main" merge-base --is-ancestor "refs/heads/$branch" "$target" 2>/dev/null
+}
+
+show_unsaved_work() {
+  local dir=$1 dirty unpushed n
+  dirty=$(git -C "$dir" status --porcelain 2>/dev/null || true)
+  unpushed=$(unpushed_log "$dir")
+  if [ -n "$dirty" ]; then
+    n=$(printf '%s\n' "$dirty" | wc -l | tr -d ' ')
+    ui_warn uncommitted "$n file$([ "$n" = 1 ] || printf s)"
+    printf '%s\n' "$dirty" | ui_list 5
+  fi
+  if [ -n "$unpushed" ]; then
+    n=$(printf '%s\n' "$unpushed" | wc -l | tr -d ' ')
+    ui_warn unpushed "$n commit$([ "$n" = 1 ] || printf s)"
+    printf '%s\n' "$unpushed" | ui_list 5
+  fi
 }
 
 tree_dirty_report() {
-  local dir=$1 dirty unpushed=''
+  local dir=$1 dirty unpushed
   dirty=$(git -C "$dir" status --porcelain 2>/dev/null || true)
-  # Not `@{u}..`: trees branched off origin/dev track it, so commits merged in from any remote branch look unpushed.
-  if [ -n "$(git -C "$dir" remote)" ]; then
-    unpushed=$(git -C "$dir" log --format=%s HEAD --not --remotes 2>/dev/null || true)
-  fi
+  unpushed=$(unpushed_log "$dir" %s)
   [ -z "$dirty" ] || printf 'uncommitted changes:\n%s\n' "$dirty"
   [ -z "$unpushed" ] || printf 'unpushed commits:\n%s\n' "$unpushed"
 }
@@ -398,7 +450,7 @@ cmd_remove() {
 
 
 st_register_command 'new' cmd_new 'create a worktree and open its session' 'new <branch> [--from <base>] [--bare]'
-st_register_command 'trust' cmd_trust 'trust a reviewed .supertree config'
+st_register_command 'trust' cmd_trust 'trust a reviewed .supertree config (--show: what changed)' 'trust [--show]'
 st_register_command 'ls' cmd_ls 'show every tree in a readable grid'
 st_register_command 'status' cmd_status 'show agent status' 'status [tree]'
 st_register_command 'rm' cmd_rm 'remove a worktree and its session' 'rm <branch> [--force]'

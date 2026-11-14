@@ -110,6 +110,12 @@ unpushed_count() {
   git -C "$dir" rev-list --count HEAD --not --remotes 2>/dev/null || printf '0\n'
 }
 
+unpushed_log() { # dir [git log format]
+  local dir=$1
+  [ -n "$(git -C "$dir" remote 2>/dev/null)" ] || return 0
+  git -C "$dir" log --format="${2:-%h %s}" HEAD --not --remotes 2>/dev/null || true
+}
+
 # Rows: status, repo key, repo name, branch, main|worktree, path, session,
 # recency rank, then with --git the uncommitted and unpushed counts.
 tree_rows() {

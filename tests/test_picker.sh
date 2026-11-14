@@ -57,6 +57,7 @@ printf '%s\n' \
   'input=$(cat)' \
   '{ printf "args: %s\n" "$*"; printf "%s\n" "$input"; } >> "$ST_FZF_LOG"' \
   'case "$*" in' \
+  '  *--print-query*) printf "%s\n\n" "${ST_FZF_QUERY:-}";;' \
   '  *--expect*) printf "\n"; printf "%s\n" "$input" | grep -m1 -- "$ST_FZF_PICK";;' \
   '  *) printf "%s\n" "$input" | head -1;;' \
   'esac' > "$TEST_ROOT/fzf-bin/fzf"
@@ -103,8 +104,8 @@ grep -qxF '=demo/Main' "$ST_TMUX_LOG" || fail 'lowercase query did not attach de
 # "+ new branch" offers only repos that still exist.
 export ST_FZF_PICK='new tree'
 printf '%s\n' "$TEST_ROOT/one/demo" "$TEST_ROOT/gone/demo" "$TEST_ROOT/two/demo" > "$ST_STATE/repos"
-printf 'picked\n' | with_fzf go >/dev/null 2>&1 || fail '+ new branch failed with one missing repo'
-repo_choices=$(awk '/^args: --prompt=repo> /{on=1; next} /^args: /{on=0} on' "$ST_FZF_LOG")
+ST_FZF_QUERY=picked with_fzf go >/dev/null 2>&1 || fail '+ new branch failed with one missing repo'
+repo_choices=$(awk '/^args: .*--prompt=Repo › /{on=1; next} /^args: /{on=0} on' "$ST_FZF_LOG")
 [ -n "$repo_choices" ] || fail 'repo chooser was not shown for two live repos'
 if printf '%s\n' "$repo_choices" | grep -qF "$TEST_ROOT/gone/demo"; then
   fail 'repo chooser offered a repo whose directory is gone'
@@ -113,7 +114,7 @@ git -C "$TEST_ROOT/one/demo" show-ref --verify --quiet refs/heads/picked ||
   fail '+ new branch did not create the branch in the chosen repo'
 
 printf '%s\n' "$TEST_ROOT/gone/demo" "$TEST_ROOT/also-gone/demo" > "$ST_STATE/repos"
-if printf 'nothing\n' | with_fzf go > /dev/null 2> "$TEST_ROOT/err"; then
+if ST_FZF_QUERY=nothing with_fzf go > /dev/null 2> "$TEST_ROOT/err"; then
   fail '+ new branch succeeded with no existing repos'
 fi
 grep -q 'no roots known yet' "$TEST_ROOT/err" || fail 'all-missing repos did not say no roots known yet'
