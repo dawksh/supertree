@@ -161,7 +161,9 @@ create_window() {
   local cmd=()
   self=$(st_self)
   name=$(window_name "$type")
-  printf -v run 'env HOME=%q SHELL=%q ST_CONFIG=%q ST_STATE=%q ST_WORKTREE_ROOT=%q ST_HARNESS=%q ST_WINDOWS=%q ST_HARNESS_COMMAND=%q ST_HARNESS_RESUME_COMMAND=%q ST_SHELL=%q %q _run' \
+  # The first pane starts before session_environment can remove NO_COLOR from
+  # tmux's server environment. Keep the user's UI preference out of programs.
+  printf -v run 'env -u NO_COLOR HOME=%q SHELL=%q ST_CONFIG=%q ST_STATE=%q ST_WORKTREE_ROOT=%q ST_HARNESS=%q ST_WINDOWS=%q ST_HARNESS_COMMAND=%q ST_HARNESS_RESUME_COMMAND=%q ST_SHELL=%q %q _run' \
     "$HOME" "$(tree_shell)" "$ST_CONFIG" "$ST_STATE" "$ST_WORKTREE_ROOT" \
     "$ST_HARNESS" "$ST_WINDOWS" "$ST_HARNESS_COMMAND" "$ST_HARNESS_RESUME_COMMAND" "${ST_SHELL:-}" "$self"
   case $type in
@@ -169,7 +171,7 @@ create_window() {
     vim) cmd=("$run nvim");;
     shell) cmd=("$(shell_command)");;
     # Argument form skips tmux's own `sh -c`, so the configured command is parsed once.
-    *) cmd=("$self" _run /bin/sh -c "$(tab_command "$type")");;
+    *) cmd=(env -u NO_COLOR "$self" _run /bin/sh -c "$(tab_command "$type")");;
   esac
   if [ "$initial" = 1 ]; then
     tmux new-session -d -s "$sess" -c "$dir" -n "$name" ${cmd[@]+"${cmd[@]}"} || return 1
@@ -181,12 +183,23 @@ create_window() {
 
 # Tab look is set per session and window so other tmux sessions keep the user's status bar.
 style_session() {
+  local width=$(( ${ST_SIDEBAR_WIDTH:-24} + 1 )) label_width left_half right_half left
+  label_width=$((width - 4))
+  left_half=$(((label_width - 1) / 2))
+  right_half=$((label_width - 1 - left_half))
+  # Keep the tab strip aligned with the configured sidebar width. A long name
+  # keeps both ends so its repo and branch suffix stay identifiable.
+  printf -v left ' #{?@supertree_home,#{p%d:@supertree_label},#{?@st_state_glyph,#{@st_state_glyph},%s} #{p%d:#{?#{==:#{@supertree_label},#{=%d:@supertree_label}},#{@supertree_label},#{=%d:@supertree_label}…#{=-%d:@supertree_label}}}} ' \
+    "$((width - 2))" "${G_OFF:-·}" "$label_width" "$label_width" "$left_half" "$right_half"
   tmux set-option -t "=$1:" default-shell "$(tree_shell)" &&
   tmux set-option -t "=$1:" status-position top &&
   tmux set-option -t "=$1:" status-justify left &&
   tmux set-option -t "=$1:" status-style 'fg=default,bg=default' &&
-  tmux set-option -t "=$1:" status-right-length 40 &&
-  tmux set-option -t "=$1:" status-right '#{?@supertree_home,,#[dim]#{@supertree_label}#[default] }' &&
+  tmux set-option -t "=$1:" status-left-length "$width" &&
+  tmux set-option -t "=$1:" status-left "$left" &&
+  tmux set-option -t "=$1:" status-right-length 80 &&
+  # @st_need_text (global, opt-in) and @st_state_glyph (per tree) come from the sidebar refresher.
+  tmux set-option -t "=$1:" status-right '#{?@st_need_text,#[fg=yellow]#{@st_need_text}#[default]  ,}' &&
   tmux set-option -t "=$1:" status on &&
   # When a tree's last program exits, switch to the most recent session instead of
   # leaving tmux. Session-scoped, so the global setting is untouched.
@@ -237,7 +250,7 @@ cmd_split() {
   [ -n "$pane" ] || die "no program pane to split"
   local sess
   sess=$(tmux display-message -p -t "$pane" '#S')
-  is_tree_session "$sess" || { info "not a supertree session"; return 0; }
+  is_tree_session "$sess" || { ui_toast "not a supertree session"; return 0; }
   session_environment "$sess"
   win=$(tmux display-message -p -t "$pane" '#W')
   dir=$(tmux display-message -p -t "$pane" '#{pane_current_path}')
@@ -499,8 +512,7 @@ cmd_down() {
 $live
 EOF
     if [ "$yes" = 0 ]; then
-      printf 'unsaved editor buffers are lost. proceed? [y/N] ' >&2; read -r ans
-      case ${ans:-n} in y|Y|yes) ;; *) die "aborted";; esac
+      ui_ask 'unsaved editor buffers are lost. proceed?' n || die "aborted"
     fi
     [ "$target" != --subtrees ] || ensure_main_fallbacks "$trees"
     [ -z "${TMUX:-}" ] || current=$(current_session)
@@ -511,7 +523,7 @@ EOF
     done <<EOF
 $live
 EOF
-    info "closed selected tree sessions (worktrees kept)"
+    ui_ok closed "selected tree sessions (worktrees kept)"
     [ "$close_current" = 0 ] || tmux kill-session -t "=$current"
     return 0
   fi
@@ -520,7 +532,7 @@ EOF
   all=$(printf '%s\n' "$trees" | cut -f4)
 
   if [ -n "$target" ]; then
-    s=$(resolve_session "$target" "$trees") || die "no tree matching: $target"
+    s=$(resolve_session "$target" "$trees") || ui_fail "no tree matching: $target" "st ls  ·  M-w"
   elif [ -n "${TMUX:-}" ]; then
     s=$(current_session)
   else
@@ -537,7 +549,7 @@ EOF
   tmux has-session -t "=$s" 2>/dev/null || { info "$label already closed"; return 0; }
   evacuate_clients "$s"
   tmux kill-session -t "=$s"
-  info "closed $label (worktree kept — 'st resume' brings it back)"
+  ui_ok closed "$label (worktree kept — 'st resume' brings it back)"
 }
 
 cmd_toggle() {
@@ -551,7 +563,7 @@ cmd_toggle() {
   windows=$(configured_windows)
   first=$(printf '%s\n' "$windows" | sed -n '1p')
   second=$(printf '%s\n' "$windows" | sed -n '2p')
-  [ -n "$second" ] || { info "toggle needs at least two configured windows"; return 0; }
+  [ -n "$second" ] || { ui_toast "toggle needs at least two configured windows"; return 0; }
   first_name=$(window_name "$first")
   if [ "$cur" = "$first_name" ]; then target=$second; else target=$first; fi
   select_window_type "$target" "$windows"
@@ -559,10 +571,10 @@ cmd_toggle() {
 
 select_window_type() {
   local type=$1 windows=${2:-} pane sess name dir
-  window_enabled "$type" "$windows" || { info "$type window is not enabled in ST_WINDOWS"; return 0; }
+  window_enabled "$type" "$windows" || { ui_toast "$type window is not enabled in ST_WINDOWS"; return 0; }
   pane=${TMUX_PANE:-}
   sess=$(current_session)
-  is_tree_session "$sess" || { info "not a supertree session"; return 0; }
+  is_tree_session "$sess" || { ui_toast "not a supertree session"; return 0; }
   session_environment "$sess"
   name=$(window_name "$type")
   tmux select-window -t "=$sess:$name" 2>/dev/null && return 0
@@ -576,14 +588,14 @@ cmd_window() {
   case $slot in ''|*[!0-9]*|0) die "usage: st window <positive slot>";; esac
   windows=$(configured_windows)
   type=$(printf '%s\n' "$windows" | sed -n "${slot}p")
-  [ -n "$type" ] || { info "no window configured for slot $slot"; return 0; }
+  [ -n "$type" ] || { ui_toast "no window configured for slot $slot"; return 0; }
   select_window_type "$type" "$windows"
 }
 
 cmd_last() {
   local current trees sess path
   [ -n "${TMUX:-}" ] || die "st last only works inside tmux"
-  [ -f "$ST_STATE/recent" ] || { info "no other tree opened yet"; return 0; }
+  [ -f "$ST_STATE/recent" ] || { ui_toast "no other tree opened yet"; return 0; }
   current=$(current_session)
   trees=$(list_trees)
   # Record the current tree so the next M-Tab comes straight back.
@@ -598,7 +610,7 @@ cmd_last() {
     attach "$sess"
     return 0
   done < "$ST_STATE/recent"
-  info "no other tree opened yet"
+  ui_toast "no other tree opened yet"
 }
 
 cmd_agent() {

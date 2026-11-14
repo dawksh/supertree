@@ -72,7 +72,54 @@ EOF
   [ "$duplicates" = 0 ] && [ "$mismatches" = 0 ]
 }
 
+# Minimums per decision 6 in the redesign plan, from the fzf CHANGELOG and tmux CHANGES:
+# https://github.com/junegunn/fzf/blob/master/CHANGELOG.md  https://github.com/tmux/tmux/blob/master/CHANGES
+doctor_versions() {
+  local v
+  if command -v fzf >/dev/null 2>&1; then
+    v=$(fzf_version)
+    if [ -z "$v" ]; then printf '  WARN  fzf version unreadable; the picker needs 0.45 or newer\n'
+    elif version_at_least "$v" 0 45; then printf '  ok    fzf %s.%s (0.45 or newer)\n' "${v% *}" "${v#* }"
+    else printf '  MISS  fzf %s.%s is too old; the picker needs 0.45 or newer\n' "${v% *}" "${v#* }"; return 1; fi
+  fi
+  command -v tmux >/dev/null 2>&1 || return 0
+  v=$(tmux -V 2>/dev/null | awk '{ v = $2; sub(/^next-/, "", v); split(v, p, /[^0-9]+/); if (p[1] != "") print p[1] " " p[2] + 0 }')
+  if [ -z "$v" ]; then printf '  WARN  tmux version unreadable; supertree needs 3.3 or newer\n'
+  elif version_at_least "$v" 3 3; then printf '  ok    tmux %s.%s (3.3 or newer)\n' "${v% *}" "${v#* }"
+  else printf '  MISS  tmux %s.%s is too old; supertree needs 3.3 or newer\n' "${v% *}" "${v#* }"; return 1; fi
+}
+
+dep_fix() {
+  local pkg=$1
+  case $1 in
+    nvim) pkg=neovim;;
+    claude|codex|opencode) printf '  fix   install %s, or pick another agent with st config\n' "$1"; return 0;;
+  esac
+  if command -v brew >/dev/null 2>&1; then printf '  fix   brew install %s\n' "$pkg"
+  else printf '  fix   install %s with your package manager\n' "$pkg"; fi
+}
+
+# Piped output keeps the plain "ok / MISS / WARN / --" lines scripts and tests read.
 cmd_doctor() {
+  local out rc=0
+  [ -t 1 ] || { doctor_checks; return; }
+  out=$(doctor_checks) || rc=$?
+  printf '%s\n' "$out" | awk -v okc="$UI_OK" -v errc="$UI_ERR" -v warnc="$UI_WARN" -v dim="$UI_DIM" \
+    -v a="$UI_A" -v r="$UI_R" -v gok="$G_OK" -v gerr="$G_ERR" -v gwarn="$G_WARN" '
+    /^  ok    / { print "  " okc gok r "  " substr($0, 9); next }
+    /^  MISS  / { print "  " errc gerr r "  " substr($0, 9); problems++; next }
+    /^  WARN  / { print "  " warnc gwarn r "  " substr($0, 9); problems++; next }
+    /^  fix   / { print "     " dim "fix" r "  " a substr($0, 9) r; next }
+    /^  --    / { if (!info++) print ""; print "  " dim substr($0, 9) r; next }
+    { print "  " dim $0 r }
+    END {
+      if (problems) printf "\n  %s%d problem%s%s\n", errc, problems, (problems == 1 ? "" : "s"), r
+      else printf "\n  %s%s%s  everything looks fine\n", okc, gok, r
+    }'
+  return "$rc"
+}
+
+doctor_checks() {
   local ok=0 b deps='tmux git fzf' agent_bin windows type tab tmux_conf
   local self fragment split_key
   windows=$(configured_windows)
@@ -86,20 +133,22 @@ cmd_doctor() {
   [ "${ST_SIDEBAR:-1}" = 0 ] || deps="$deps curl"
   for b in $deps; do
     if command -v "$b" >/dev/null 2>&1; then printf '  ok    %s\n' "$b"
-    else printf '  MISS  %s\n' "$b"; ok=1; fi
+    else printf '  MISS  %s\n' "$b"; dep_fix "$b"; ok=1; fi
   done
+  doctor_versions || ok=1
   self=$(command -v st 2>/dev/null) || self=""
   if [ -n "$self" ]; then printf '  ok    st on PATH (%s)\n' "$self"
-  else printf '  MISS  st not on PATH\n'; ok=1; fi
+  else printf '  MISS  st not on PATH\n'; printf '  fix   add ~/.local/bin to PATH in your shell profile\n'; ok=1; fi
   tmux_conf=$(installed_tmux_conf)
   fragment=$(installed_fragment)
   if [ -f "$ST_CONFIG" ] && ! bash -n "$ST_CONFIG" >/dev/null 2>&1; then
-    printf '  MISS  %s has invalid shell syntax\n' "$ST_CONFIG"; ok=1
+    printf '  MISS  %s has invalid shell syntax\n' "$ST_CONFIG"
+    printf '  fix   bash -n %s  shows the line\n' "$ST_CONFIG"; ok=1
   fi
   if { [ "$ST_VERSION" = dev ] && grep -qF 'supertree.conf' "$tmux_conf" 2>/dev/null; } ||
      grep -qxF "source-file $fragment" "$tmux_conf" 2>/dev/null; then
     printf '  ok    %s sources supertree.conf\n' "$tmux_conf"
-  else printf '  MISS  %s does not source supertree.conf\n' "$tmux_conf"; ok=1; fi
+  else printf '  MISS  %s does not source supertree.conf\n' "$tmux_conf"; printf '  fix   st repair\n'; ok=1; fi
   if [ "$ST_VERSION" != dev ]; then
     split_key=${ST_KEY_SPLIT:-M-v}
     if [ -f "$fragment" ] && awk -v key="$split_key" '
@@ -108,7 +157,7 @@ cmd_doctor() {
     ' "$fragment"; then
       printf '  ok    %s binds %s to split\n' "$fragment" "$split_key"
     else
-      printf '  MISS  %s does not bind %s to split\n' "$fragment" "$split_key"; ok=1
+      printf '  MISS  %s does not bind %s to split\n' "$fragment" "$split_key"; printf '  fix   st repair\n'; ok=1
     fi
     audit_bindings "$fragment" doctor || ok=1
   fi
@@ -176,6 +225,112 @@ cmd_update() {
 
 cmd_version() { printf "st %s\n" "$ST_VERSION"; }
 
+# Replaces KEY=… in the config, or appends it; an empty value removes the line.
+config_set() { # key value
+  local key=$1 value=$2 staged
+  case $value in *"'"*) die "config values cannot contain a single quote";; esac
+  mkdir -p "$(dirname "$ST_CONFIG")"
+  [ -f "$ST_CONFIG" ] || : > "$ST_CONFIG"
+  staged=$(mktemp "$ST_CONFIG.XXXXXX")
+  awk -v key="$key" -v line="${value:+$key='$value'}" '
+    index($0, key "=") == 1 { if (line != "" && !done) print line; done = 1; next }
+    { print }
+    END { if (line != "" && !done) print line }' "$ST_CONFIG" > "$staged"
+  mv "$staged" "$ST_CONFIG"
+}
+
+config_rows() {
+  local windows type
+  windows=$(for type in $ST_WINDOWS; do printf '%s, ' "$(window_name "$type")"; done)
+  windows=${windows%, }
+  printf 'agent      %s%s%s\tagent\n' "$UI_B" "$(harness_label)" "$UI_R"
+  printf 'windows    %s%s%s\twindows\n' "$UI_B" "$windows" "$UI_R"
+  printf 'waiting    %s%s%s  %scount on the status line%s\tstatus\n' "$UI_B" \
+    "$([ "${ST_STATUS_RIGHT:-0}" = 1 ] && printf on || printf off)" "$UI_R" "$UI_DIM" "$UI_R"
+  printf 'notify     %s%s%s  %sdesktop notices%s\tnotify\n' "$UI_B" \
+    "$([ "${ST_NOTIFY:-0}" = 1 ] && printf on || printf off)" "$UI_R" "$UI_DIM" "$UI_R"
+  printf 'sidebar    %s%s%s\tsidebar\n' "$UI_B" \
+    "$([ "${ST_SIDEBAR:-1}" = 0 ] && printf off || printf on)" "$UI_R"
+}
+
+config_pick_harness() {
+  local pick
+  pick=$(printf '%s\n' claude codex openrouter |
+    awk -v cur="$ST_HARNESS" '{ print ($0 == cur ? "● " : "  ") $0 }' |
+    fzf --height=100% --reverse --border=rounded --border-label=' Agent ' --prompt='Agent › ' \
+        --pointer='▌' --header='⏎ choose  esc back' --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || return 0
+  pick=${pick#??}
+  [ "$pick" != "$ST_HARNESS" ] || return 0
+  config_set ST_HARNESS "$pick"
+  ST_HARNESS=$pick
+}
+
+# Enter adds a window at the end or removes it, so the order is the order you add them.
+config_pick_windows() {
+  local types type pick list n
+  types="agent vim shell $(compgen -v ST_TAB_ | sed 's/^ST_TAB_//' | tr '\n' ' ')"
+  list=$ST_WINDOWS
+  while :; do
+    pick=$(for type in $types; do
+      n=$(printf '%s\n' $list | grep -nxF -- "$type" | cut -d: -f1)
+      printf '%s  %s%s\t%s\n' "${n:- }" "$type" "$([ "$type" != agent ] || printf ' (%s)' "$(harness_label)")" "$type"
+    done | fzf --delimiter=$'\t' --with-nth=1 --height=100% --reverse --border=rounded \
+        --border-label=' Windows ' --prompt='Window › ' --pointer='▌' \
+        --header='⏎ add at the end / remove  esc save' --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || break
+    type=${pick##*$'\t'}
+    if printf '%s\n' $list | grep -qxF -- "$type"; then
+      list=$(printf '%s\n' $list | grep -vxF -- "$type" | tr '\n' ' ')
+    else
+      list="$list $type"
+    fi
+    list=$(printf '%s' "$list" | tr -s ' ' | sed 's/^ //; s/ $//')
+  done
+  [ -n "$list" ] || { ui_warn windows "at least one is needed; kept $ST_WINDOWS"; sleep 1.5; return 0; }
+  [ "$list" != "$ST_WINDOWS" ] || return 0
+  config_set ST_WINDOWS "$list"
+  ST_WINDOWS=$list
+}
+
+cmd_config() {
+  local pick changed=0 pid
+  [ $# -eq 0 ] || die "usage: st config"
+  if [ ! -t 0 ] || [ ! -t 1 ] || ! command -v fzf >/dev/null 2>&1; then
+    printf 'agent\t%s\nwindows\t%s\nwaiting\t%s\nnotify\t%s\nsidebar\t%s\nconfig\t%s\n' "$ST_HARNESS" "$ST_WINDOWS" \
+      "$([ "${ST_STATUS_RIGHT:-0}" = 1 ] && printf on || printf off)" \
+      "$([ "${ST_NOTIFY:-0}" = 1 ] && printf on || printf off)" \
+      "$([ "${ST_SIDEBAR:-1}" = 0 ] && printf off || printf on)" "$ST_CONFIG"
+    return 0
+  fi
+  ui_colour_on
+  if declare -F fzf_gutter_init >/dev/null; then fzf_gutter_init; fi
+  while :; do
+    pick=$(config_rows | fzf --ansi --delimiter=$'\t' --with-nth=1 --height=100% --reverse --no-sort \
+      --border=rounded --border-label=' Settings ' --border-label-pos=3 --prompt='Setting › ' \
+      --pointer='▌' --header="⏎ change  esc done   $(ui_path "$ST_CONFIG")" --header-first \
+      --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || break
+    case ${pick##*$'\t'} in
+      agent) config_pick_harness;;
+      windows) config_pick_windows;;
+      status) if [ "${ST_STATUS_RIGHT:-0}" = 1 ]; then ST_STATUS_RIGHT=''; else ST_STATUS_RIGHT=1; fi
+              config_set ST_STATUS_RIGHT "$ST_STATUS_RIGHT";;
+      notify) if [ "${ST_NOTIFY:-0}" = 1 ]; then ST_NOTIFY=''; else ST_NOTIFY=1; fi
+              config_set ST_NOTIFY "$ST_NOTIFY";;
+      sidebar) if [ "${ST_SIDEBAR:-1}" = 0 ]; then ST_SIDEBAR=1; config_set ST_SIDEBAR ''
+               else ST_SIDEBAR=0; config_set ST_SIDEBAR 0; fi;;
+    esac
+    changed=1
+  done
+  [ "$changed" = 1 ] || return 0
+  ui_ok saved "$(ui_path "$ST_CONFIG")"
+  # The refresher read the old config when it started; a fresh one picks up the status line.
+  pid=$(cat "${ST_SIDEBAR_DIR:-/nonexistent}/poll.lock/pid" 2>/dev/null) || pid=''
+  if [ -n "$pid" ] && declare -F sidebar_poll_start >/dev/null && kill "$pid" 2>/dev/null; then
+    rm -rf "$ST_SIDEBAR_DIR/poll.lock"
+    sidebar_poll_start
+  fi
+  ui_info "open trees" "pick up agent and window changes when reopened (st down, then st go)"
+}
+
 cmd_uninstall() {
   [ $# -eq 0 ] || die "usage: st uninstall"
   local self confdir tmux_conf fragment config staged sessions sess manifest key binding module_dir
@@ -205,8 +360,7 @@ cmd_uninstall() {
   printf 'will uninstall:\n  command  %s\n  bindings %s\n  config   %s\n  state    %s\n' \
     "$self" "$fragment" "$config" "$ST_STATE" >&2
   [ -f "$tmux_conf" ] && printf '  tmux     %s (Supertree source line)\n' "$tmux_conf" >&2
-  printf 'proceed? [y/N] ' >&2; read -r ans
-  case ${ans:-n} in y|Y|yes) ;; *) die "aborted";; esac
+  ui_ask 'proceed?' n || die "aborted"
 
   sessions=$(known_sessions)
   if home_is_open; then sessions=$(printf '%s\n%s' "$sessions" "$ST_HOME_SESSION"); fi
@@ -254,6 +408,7 @@ EOF
       [ "$(tmux show-options -gv status-left-length 2>/dev/null || true)" != 60 ] ||
         tmux set-option -gu status-left-length 2>/dev/null || true
     fi
+    tmux set-option -gu @st_need_text 2>/dev/null || true
     [ ! -f "$tmux_conf" ] || tmux source-file "$tmux_conf" 2>/dev/null || true
   fi
   rm -rf -- "$ST_STATE"
@@ -265,7 +420,7 @@ EOF
     done
   fi
   rm -f -- "$self" "$manifest"
-  info "uninstalled st"
+  ui_ok uninstalled st
   if [ "$close_current" = 1 ]; then
     tmux kill-session -t "=$current_sess" 2>/dev/null || true
   fi
@@ -275,6 +430,7 @@ EOF
 st_register_command 'update' cmd_update 'install the latest release'
 st_register_command 'uninstall' cmd_uninstall 'remove the command, config, bindings, and state'
 st_register_command 'doctor' cmd_doctor 'check the installation'
+st_register_command 'config' cmd_config 'change agent, windows, status line and sidebar'
 cmd_binding_audit() { audit_bindings "$(installed_fragment)" "${1:-doctor}"; }
 st_register_command '_binding-audit' cmd_binding_audit
 st_register_command 'version' cmd_version 'show the installed version'

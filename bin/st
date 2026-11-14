@@ -119,9 +119,8 @@ ST_HARNESS_COMMAND=${ST_HARNESS_COMMAND:-}
 ST_HARNESS_RESUME_COMMAND=${ST_HARNESS_RESUME_COMMAND:-}
 ST_WINDOWS=${ST_WINDOWS-'agent vim shell'}
 
-# A tmux server started from a no-color environment can pass this to every
-# harness, even when the terminal itself supports color.
-unset NO_COLOR
+# Keep NO_COLOR for st's own UI. session_environment and shell_command remove it
+# from tmux panes so agents still use the terminal's colors.
 
 # Follow source-install symlinks so the command finds modules beside bin/st.
 st_source=$0
@@ -168,14 +167,36 @@ for st_module in "$st_lib_dir"/*.sh; do
   . "$st_module"
 done
 
+# Commands a module adds without a group here land under "more".
+ST_HELP_GROUPS='trees:open go resume new roots ls status last split home down rm remove
+setup:config trust doctor keys update repair version uninstall'
+
 usage() {
-  local i
-  printf 'st — supertree: worktree + tmux + coding-agent harness\n\n'
-  printf '  %-43s %s\n' 'repair' 'restore this release and reload tmux bindings'
+  local i group title names name a='' b='' r='' shown=' '
+  if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then a=$'\033[36m' b=$'\033[1m' r=$'\033[0m'; fi
+  printf '%sst%s — supertree: worktree + tmux + coding-agent harness\n' "$b" "$r"
+  while IFS=: read -r title names; do
+    printf '\n%s%s%s\n' "$b" "$title" "$r"
+    for name in $names; do
+      if [ "$name" = repair ]; then
+        printf '  %s%-43s%s %s\n' "$a" repair "$r" 'restore this release and reload tmux bindings'
+        continue
+      fi
+      for ((i=0; i<${#ST_COMMAND_NAMES[@]}; i++)); do
+        [ "${ST_COMMAND_NAMES[i]}" = "$name" ] && [ -n "${ST_COMMAND_HELP[i]}" ] || continue
+        printf '  %s%-43s%s %s\n' "$a" "${ST_COMMAND_USAGE[i]}" "$r" "${ST_COMMAND_HELP[i]}"
+      done
+      shown="$shown$name "
+    done
+  done <<< "$ST_HELP_GROUPS"
+  group=''
   for ((i=0; i<${#ST_COMMAND_NAMES[@]}; i++)); do
     [ -n "${ST_COMMAND_HELP[i]}" ] || continue
-    printf '  %-43s %s\n' "${ST_COMMAND_USAGE[i]}" "${ST_COMMAND_HELP[i]}"
+    case $shown in *" ${ST_COMMAND_NAMES[i]} "*) continue;; esac
+    [ -n "$group" ] || { printf '\n%smore%s\n' "$b" "$r"; group=1; }
+    printf '  %s%-43s%s %s\n' "$a" "${ST_COMMAND_USAGE[i]}" "$r" "${ST_COMMAND_HELP[i]}"
   done
+  printf '\n'
   print_keys
 }
 
@@ -198,7 +219,8 @@ keys (inside tmux; defaults, rebind with ST_KEY_* in the config)
   M-/         show these keys
 
 tree picker
-  Enter  open tree           Ctrl-D  delete tree
+  Enter  open tree           Ctrl-N  new tree       Ctrl-D  delete tree
+  Ctrl-R pick a repo         Ctrl-/  preview        Esc     close
 
 sidebar
   Enter / l   open tree      j / k   move      g / G   first / last

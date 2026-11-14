@@ -73,50 +73,87 @@ cmd_new() {
 }
 
 cmd_trust() {
-  [ $# -eq 0 ] || die "usage: st trust"
-  local main fingerprint file
+  local main file show=0 snapshot
+  case ${1:-} in --show) show=1; shift;; esac
+  [ $# -eq 0 ] || die "usage: st trust [--show]"
   main=$(require_repo .)
   file="$main/.supertree"
   [ -f "$file" ] || die "no .supertree in $main"
-  fingerprint=$(config_fingerprint "$file")
-  mkdir -p "$ST_STATE/trust"
-  ( umask 077; printf '%s\n' "$fingerprint" > "$ST_STATE/trust/$(repo_key "$main")" )
-  info "trusted $file; changes will require trusting it again"
+  if [ "$show" = 1 ]; then trust_view "$main" "$file"; return 0; fi
+  # Trust exactly the bytes fingerprinted, even if the file changes meanwhile.
+  snapshot=$(mktemp)
+  cp "$file" "$snapshot"
+  trust_config "$main" "$snapshot"
+  rm -f "$snapshot"
+  ui_ok trusted "$(ui_path "$file"); changes will require trusting it again"
 }
 
 cmd_ls() {
-  local repo branch path s live changes agent kind repos statuses
-  repos=$(main_checkouts)
-  statuses=$(agent_statuses)
-  list_trees | while IFS=$'\t' read -r repo branch path s; do
-    agent=$(printf '%s\n' "$statuses" | awk -F '\t' -v s="$s" '$1 == s { print $2; exit }')
-    if [ -n "$agent" ]; then live='open'; else live='closed'; agent='-'; fi
-    if [ -n "$(git -C "$path" status --porcelain 2>/dev/null)" ]; then changes='modified'; else changes='clean'; fi
-    case $'\n'"$repos"$'\n' in
-      *$'\n'"$path"$'\n'*) kind='main';;
-      *) kind='worktree';;
-    esac
-    printf '%s\t%s\t%s\t%s\t%s\n' "$(tree_label "$repo" "$branch")" "$live" "$agent" "$changes" "$kind"
-  done | awk -F '\t' '
-    { for (i = 1; i <= 5; i++) { cell[NR,i] = $i; if (length($i) > width[i]) width[i] = length($i) } }
-    END {
-      title[1] = "TREE"; title[2] = "SESSION"; title[3] = "AGENT"
-      title[4] = "CHANGES"; title[5] = "TYPE"
-      for (i = 1; i <= 5; i++) if (length(title[i]) > width[i]) width[i] = length(title[i])
-      for (row = 0; row <= NR; row++) {
-        for (i = 1; i <= 5; i++) {
-          value = row ? cell[row,i] : title[i]
-          if (i == 5) printf "%s\n", value
-          else printf "%-*s  ", width[i], value
-        }
-        if (row == 0) {
-          for (i = 1; i <= 5; i++) {
-            for (j = 0; j < width[i]; j++) printf "-"
-            printf "%s", (i == 5 ? "\n" : "  ")
-          }
-        }
-      }
+  local rows
+  rows=$(tree_rows --git | order_by_repo)
+  if [ ! -t 1 ]; then
+    [ -z "$rows" ] || printf '%s\n' "$rows" | awk -F '\t' '{
+      open = $1 != "closed"
+      print $3 "/" $4 "\t" (open ? "open" : "closed") "\t" (open ? $1 : "-") "\t" \
+        ($9 > 0 ? "modified" : "clean") "\t" $5
     }'
+    return 0
+  fi
+  [ -n "$rows" ] || { ui_info "no trees yet — run st new <branch> inside a repo"; return 0; }
+  ls_grid "$rows"
+}
+
+ls_grid() {
+  local rows=$1 width=14 group='' main mark_width changes changes_color changes_width
+  local status repo rname branch kind path sess rank dirty unpushed
+  local total=0 need=0 run=0 finished=0 closed=0
+  while IFS=$'\t' read -r status repo rname branch kind path sess rank dirty unpushed; do
+    [ $(( ${#branch} + 4 )) -le "$width" ] || width=$(( ${#branch} + 4 ))
+  done <<ROWS
+$rows
+ROWS
+
+  while IFS=$'\t' read -r status repo rname branch kind path sess rank dirty unpushed; do
+    if [ "$repo" != "$group" ]; then
+      group=$repo
+      main=$(main_worktree "$path")
+      printf '  %s%s%s%s  %s%s\n' "$UI_REPO$UI_B" "$rname" "$UI_R" "$UI_DIM" "$(ui_path "${main:-$path}")" "$UI_R"
+    fi
+    printf '    %s%s%s%s' "$(ui_status "$status" 11)" "$UI_B" "$branch" "$UI_R"
+    mark_width=0
+    if [ "$kind" = main ]; then
+      printf ' %s%s%s' "$UI_DIM" "$G_MAIN" "$UI_R"
+      mark_width=2
+    fi
+    printf '%*s' $(( width - ${#branch} - mark_width )) ''
+    if [ "$dirty" -gt 0 ]; then
+      changes="$G_DIRTY$dirty" changes_color=$UI_WARN changes_width=$((1 + ${#dirty}))
+    else
+      changes=clean changes_color=$UI_DIM changes_width=5
+    fi
+    if [ "$unpushed" -eq 0 ]; then
+      printf '%s%s%s\n' "$changes_color" "$changes" "$UI_R"
+    else
+      printf '%s%s%s%*s%s%s%s%s\n' "$changes_color" "$changes" "$UI_R" $((6 - changes_width)) '' \
+        "$UI_WARN" "$G_AHEAD" "$unpushed" "$UI_R"
+    fi
+    total=$((total + 1))
+    case $status in
+      input) need=$((need + 1));;
+      running) run=$((run + 1));;
+      done) finished=$((finished + 1));;
+      *) closed=$((closed + 1));;
+    esac
+  done <<ROWS
+$rows
+ROWS
+
+  printf '\n  %s%s trees%s' "$UI_DIM" "$total" "$UI_R"
+  [ "$need" = 0 ] || printf '%s · %s%s %s need you%s' "$UI_DIM" "$UI_IN" "$G_IN" "$need" "$UI_R"
+  [ "$run" = 0 ] || printf '%s · %s%s %s%s' "$UI_DIM" "$UI_RUN" "$G_RUN" "$run" "$UI_R"
+  [ "$finished" = 0 ] || printf '%s · %s%s %s' "$UI_DIM" "$UI_R" "$G_DONE" "$finished"
+  [ "$closed" = 0 ] || printf '%s · %s closed%s' "$UI_DIM" "$closed" "$UI_R"
+  printf '\n'
 }
 
 cmd_status() {
@@ -124,7 +161,7 @@ cmd_status() {
   trees=$(list_trees)
   all=$(printf '%s\n' "$trees" | cut -f4)
   if [ $# -gt 0 ]; then
-    s=$(resolve_session "$1" "$trees") || die "no tree matching: $1"
+    s=$(resolve_session "$1" "$trees") || ui_fail "no tree matching: $1" "st ls  ·  M-w"
   elif [ -n "${TMUX:-}" ]; then
     s=$(current_session)
     case $'\n'"$all"$'\n' in
@@ -133,6 +170,10 @@ cmd_status() {
     esac
   else
     die "usage: st status <tree>  (omit tree inside tmux)"
+  fi
+  if [ -t 1 ]; then
+    printf '%s  %s\n' "$(label_for_session "$s" "$trees")" "$(ui_status "$(agent_status "$s")")"
+    return 0
   fi
   printf '%s\t%s\n' "$(label_for_session "$s" "$trees")" "$(agent_status "$s")"
 }
@@ -148,7 +189,7 @@ cmd_rm() {
   done
   [ -n "$branch" ] || die "usage: st rm <branch> [--force]"
 
-  local main repo slug dir sess report current old_sess current_sess=''
+  local main repo slug dir sess report current old_sess current_sess='' label fate
   main=$(require_repo "${repo_arg:-.}")
   repo=$(repo_key "$main")
   slug=$(branch_key "$branch")
@@ -165,15 +206,39 @@ cmd_rm() {
   fi
 
   ! git_op_in_progress "$dir" || die "$branch is mid rebase or bisect; finish or abort it first"
+  label="$(basename "$main")/$branch"
   report=$(tree_dirty_report "$dir")
   if [ "$force" = 0 ] && [ -n "$report" ]; then
-    printf '%s\n' "$report" >&2
-    die "refusing to remove $branch — commit/push, or pass --force"
+    if [ "$UI_ROWS" = 1 ]; then
+      ui_title "$label has work that exists only here"
+      show_unsaved_work "$dir"
+      printf '\n' >&2
+    else
+      printf '%s\n' "$report" >&2
+    fi
+    # Exit 3 tells the picker this refusal can be overridden with force.
+    ui_fail "refusing to remove $branch — commit/push, or pass --force" "st rm $branch --force" 3
   fi
 
-  printf 'will remove:\n  tree      %s/%s\n  session   close\n  checkout  remove\n  branch    delete if merged\n' "$(basename "$main")" "$branch" >&2
-  printf 'proceed? [y/N] ' >&2; read -r ans
-  case ${ans:-n} in y|Y|yes) ;; *) die "aborted";; esac
+  fate=keep
+  if branch_merged "$main" "$branch"; then fate=delete; fi
+  if [ "$UI_ROWS" = 1 ]; then
+    ui_title "Remove $label"
+    ui_info session close
+    ui_info checkout "remove $(ui_path "$dir")"
+    if [ "$fate" = delete ]; then ui_info branch "delete (merged)"
+    else ui_info branch "keep (not merged)"; fi
+    if [ "$force" = 1 ] && [ -n "$report" ]; then
+      show_unsaved_work "$dir"
+      ui_warn lost "these changes and commits go away for good"
+      ui_type_confirm "$branch" || ui_abort
+    else
+      ui_ask 'proceed?' n || ui_abort
+    fi
+  else
+    printf 'will remove:\n  tree      %s\n  session   close\n  checkout  remove\n  branch    %s\n' "$label" "$fate" >&2
+    ui_ask 'proceed?' n || die "aborted"
+  fi
 
   current=$(branch_worktree "$main" "$branch" || true)
   [ "$current" = "$dir" ] || die "worktree for $branch changed; refusing to remove $dir"
@@ -186,9 +251,9 @@ cmd_rm() {
     # Killing our own session kills this process, so close it only after cleanup.
     if [ "$sess" != "$current_sess" ]; then tmux kill-session -t "=$sess" 2>/dev/null || true; fi
   fi
-  git -C "$main" branch -d "$branch" >/dev/null 2>&1 || info "branch $branch kept (not merged)"
+  git -C "$main" branch -d "$branch" >/dev/null 2>&1 || ui_warn branch "$branch kept (not merged)"
   clear_tree_state "$repo" "$slug" "$sess"
-  info "removed $(basename "$main")/$branch"
+  ui_ok removed "$(basename "$main")/$branch"
   if [ -n "$sess" ] && [ "$sess" = "$current_sess" ]; then tmux kill-session -t "=$sess" 2>/dev/null || true; fi
 }
 
@@ -200,23 +265,46 @@ git_op_in_progress() {
 }
 
 # Picker and sidebar rows carry a tree's path, not its branch.
-remove_tree_at() {
+remove_tree_at() { # dir [--force]
   local dir=$1 branch main
-  [ -d "$dir" ] || die "already removed: $dir"
-  branch=$(tree_branch "$dir")
-  [ -n "$branch" ] || die "cannot delete a detached worktree"
+  [ -d "$dir" ] || ui_fail "already removed: $(ui_path "$dir")"
   main=$(main_worktree "$dir")
-  [ "$dir" != "$main" ] || die "cannot delete the main worktree"
-  cmd_rm "$branch" --repo "$main"
+  branch=$(tree_branch "$dir")
+  [ -n "$branch" ] ||
+    ui_fail "$(basename "$dir") is a detached checkout, not a tree st can delete" "git -C $(ui_path "$main") worktree remove $(ui_path "$dir")"
+  [ "$dir" != "$main" ] ||
+    ui_fail "$(basename "$main")/$branch $G_MAIN is the main checkout and can't be deleted" "st down $branch  to close its session"
+  cmd_rm "$branch" --repo "$main" ${2:+"$2"}
+}
+
+# Same test as `git branch -d`: merged into its upstream, or into HEAD when it
+# has none. https://git-scm.com/docs/git-branch#Documentation/git-branch.txt--d
+branch_merged() {
+  local main=$1 branch=$2 target
+  target=$(git -C "$main" rev-parse --abbrev-ref "$branch@{u}" 2>/dev/null) || target=HEAD
+  git -C "$main" merge-base --is-ancestor "refs/heads/$branch" "$target" 2>/dev/null
+}
+
+show_unsaved_work() {
+  local dir=$1 dirty unpushed n
+  dirty=$(git -C "$dir" status --porcelain 2>/dev/null || true)
+  unpushed=$(unpushed_log "$dir")
+  if [ -n "$dirty" ]; then
+    n=$(printf '%s\n' "$dirty" | wc -l | tr -d ' ')
+    ui_warn uncommitted "$n file$([ "$n" = 1 ] || printf s)"
+    printf '%s\n' "$dirty" | ui_list 5
+  fi
+  if [ -n "$unpushed" ]; then
+    n=$(printf '%s\n' "$unpushed" | wc -l | tr -d ' ')
+    ui_warn unpushed "$n commit$([ "$n" = 1 ] || printf s)"
+    printf '%s\n' "$unpushed" | ui_list 5
+  fi
 }
 
 tree_dirty_report() {
-  local dir=$1 dirty unpushed=''
+  local dir=$1 dirty unpushed
   dirty=$(git -C "$dir" status --porcelain 2>/dev/null || true)
-  # Not `@{u}..`: trees branched off origin/dev track it, so commits merged in from any remote branch look unpushed.
-  if [ -n "$(git -C "$dir" remote)" ]; then
-    unpushed=$(git -C "$dir" log --format=%s HEAD --not --remotes 2>/dev/null || true)
-  fi
+  unpushed=$(unpushed_log "$dir" %s)
   [ -z "$dirty" ] || printf 'uncommitted changes:\n%s\n' "$dirty"
   [ -z "$unpushed" ] || printf 'unpushed commits:\n%s\n' "$unpushed"
 }
@@ -300,8 +388,7 @@ cmd_remove_all() {
       die "refusing to remove $(basename "${mains[i]}")/${branches[i]:-(detached)} with uncommitted or unpushed work; pass --force"
     fi
   done
-  printf 'proceed? [y/N] ' >&2; read -r ans
-  case ${ans:-n} in y|Y|yes) ;; *) die "aborted";; esac
+  ui_ask 'proceed?' n || die "aborted"
   [ -z "${TMUX:-}" ] || current_sess=$(current_session)
 
   # Linked worktrees must go first when a standalone repo under the root owns
@@ -328,7 +415,7 @@ cmd_remove_all() {
           else tmux kill-session -t "=$sess" 2>/dev/null || true; fi
         fi
         [ -z "$branch" ] || git -C "$main" branch -d "$branch" >/dev/null 2>&1 ||
-          info "branch $branch kept (not merged)"
+          ui_warn branch "$branch kept (not merged)"
         clear_tree_state "$repo" "$(branch_key "${branch:-(detached)}")" "$sess"
       else
         rm -rf -- "$dir"
@@ -344,9 +431,9 @@ cmd_remove_all() {
         fi
       fi
       if [ "$kind" = worktree ]; then
-        info "removed $(basename "$main")/${branch:-(detached)}"
+        ui_ok removed "$(basename "$main")/${branch:-(detached)}"
       else
-        info "removed $dir"
+        ui_ok removed "$dir"
       fi
     done
   done
@@ -363,8 +450,8 @@ cmd_remove() {
 
 
 st_register_command 'new' cmd_new 'create a worktree and open its session' 'new <branch> [--from <base>] [--bare]'
-st_register_command 'trust' cmd_trust 'trust a reviewed .supertree config'
-st_register_command 'ls' cmd_ls 'show every tree in a readable grid'
+st_register_command 'trust' cmd_trust 'trust a reviewed .supertree config (--show: what changed)' 'trust [--show]'
+st_register_command 'ls' cmd_ls 'every tree grouped by repo, waiting ones first'
 st_register_command 'status' cmd_status 'show agent status' 'status [tree]'
 st_register_command 'rm' cmd_rm 'remove a worktree and its session' 'rm <branch> [--force]'
 st_register_command 'remove' cmd_remove 'remove Git checkouts under the worktree root' 'remove all [--force]'

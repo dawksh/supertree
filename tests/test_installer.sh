@@ -21,11 +21,15 @@ tar -czf "$ST_TEST_ASSETS/st.tar.gz" -C "$ROOT/bin" st st-lib
 cp "$ROOT/tmux/supertree.conf" "$ST_TEST_ASSETS/supertree.conf"
 (cd "$ST_TEST_ASSETS" && shasum -a 256 st.tar.gz supertree.conf > SHA256SUMS)
 
+fake_tool_version() {
+  printf '#!/bin/sh\nprintf "%%s\\n" "%s %s"\n' "$1" "$2" > "$HOME/.local/bin/$1"
+  chmod +x "$HOME/.local/bin/$1"
+}
 for command in tmux fzf nvim codex; do
-  printf '%s\n' \
-    '#!/bin/sh' \
-    'printf "%s 1.0.0\n" "$(basename "$0")"' > "$HOME/.local/bin/$command"
-  chmod +x "$HOME/.local/bin/$command"
+  version=1.0.0
+  [ "$command" != tmux ] || version=3.3.0
+  [ "$command" != fzf ] || version=0.45.0
+  fake_tool_version "$command" "$version"
 done
 
 printf '%s\n' \
@@ -75,6 +79,20 @@ grep -F "run-shell -b \"'$ST_PREFIX/st' window 1\"" "$ST_CONFDIR/supertree.conf"
   printf 'FAIL: tmux window binding did not use the install prefix\n' >&2
   exit 1
 }
+
+# Known old versions must fail before the installer replaces any files.
+for spec in 'fzf 0.44.0 0.45' 'tmux 3.2.0 3.3'; do
+  set -- $spec
+  fake_tool_version "$1" "$2"
+  if ST_PREFIX="$TEST_ROOT/outdated-bin" ST_CONFDIR="$TEST_ROOT/outdated-config" \
+      "$ROOT/install.sh" > "$TEST_ROOT/outdated.out" 2>&1; then
+    fail "installer accepted $1 $2"
+  fi
+  grep -q "$1 $2 is too old; install $3 or newer" "$TEST_ROOT/outdated.out" ||
+    fail "installer did not explain old $1: $(cat "$TEST_ROOT/outdated.out")"
+  [ ! -e "$TEST_ROOT/outdated-bin/st" ] || fail "old $1 installed st"
+  case $1 in fzf) fake_tool_version fzf 0.45.0;; tmux) fake_tool_version tmux 3.3.0;; esac
+done
 
 # A layout override updates the existing config and omits disabled dependencies.
 # Installing a newer release also drops the previous release's modules.

@@ -140,15 +140,67 @@ managed_tree() {
 }
 
 prepare_repo_config() {
-  local main=$1 expected actual
+  local main=$1 key
   [ -f "$main/.supertree" ] || return 0
   trusted_config_snapshot=$(mktemp)
   trap 'rm -f "${trusted_config_snapshot:-}"' EXIT
-  cp "$main/.supertree" "$trusted_config_snapshot"
-  actual=$(config_fingerprint "$trusted_config_snapshot")
-  expected=$(cat "$ST_STATE/trust/$(repo_key "$main")" 2>/dev/null || true)
-  [ "$actual" = "$expected" ] ||
-    die "untrusted or changed $main/.supertree; review it, then run 'st trust' in that repository"
+  while :; do
+    cp "$main/.supertree" "$trusted_config_snapshot"
+    config_trusted "$main" "$trusted_config_snapshot" && return 0
+    [ "$UI_ROWS" = 1 ] && [ -t 0 ] ||
+      die "untrusted or changed $main/.supertree; review it, then run 'st trust' in that repository"
+    trust_view "$main" "$trusted_config_snapshot"
+    ui_keys t trust v "open in editor" esc cancel
+    key=$(ui_key)
+    case $key in
+      t) trust_config "$main" "$trusted_config_snapshot"
+         ui_ok trusted "$(ui_path "$main/.supertree")"
+         return 0;;
+      v) ${VISUAL:-${EDITOR:-vi}} "$main/.supertree" </dev/tty >/dev/tty || true;;
+      *) ui_fail "not trusted; nothing was created" "st trust --show  in $(ui_path "$main")";;
+    esac
+  done
+}
+
+config_trusted() { # main config-file
+  [ "$(config_fingerprint "$2")" = "$(cat "$ST_STATE/trust/$(repo_key "$1")" 2>/dev/null || true)" ]
+}
+
+trust_config() { # main config-file
+  local record
+  record="$ST_STATE/trust/$(repo_key "$1")"
+  mkdir -p "$ST_STATE/trust"
+  ( umask 077
+    printf '%s\n' "$(config_fingerprint "$2")" > "$record"
+    cp "$2" "$record.sh" )
+}
+
+# What changed since the last trust: a diff against the kept copy, or the whole
+# file when there is none. Control bytes are dropped so the file can't drive the terminal.
+trust_view() { # main config-file
+  local main=$1 file=$2 copy
+  copy="$ST_STATE/trust/$(repo_key "$main").sh"
+  if config_trusted "$main" "$file"; then
+    ui_ok trusted "$(ui_path "$main/.supertree") has not changed"
+    return 0
+  fi
+  if [ -f "$copy" ]; then
+    ui_title "$(ui_path "$main/.supertree") changed since you trusted it"
+    printf '\n' >&2
+    # diff exits 1 whenever the files differ, which pipefail would treat as an error.
+    { diff -u "$copy" "$file" || true; } | tail -n +3 | LC_ALL=C tr -d '\000-\010\013-\037' |
+      awk -v add="$UI_OK" -v del="$UI_ERR" -v dim="$UI_DIM" -v r="$UI_R" '
+        /^@@/ { print "  " dim $0 r; next }
+        /^\+/ { print "  " add $0 r; next }
+        /^-/ { print "  " del $0 r; next }
+        { print "  " $0 }' >&2
+  else
+    ui_title "$(ui_path "$main/.supertree") is not trusted yet"
+    ui_info runs "shell code from this repo when a tree is created"
+    printf '\n' >&2
+    LC_ALL=C tr -d '\000-\010\013-\037' < "$file" |
+      awk -v dim="$UI_DIM" -v r="$UI_R" '{ printf "  %s%3d%s  %s\n", dim, NR, r, $0 }' >&2
+  fi
 }
 
 tree_index() {

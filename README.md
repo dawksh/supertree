@@ -89,7 +89,7 @@ The numbered modules make the boundaries explicit:
 
 | Module | Responsibility |
 | --- | --- |
-| `00-core` through `50-tmux` | Shared helpers for identity, repository state, bootstrap, agent, and tmux |
+| `00-core` through `50-tmux` | Shared helpers for output styling (`05-ui`), identity, repository state, bootstrap, agent, and tmux |
 | `55-sidebar` | Tree sidebar panes and their refresher |
 | `60-picker` | Tree picker and `go`/`resume` |
 | `70-worktrees` | Worktree creation, trust, listing, status, and removal |
@@ -103,7 +103,7 @@ cmd_greet() { printf 'hello %s\n' "${1:-world}"; }
 st_register_command greet cmd_greet 'greet someone'
 ```
 
-The command appears in `st help` automatically. Remove that file to remove
+The command appears under "more" in `st help` automatically. Remove that file to remove
 the command. The picker, worktree, and maintenance modules can also be removed
 individually; the shared modules provide the functions used across features.
 Run the shell tests after changing modules.
@@ -178,25 +178,26 @@ st rm feat-otp         # done with it: session, worktree and branch go away
 | `st home` | Open the persistent Supertree home shell and sidebar. Registers the current repository if needed. |
 | `st open` | Go directly to the current tree, or the most recently used tree outside a known checkout. |
 | `st new <branch>` | Create the worktree, bootstrap it, build the tmux session, switch to it. Reuses the branch if it already exists, otherwise creates it. |
-| `st trust` | Trust the current contents of this repository's reviewed `.supertree` file. Run again if the file changes. |
+| `st trust [--show]` | Trust the current contents of this repository's reviewed `.supertree` file. Run again if the file changes. `--show` prints what changed since you last trusted it. |
 | `st go [query]` | Switch to a tree. No query opens an fzf picker; a query picks the first match. Builds the session first if the tree is closed. |
 | `st resume [query]` | Same as `go`. Named for the case where you closed a tree earlier and want it back. |
-| `st roots` | Pick a known repository, type a branch, and create a tree there (what `M-r` runs). |
+| `st roots` | Create a tree in any known repository: pick the repo, then a branch (what `M-r` runs). |
 | `st last` | Switch to the tree you were in before (what `M-Tab` runs). |
 | `st split [--horizontal\|--vertical]` | Open another copy of this tab's program side by side or stacked (`M-v` / `M-V`). |
 | `st down [branch]` | Close a tree's tmux session. Worktree, branch and agent history stay. No branch = the tree you are in. |
 | `st down --all` | Close every tree session. Lists them and asks first. |
 | `st down --subtrees` | Close linked worktree sessions and keep main sessions open. Lists them and asks first. |
-| `st ls` | A readable grid of every known tree: session state, agent state, changes, and checkout type. Use a tree name with `st go` to switch to it. |
+| `st ls` | Every known tree grouped by repo: agent state, uncommitted (`±`) and unpushed (`↑`) counts, `⌂` for the main checkout. Trees waiting on you come first. Piped output is one tab-separated line per tree: `tree, session, agent, changes, type`. Use a tree name with `st go` to switch to it. |
 | `st status [tree]` | Check one agent: `running`, `input`, `done`, or `closed`. Omit the tree name inside its tmux session. |
 | `st rm <branch>` | Destructive: kills the session, removes the worktree, deletes the branch if merged. |
 | `st remove all [--force]` | List and remove Git checkouts under `ST_WORKTREE_ROOT`, including standalone repositories. Asks before removal. |
 | `st update` | Check for the latest release and install it automatically when available. |
 | `st uninstall` | Remove the installed command, Supertree config, tmux source line, and state. |
-| `st doctor` | Check dependencies, config syntax, generated bindings, and live tmux keys. |
+| `st doctor` | Check dependencies, fzf (0.45+) and tmux (3.3+) versions, config syntax, generated bindings, and live tmux keys. Each problem comes with a `fix` line; in a terminal it ends with a problem count. |
+| `st config` | Change the agent, the windows and their order, the waiting count on the status line, desktop notices, and the sidebar from an fzf screen. Writes the config file; open trees pick up agent and window changes when reopened. Piped, it prints the current settings. |
 | `st repair` | Reinstall this release and reload its tmux bindings. |
 | `st keys` | Print every tmux key binding (`M-/` shows the same list in a popup). |
-| `st help` | List commands and keys. `st --version` prints the installed version. |
+| `st help` | List commands grouped by task (trees, setup), then keys. `st --version` prints the installed version. |
 
 ### Flags
 
@@ -222,10 +223,10 @@ and the `st _sidebar*` commands are called by the tmux bindings and the sidebar,
 
 | key | does |
 |---|---|
-| `M-w` | tree picker, ordered by most recently opened tree, with a `+ new branch…` row |
+| `M-w` | tree picker: trees waiting on you first, then most recently opened, with a `+ new tree…` row |
 | `M-e` | toggle between the first two configured windows |
 | `M-Tab` | switch to the tree you were in before; press again to come back |
-| `M-r` | pick any repo you have used `st new` in, enter a branch, and create a tree there — no `cd` needed |
+| `M-r` | new tree in any repo you have used `st new` in — pick the repo, then the branch; no `cd` needed |
 | `M-1` … `M-9` | select a configured window (tab) by position |
 | `M-n` / `M-p` | next / previous tab |
 | `M-j` / `M-k` | next / previous open tree, in sidebar order |
@@ -258,12 +259,24 @@ The others are `ST_KEY_PICKER` (`M-w`), `ST_KEY_TOGGLE` (`M-e`),
 If an existing config uses `M-V` for `ST_KEY_SPLIT`, the installer assigns
 `M-U` to the vertical split unless you set `ST_KEY_SPLIT_VERTICAL` yourself.
 
-In the tree picker, press Enter to open a tree, Ctrl-D to delete the selected
-worktree, or Escape to close the picker.
+New trees (`M-r`, Ctrl-N in the picker, or its `+ new tree…` row) take two steps:
+pick the repo (the one you are in comes first; skipped when there is only one), then
+pick a local or remote branch or type a new name. Tab picks the branch to start
+from, Ctrl-B toggles a bare tree (no deps, env, or agent). Names are checked with
+`git check-ref-format`.
+
+In the tree picker, press Enter to open a tree, Ctrl-N for a new tree, Ctrl-D to
+delete the selected worktree without leaving the picker, Ctrl-R to pick a repo,
+Ctrl-/ to show or hide the preview, or Escape to close. The preview shows the
+tree's uncommitted files, unpushed commits, and the agent's last lines; it hides
+itself in narrow terminals. The picker needs fzf 0.45 or newer. With fzf 0.73 or
+newer it refreshes every two seconds while open and fills in the uncommitted
+(`±`) and unpushed (`↑`) counts shortly after it opens.
 
 Prefix stays `C-a`. `M-arrow` pane movement and `S-Enter` are untouched.
-`status-left` shows the current repository and branch, so the tree you are typing into is
-always on screen.
+`status-left` shows the agent state and current repository/branch. Long tree names
+keep their start and end with an ellipsis in the middle, so the tree you are
+typing into stays identifiable.
 
 Agent state appears in `st ls` and the `M-w` picker. `running` means the agent
 process is active, `input` means its pane shows a prompt, `done` means the agent
@@ -333,7 +346,17 @@ rows. Split panes get a quiet divider; a single program uses the full area.
 
 Tree sessions show their windows as tabs at the top (`1. codex ●`, `2. nvim`,
 `3. shell`). The active tab is underlined, and the current repository and branch
-appear on the right. Other tmux sessions keep your own status line.
+appear on the left after the agent's state (`●` running, `◐` waiting for you,
+`○` exited). Other tmux sessions keep your own status line.
+
+When an agent in another tree starts waiting for you, tmux shows a short notice
+(`◐ webauth/feat-otp needs you · M-w`) to every terminal looking at a different
+tree. Messages from the window keys (`M-e`, `M-1` … `M-9`, `M-Tab`) also appear
+on tmux's message line. Set `ST_STATUS_RIGHT=1` in the config to add a running
+count on the right of every tree's status line (`◐ 2 need you · M-w`). Set
+`ST_NOTIFY=1` to also send a local desktop notice when an agent starts waiting
+for you (via `osascript` on macOS or `notify-send` on Linux). Both settings are
+available in `st config`.
 
 Order controls startup focus, `M-1` through `M-9`, and the pair switched by
 `M-e`. Reopening a tree adds newly configured windows and selects a newly
@@ -375,8 +398,9 @@ window.
 One background refresher per tmux server keeps every sidebar current. It
 re-reads agent states every 2 seconds and the tree list when sessions open or
 close (or every 30 seconds), then pushes changes to each sidebar over fzf's
-`--listen` socket under `~/.local/state/supertree/sidebar/`. It stops once no
-sidebars are left. It also closes a window whose only remaining pane is its
+`--listen` socket under `~/.local/state/supertree/sidebar/`. The same refresher
+drives the tab and status-line states and the "needs you" notices, so it also
+runs with sidebars off; it stops once no sidebars and no tree sessions are left. It also closes a window whose only remaining pane is its
 sidebar, for example after you `exit` the shell beside it; if that was the
 tree's last window, you are moved to another session instead of being
 disconnected. A sidebar closed by hand comes back within a few seconds; use
@@ -442,6 +466,10 @@ one invocation.
    not symlinks, so a tree can diverge.
 5. **Hook** — runs `ST_POST_CREATE`.
 
+In a terminal, the install and the hook each show as one live line with the time
+taken so far and their last three lines of output. If one fails, choose Enter to
+open the tree anyway, `r` to run it again, or Escape to stop; the worktree is kept.
+
 Build output (`.next`, `dist`) is never shared between trees.
 
 ### Per-repo config
@@ -455,8 +483,11 @@ st trust          # records this version for the repository
 st new feat-otp
 ```
 
-If `.supertree` changes, `st new` stops before creating a worktree until you
-review it and run `st trust` again. `st new --bare` does not execute it.
+If `.supertree` changes, `st new` stops before creating a worktree. In a
+terminal it shows what changed since you last trusted it (the whole file the
+first time) and lets you press `t` to trust it, `v` to open it in your editor,
+or Escape to stop; elsewhere it fails until you run `st trust` again.
+`st trust --show` prints the same view. `st new --bare` does not execute it.
 
 Example `.supertree`:
 
@@ -524,10 +555,13 @@ agent's continuation command. Agent transcripts live in their native stores, so
 this survives a hard `kill-session`, not just a clean exit.
 
 **Delete the tree** — `st rm <branch>`. Refuses while there are uncommitted
-changes or unpushed commits unless you pass `--force`, prints what it will
-remove, and asks. The branch is deleted only if it is merged. In the `M-w`
-picker, highlight a tree and press Ctrl-D to run the same guarded removal.
-The main worktree cannot be deleted from the picker.
+changes or unpushed commits unless you pass `--force`, lists what it will
+remove, says up front whether the branch will be deleted (only if it is merged),
+and asks. With `--force` and work that would be lost, you type the branch name
+instead of `y`. In the `M-w` picker, highlight a tree and press Ctrl-D to run
+the same guarded removal; the picker stays open afterwards. If the tree has
+unsaved work, the picker lists it and offers Enter to open the tree, Ctrl-F to
+force delete, or Escape to go back. The main checkout cannot be deleted.
 
 **Clear the worktree root** — `st remove all` inventories Git checkouts at the
 root and one directory below it. It removes linked worktrees through Git and
@@ -556,12 +590,20 @@ the `st` symlink, not the checkout.
 | `~/.local/state/supertree/idx/<repo-id>/<branch-id>` | that tree's `ST_TREE_INDEX` |
 | `~/.local/state/supertree/seen/<repo-id>/<branch-id>.<harness>` | marker meaning that agent has run here, drives continuation |
 | `~/.local/state/supertree/trust/<repo-id>` | hash of the reviewed `.supertree` contents |
+| `~/.local/state/supertree/trust/<repo-id>.sh` | copy of that version, used to show what changed |
 | `~/.local/state/supertree/origin/<tty>` | which session a client came from, so closing a tree returns it there |
 
 A repo only shows up in `st go` / `st ls` after `st new` or `st home` registers it. Override the
 worktree root with `ST_WORKTREE_ROOT`, the state dir with `ST_STATE`.
 
 ---
+
+## Output
+
+In a terminal, messages are styled rows (`✓ removed …`, `! branch …`, `✗ …` with a
+`try` hint). Set `NO_COLOR=1` to drop colour, or `ST_ASCII=1` for ASCII glyphs.
+When output is piped or redirected, `st` prints the plain `:: msg` and `st: msg`
+lines it always has, so scripts keep working.
 
 ## Troubleshooting
 

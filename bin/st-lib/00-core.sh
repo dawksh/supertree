@@ -1,9 +1,17 @@
 # shellcheck shell=bash
 # supertree core module
 
-die()  { printf 'st: %s\n' "$*" >&2; exit 1; }
+# The ui module styles these once loaded; before that they print plain lines.
+die() {
+  declare -F ui_fail >/dev/null && ui_fail "$*"
+  printf 'st: %s\n' "$*" >&2
+  exit 1
+}
 
-info() { printf '\033[2m::\033[0m %s\n' "$*" >&2; }
+info() {
+  declare -F ui_info >/dev/null && { ui_info "$*"; return 0; }
+  printf '\033[2m::\033[0m %s\n' "$*" >&2
+}
 st_executable() {
   local dir
   case $0 in

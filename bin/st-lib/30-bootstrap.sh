@@ -61,10 +61,7 @@ bootstrap() {
 
   if [ "$needs_install" = 1 ] && [ -n "$ST_INSTALL_CMD" ]; then
     info "lockfile differs from main, running: $ST_INSTALL_CMD"
-    ( cd "$dir"
-      # shellcheck disable=SC1090
-      [ -z "$trusted_config_snapshot" ] || . "$trusted_config_snapshot"
-      eval "$ST_INSTALL_CMD" )
+    bootstrap_step install run_install "$dir" "$ST_INSTALL_CMD"
   fi
 
   for g in ${ST_COPY_GLOBS[@]+"${ST_COPY_GLOBS[@]}"}; do
@@ -78,11 +75,46 @@ bootstrap() {
   done
 
   if [ -n "$ST_POST_CREATE" ]; then
-    info "post-create hook"
-    ( cd "$dir"
-      export ST_TREE_DIR="$dir" ST_TREE_BRANCH="$branch" ST_TREE_INDEX="$idx"
-      # shellcheck disable=SC1090
-      . "$trusted_config_snapshot"
-      eval "$ST_POST_CREATE" )
+    # In a terminal the step row already names it.
+    [ "$UI_ROWS" = 1 ] || info "post-create hook"
+    bootstrap_step hook run_post_create "$dir" "$branch" "$idx" "$ST_POST_CREATE"
   fi
+}
+
+run_install() { # dir command
+  ( cd "$1" || return
+    if [ -n "$trusted_config_snapshot" ]; then
+      # shellcheck disable=SC1090
+      . "$trusted_config_snapshot" || return
+    fi
+    eval "$2" )
+}
+
+run_post_create() { # dir branch index command
+  ( cd "$1" || return
+    export ST_TREE_DIR="$1" ST_TREE_BRANCH="$2" ST_TREE_INDEX="$3"
+    # shellcheck disable=SC1090
+    . "$trusted_config_snapshot" || return
+    eval "$4" )
+}
+
+# A failed step leaves a usable worktree, so in a terminal the user decides
+# whether to open it anyway, retry, or stop. Elsewhere it fails as before.
+bootstrap_step() { # label function [args...]
+  local label=$1 log rc
+  shift
+  log=$(mktemp)
+  while :; do
+    rc=0
+    ui_run "$label" "$log" "$@" || rc=$?
+    [ "$rc" != 0 ] || break
+    if [ "$UI_ROWS" = 0 ] || [ ! -t 0 ]; then rm -f "$log"; exit "$rc"; fi
+    ui_keys ⏎ "open anyway" r retry esc stop
+    case $(ui_key) in
+      '') break;;
+      r) ;;
+      *) rm -f "$log"; ui_fail "$label failed; the worktree is kept" "st go  and pick it, or st rm to remove it";;
+    esac
+  done
+  rm -f "$log"
 }

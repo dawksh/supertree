@@ -384,7 +384,41 @@ dep_version() {
     nvim) v=$(nvim --version 2>/dev/null | head -1);;
     *)    v=$("$1" --version 2>/dev/null | head -1) || v="";;
   esac
-  printf '%s' "$v" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1
+  printf '%s' "$v" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true
+}
+
+# Keep the install gate in sync with st doctor and the picker. Unreadable
+# versions remain warnings, as they are in doctor; known old versions cannot
+# install a command whose picker or tmux UI will fail at runtime.
+minimum_tool_version() {
+  case $1 in
+    fzf) printf '0.45';;
+    tmux) printf '3.3';;
+  esac
+}
+
+version_at_least() { # actual required
+  local actual_major actual_minor required_major required_minor
+  actual_major=${1%%.*}
+  actual_minor=${1#*.}; actual_minor=${actual_minor%%.*}
+  required_major=${2%%.*}
+  required_minor=${2#*.}
+  [ "$actual_major" -gt "$required_major" ] ||
+    { [ "$actual_major" -eq "$required_major" ] && [ "$actual_minor" -ge "$required_minor" ]; }
+}
+
+check_minimum_versions() {
+  local tool minimum actual
+  for tool in tmux fzf; do
+    command -v "$tool" >/dev/null 2>&1 || continue
+    minimum=$(minimum_tool_version "$tool")
+    actual=$(dep_version "$tool")
+    if [ -z "$actual" ]; then
+      warn "$tool version could not be read; $minimum or newer is required"
+    elif ! version_at_least "$actual" "$minimum"; then
+      die "$tool $actual is too old; install $minimum or newer before installing supertree"
+    fi
+  done
 }
 
 detect_pm() {
@@ -458,7 +492,13 @@ step "02" "Dependencies" "Checking the tools this workspace needs."
 missing=""
 for d in $DEPS; do
   if command -v "$d" >/dev/null 2>&1; then
-    row "$d" "${GRN}✔${R}" "$(dep_version "$d")"
+    version=$(dep_version "$d")
+    minimum=$(minimum_tool_version "$d")
+    if [ -n "$minimum" ] && [ -n "$version" ] && ! version_at_least "$version" "$minimum"; then
+      row "$d" "${RED}✘${R}" "$version — needs $minimum or newer"
+    else
+      row "$d" "${GRN}✔${R}" "$version"
+    fi
   else
     row "$d" "${RED}✘${R}" "not found — $(dep_why "$d")"
     missing="$missing $d"
@@ -494,6 +534,8 @@ if [ -n "$missing" ]; then
   fi
 fi
 fi
+
+check_minimum_versions
 
 # ------------------------------------------------------------- supertree
 

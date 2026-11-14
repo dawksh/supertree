@@ -62,6 +62,16 @@ agent_status() {
   if agent_needs_input "$pane"; then printf 'input'; else printf 'running'; fi
 }
 
+agent_tail() {
+  local sess=$1 lines=${2:-8} pane
+  tmux has-session -t "=$sess" 2>/dev/null || return 0
+  pane=$(agent_pane "$sess")
+  [ -n "$pane" ] || return 0
+  tmux capture-pane -p -t "$pane" -S -60 2>/dev/null |
+    awk 'NF { last = NR } { line[NR] = $0 } END { for (i = 1; i <= last; i++) print line[i] }' |
+    tail -n "$lines"
+}
+
 agent_statuses() {
   local format panes name bin sess status pane
   format='#{session_name}'$'\t''#{window_name}'$'\t''#{pane_id}'$'\t''#{@st_agent_state}'$'\t''#{@st_agent_window}'$'\t''#{pane_current_command}'$'\t''#{@st_sidebar}'
@@ -90,6 +100,93 @@ agent_statuses() {
     if [ "$status" = running ] && agent_needs_input "$pane"; then status=input; fi
     printf '%s\t%s\n' "$sess" "$status"
   done
+}
+
+# Same rule as st rm: trees branched off origin/dev track it, so `@{u}..` would
+# count commits merged in from other remote branches as unpushed.
+unpushed_count() {
+  local dir=$1
+  [ -n "$(git -C "$dir" remote 2>/dev/null)" ] || { printf '0\n'; return 0; }
+  git -C "$dir" rev-list --count HEAD --not --remotes 2>/dev/null || printf '0\n'
+}
+
+unpushed_log() { # dir [git log format]
+  local dir=$1
+  [ -n "$(git -C "$dir" remote 2>/dev/null)" ] || return 0
+  git -C "$dir" log --format="${2:-%h %s}" HEAD --not --remotes 2>/dev/null || true
+}
+
+# Rows: status, repo key, repo name, branch, main|worktree, path, session,
+# recency rank, then with --git the uncommitted and unpushed counts.
+tree_rows() {
+  local with_git=0 trees statuses mains recent
+  [ "${1:-}" != --git ] || with_git=1
+  trees=$(list_trees)
+  [ -n "$trees" ] || return 0
+  statuses=$(agent_statuses)
+  mains=$(main_checkouts)
+  recent="$ST_STATE/recent"
+  [ -f "$recent" ] || recent=/dev/null
+
+  printf '%s\n' "$trees" | awk -F '\t' '
+    FILENAME == ARGV[1] { rank[$0] = ++r; next }
+    FILENAME == ARGV[2] { if ($1 != "") status_of[$1] = $2; next }
+    FILENAME == ARGV[3] { main[$0] = 1; next }
+    $0 != "" {
+      s = $4
+      repo_name = $1
+      sub(/-[^-]*$/, "", repo_name)
+      n++
+      print ((s in status_of) ? status_of[s] : "closed") "\t" $1 "\t" repo_name "\t" $2 "\t" \
+        (($3 in main) ? "main" : "worktree") "\t" $3 "\t" s "\t" ((s in rank) ? rank[s] : 100000 + n)
+    }
+  ' "$recent" <(printf '%s\n' "$statuses") <(printf '%s\n' "$mains") - |
+  if [ "$with_git" = 1 ]; then tree_rows_git_counts
+  else awk '{ print $0 "\t\t" }'; fi
+}
+
+# Git counts are independent across worktrees. Run a bounded group together and
+# print their results in input order so the picker and `st ls` keep the same rows.
+tree_rows_git_counts() (
+  local status repo rname branch kind path sess rank dirty unpushed
+  local batch n=0 first=1 i pid pids='' failed=0
+  batch=$(mktemp -d) || return 1
+  trap 'rm -rf "$batch"' EXIT
+  while IFS=$'\t' read -r status repo rname branch kind path sess rank; do
+    n=$((n + 1))
+    (
+      dirty=$(git -C "$path" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+      unpushed=$(unpushed_count "$path")
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$status" "$repo" "$rname" "$branch" "$kind" "$path" "$sess" "$rank" "$dirty" "$unpushed"
+    ) > "$batch/$n" &
+    pids="$pids $!"
+    if [ $((n - first + 1)) -eq 8 ]; then
+      for pid in $pids; do wait "$pid" || failed=1; done
+      for ((i=first; i<=n; i++)); do cat "$batch/$i" || failed=1; done
+      first=$((n + 1))
+      pids=''
+    fi
+  done
+  for pid in $pids; do wait "$pid" || failed=1; done
+  for ((i=first; i<=n; i++)); do cat "$batch/$i" || failed=1; done
+  [ "$failed" = 0 ]
+)
+
+# Trees waiting on the user first, then most recently opened.
+order_by_need() {
+  awk -F '\t' '{ print ($1 == "input" ? 0 : 1) "\t" $8 "\t" $0 }' |
+    sort -s -t $'\t' -k1,1n -k2,2n | cut -f3-
+}
+
+# Repos by their most recent tree; inside a repo, the same order as order_by_need.
+order_by_repo() {
+  awk -F '\t' '
+    { row[NR] = $0; repo[NR] = $2; need[NR] = ($1 == "input" ? 0 : 1); rank[NR] = $8 + 0
+      if (!($2 in best) || rank[NR] < best[$2]) best[$2] = rank[NR] }
+    END { for (i = 1; i <= NR; i++)
+            print best[repo[i]] "\t" repo[i] "\t" need[i] "\t" rank[i] "\t" row[i] }
+  ' | sort -s -t $'\t' -k1,1n -k2,2 -k3,3n -k4,4n | cut -f5-
 }
 
 set_agent_status() {

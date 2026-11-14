@@ -57,6 +57,7 @@ printf '%s\n' \
   'input=$(cat)' \
   '{ printf "args: %s\n" "$*"; printf "%s\n" "$input"; } >> "$ST_FZF_LOG"' \
   'case "$*" in' \
+  '  *--print-query*) printf "%s\n\n" "${ST_FZF_QUERY:-}";;' \
   '  *--expect*) printf "\n"; printf "%s\n" "$input" | grep -m1 -- "$ST_FZF_PICK";;' \
   '  *) printf "%s\n" "$input" | head -1;;' \
   'esac' > "$TEST_ROOT/fzf-bin/fzf"
@@ -101,10 +102,10 @@ no_fzf go main 2>/dev/null || fail 'lowercase query did not match demo/Main'
 grep -qxF '=demo/Main' "$ST_TMUX_LOG" || fail 'lowercase query did not attach demo/Main'
 
 # "+ new branch" offers only repos that still exist.
-export ST_FZF_PICK='+ new branch'
+export ST_FZF_PICK='new tree'
 printf '%s\n' "$TEST_ROOT/one/demo" "$TEST_ROOT/gone/demo" "$TEST_ROOT/two/demo" > "$ST_STATE/repos"
-printf 'picked\n' | with_fzf go >/dev/null 2>&1 || fail '+ new branch failed with one missing repo'
-repo_choices=$(awk '/^args: --prompt=repo> /{on=1; next} /^args: /{on=0} on' "$ST_FZF_LOG")
+ST_FZF_QUERY=picked with_fzf go >/dev/null 2>&1 || fail '+ new branch failed with one missing repo'
+repo_choices=$(awk '/^args: .*--prompt=Repo › /{on=1; next} /^args: /{on=0} on' "$ST_FZF_LOG")
 [ -n "$repo_choices" ] || fail 'repo chooser was not shown for two live repos'
 if printf '%s\n' "$repo_choices" | grep -qF "$TEST_ROOT/gone/demo"; then
   fail 'repo chooser offered a repo whose directory is gone'
@@ -113,7 +114,7 @@ git -C "$TEST_ROOT/one/demo" show-ref --verify --quiet refs/heads/picked ||
   fail '+ new branch did not create the branch in the chosen repo'
 
 printf '%s\n' "$TEST_ROOT/gone/demo" "$TEST_ROOT/also-gone/demo" > "$ST_STATE/repos"
-if printf 'nothing\n' | with_fzf go > /dev/null 2> "$TEST_ROOT/err"; then
+if ST_FZF_QUERY=nothing with_fzf go > /dev/null 2> "$TEST_ROOT/err"; then
   fail '+ new branch succeeded with no existing repos'
 fi
 grep -q 'no roots known yet' "$TEST_ROOT/err" || fail 'all-missing repos did not say no roots known yet'
@@ -136,8 +137,8 @@ panes=$(printf '%s\n' \
 : > "$ST_FZF_LOG"
 ST_TEST_PANES=$panes ST_TEST_INPUT_PANES=%3 ST_FZF_PICK=no-such-row with_fzf go >/dev/null 2>&1 ||
   fail 'picker failed while reading agent statuses'
-for want in 'plain +○ Finished' 'harness +● Running' 'prompt +◐ Needs input' 'custom +● Running' 'picked +· Closed'; do
-  grep -Eq "^demo/$want"$'\t' "$ST_FZF_LOG" || fail "picker row missing: demo/$want"
+for want in 'done:plain' 'running:harness' 'input:prompt' 'running:custom' 'closed:picked'; do
+  grep -Eq "${want%%:*}.*demo/.*${want#*:}"$'.*\t' "$ST_FZF_LOG" || fail "picker row missing: ${want#*:} ${want%%:*}"
 done
 [ "$(grep -cx 'list-panes' "$ST_TMUX_LOG")" = 1 ] || fail 'agent statuses did not use one list-panes call'
 captured=$(grep -A3 -x 'capture-pane' "$ST_TMUX_LOG" | grep '^%' | sort | tr '\n' ' ')
