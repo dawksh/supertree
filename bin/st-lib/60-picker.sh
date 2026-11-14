@@ -401,7 +401,7 @@ cmd_preview() {
   case $status in
     input) printf '%s%s waiting for you%s\n' "$UI_IN" "$G_IN" "$UI_R";;
     running) printf '%s%s working%s\n' "$UI_RUN" "$G_RUN" "$UI_R";;
-    done) printf '%s%s agent exited%s\n' "$UI_OK" "$G_DONE" "$UI_R";;
+    done) printf '%s agent exited\n' "$G_DONE";;
     *) printf '%s%s session closed%s\n' "$UI_DIM" "$G_OFF" "$UI_R";;
   esac
 

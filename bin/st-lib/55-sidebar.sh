@@ -129,13 +129,13 @@ sidebar_rows() {
     tmp=$(mktemp "$ST_SIDEBAR_DIR/.rows.XXXXXX")
     sidebar_snapshot > "$tmp" && mv "$tmp" "$cache"
   fi
-  awk -F '\t' -v cur="$sess" '
+  awk -F '\t' -v cur="$sess" -v g_run="$G_RUN" -v g_in="$G_IN" -v g_done="$G_DONE" -v g_off="$G_OFF" '
     !($1 in seen) { seen[$1] = 1; order[++n] = $1 }
     {
-      if ($3 == "running") glyph = "\033[32m●\033[0m"
-      else if ($3 == "input") glyph = "\033[33m◐\033[0m"
-      else if ($3 == "done") glyph = "○"
-      else glyph = "\033[2m·\033[0m"
+      if ($3 == "running") glyph = "\033[32m" g_run "\033[0m"
+      else if ($3 == "input") glyph = "\033[33m" g_in "\033[0m"
+      else if ($3 == "done") glyph = g_done
+      else glyph = "\033[2m" g_off "\033[0m"
       name = $2
       if ($5 == cur) name = "\033[1m" name "\033[0m"
       rows[$1] = rows[$1] " " glyph " " name "\t" $5 "\t" $4 "\t" ($5 == cur) "\n"
@@ -186,20 +186,58 @@ sidebar_recenter() {
   done
 }
 
-# Mirrors each agent's state onto its tab, so the tab shows it whichever pane is focused.
+# Mirrors each agent's state onto its tab, so the tab shows it whichever pane is focused,
+# and onto the session for the status line.
 sidebar_tab_states() {
-  local default_name sess status win
+  local default_name sess status win glyph
   default_name=$(harness_window)
   printf '%s\n' "$1" | while IFS=$'\t' read -r _ _ status _ sess; do
     [ -n "$sess" ] && [ "$status" != closed ] || continue
     win=$(tmux show-options -qv -t "=$sess:" @st_agent_window 2>/dev/null) || win=''
     tmux set-option -wq -t "=$sess:${win:-$default_name}" @st_tab_state "$status" 2>/dev/null || true
+    case $status in
+      input) glyph="#[fg=yellow]$G_IN#[default]";;
+      running) glyph="#[fg=green]$G_RUN#[default]";;
+      *) glyph=$G_DONE;;
+    esac
+    tmux set-option -q -t "=$sess:" @st_state_glyph "$glyph" 2>/dev/null || true
   done
 }
 
+# A tree that just started waiting gets one notice on each client looking at another tree.
+status_notices() { # old-rows new-rows
+  local label sess tty client_sess
+  [ -n "$1" ] || return 0
+  awk -F '\t' 'NR == FNR { was[$5] = $3; next }
+    $3 == "input" && ($5 in was) && was[$5] != "input" { print $1 "/" $2 "\t" $5 }' \
+    <(printf '%s\n' "$1") <(printf '%s\n' "$2") |
+    while IFS=$'\t' read -r label sess; do
+      tmux list-clients -F '#{client_tty}'$'\t''#{session_name}' 2>/dev/null |
+        while IFS=$'\t' read -r tty client_sess; do
+          [ "$client_sess" != "$sess" ] || continue
+          tmux display-message -c "$tty" -d 5000 \
+            "$G_IN ${label//#/##} needs you · ${ST_KEY_PICKER:-M-w}" 2>/dev/null || true
+        done
+    done
+}
+
+# Opt-in (ST_STATUS_RIGHT=1): every tree's status line counts the trees waiting on you.
+status_need_text() { # rows
+  local need=0
+  [ "${ST_STATUS_RIGHT:-0}" != 1 ] ||
+    need=$(printf '%s\n' "$1" | awk -F '\t' '$3 == "input"' | wc -l | tr -d ' ')
+  if [ "$need" = 0 ]; then tmux set-option -gqu @st_need_text 2>/dev/null || true; return 0; fi
+  tmux set-option -gq @st_need_text "$G_IN $need need you · ${ST_KEY_PICKER:-M-w}" 2>/dev/null || true
+}
+
+tree_sessions_open() { # trees live-sessions
+  awk -F '\t' 'NR == FNR { if ($4 != "") tree[$4] = 1; next } $0 in tree { found = 1 } END { exit !found }' \
+    <(printf '%s\n' "$1") <(printf '%s\n' "$2")
+}
+
+# Also drives tab marks, the status line and notices, so it runs with the sidebar off too.
 sidebar_poll_start() {
   local pid
-  sidebar_enabled || return 0
   pid=$(cat "$ST_SIDEBAR_DIR/poll.lock/pid" 2>/dev/null) || pid=''
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && return 0
   # run-shell -b detaches the refresher from this pane, so closing the pane leaves it running.
@@ -246,18 +284,23 @@ cmd_sidebar_poll() {
       mv "$tmp" "$ST_SIDEBAR_DIR/rows"
       sidebar_poke
       sidebar_tab_states "$rows"
+      status_notices "$old" "$rows"
+      status_need_text "$rows"
       old=$rows
     fi
-    # Idle means no sidebar panes, not no sockets: a new pane exists before its socket,
-    # and panes whose socket path is too long never get one.
-    if sidebar_panes_exist; then idle=0; else idle=$((idle + 1)); fi
+    # Idle means no sidebar panes and no open trees, not no sockets: a new pane exists
+    # before its socket, and panes whose socket path is too long never get one.
+    if sidebar_panes_exist || tree_sessions_open "$trees" "$live"; then idle=0; else idle=$((idle + 1)); fi
     [ "$idle" -lt 3 ] || break
     ticks=$((ticks + 1))
     sleep 2
   done
   rm -rf "$lock"
   # Sidebars added while shutting down saw this refresher still alive and did not start one.
-  if tmux list-sessions >/dev/null 2>&1 && sidebar_panes_exist; then exec "$(st_self)" _sidebar-poll; fi
+  if tmux list-sessions >/dev/null 2>&1 &&
+     { sidebar_panes_exist || tree_sessions_open "$(list_trees)" "$(tmux list-sessions -F '#S' 2>/dev/null)"; }; then
+    exec "$(st_self)" _sidebar-poll
+  fi
 }
 
 cmd_sidebar() {

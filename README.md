@@ -103,7 +103,7 @@ cmd_greet() { printf 'hello %s\n' "${1:-world}"; }
 st_register_command greet cmd_greet 'greet someone'
 ```
 
-The command appears in `st help` automatically. Remove that file to remove
+The command appears under "more" in `st help` automatically. Remove that file to remove
 the command. The picker, worktree, and maintenance modules can also be removed
 individually; the shared modules provide the functions used across features.
 Run the shell tests after changing modules.
@@ -193,10 +193,11 @@ st rm feat-otp         # done with it: session, worktree and branch go away
 | `st remove all [--force]` | List and remove Git checkouts under `ST_WORKTREE_ROOT`, including standalone repositories. Asks before removal. |
 | `st update` | Check for the latest release and install it automatically when available. |
 | `st uninstall` | Remove the installed command, Supertree config, tmux source line, and state. |
-| `st doctor` | Check dependencies, config syntax, generated bindings, and live tmux keys. |
+| `st doctor` | Check dependencies, fzf (0.45+) and tmux (3.3+) versions, config syntax, generated bindings, and live tmux keys. Each problem comes with a `fix` line; in a terminal it ends with a problem count. |
+| `st config` | Change the agent, the windows and their order, the waiting count on the status line, and the sidebar from an fzf screen. Writes the config file; open trees pick up agent and window changes when reopened. Piped, it prints the current settings. |
 | `st repair` | Reinstall this release and reload its tmux bindings. |
 | `st keys` | Print every tmux key binding (`M-/` shows the same list in a popup). |
-| `st help` | List commands and keys. `st --version` prints the installed version. |
+| `st help` | List commands grouped by task (trees, setup), then keys. `st --version` prints the installed version. |
 
 ### Flags
 
@@ -344,7 +345,14 @@ rows. Split panes get a quiet divider; a single program uses the full area.
 
 Tree sessions show their windows as tabs at the top (`1. codex ●`, `2. nvim`,
 `3. shell`). The active tab is underlined, and the current repository and branch
-appear on the right. Other tmux sessions keep your own status line.
+appear on the right after the agent's state (`●` running, `◐` waiting for you,
+`○` exited). Other tmux sessions keep your own status line.
+
+When an agent in another tree starts waiting for you, tmux shows a short notice
+(`◐ webauth/feat-otp needs you · M-w`) to every terminal looking at a different
+tree. Messages from the window keys (`M-e`, `M-1` … `M-9`, `M-Tab`) also appear
+on tmux's message line. Set `ST_STATUS_RIGHT=1` in the config to add a running
+count on the right of every tree's status line (`◐ 2 need you · M-w`).
 
 Order controls startup focus, `M-1` through `M-9`, and the pair switched by
 `M-e`. Reopening a tree adds newly configured windows and selects a newly
@@ -386,8 +394,9 @@ window.
 One background refresher per tmux server keeps every sidebar current. It
 re-reads agent states every 2 seconds and the tree list when sessions open or
 close (or every 30 seconds), then pushes changes to each sidebar over fzf's
-`--listen` socket under `~/.local/state/supertree/sidebar/`. It stops once no
-sidebars are left. It also closes a window whose only remaining pane is its
+`--listen` socket under `~/.local/state/supertree/sidebar/`. The same refresher
+drives the tab and status-line states and the "needs you" notices, so it also
+runs with sidebars off; it stops once no sidebars and no tree sessions are left. It also closes a window whose only remaining pane is its
 sidebar, for example after you `exit` the shell beside it; if that was the
 tree's last window, you are moved to another session instead of being
 disconnected. A sidebar closed by hand comes back within a few seconds; use

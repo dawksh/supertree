@@ -13,15 +13,17 @@ ui_colour_on() {
   [ -z "${NO_COLOR:-}" ] || return 0
   UI_A=$'\033[36m' UI_OK=$'\033[32m' UI_WARN=$'\033[33m'
   UI_ERR=$'\033[31m' UI_DIM=$'\033[90m' UI_R=$'\033[0m'
-  UI_IN=$'\033[1;33m' UI_RUN=$'\033[34m' UI_REPO=$'\033[35m' UI_B=$'\033[1m'
+  UI_IN=$'\033[33m' UI_RUN=$'\033[32m' UI_REPO=$'\033[35m' UI_B=$'\033[1m'
 }
 if [ -t 1 ] || [ -t 2 ]; then ui_colour_on; fi
 
 G_OK='✓' G_ERR='✗' G_WARN='!' G_INFO='›' G_ASK='?'
-G_IN='◆' G_RUN='●' G_DONE='✓' G_OFF='○' G_MAIN='⌂' G_DIRTY='±' G_AHEAD='↑'
+# Agent states match the sidebar and tabs. done is a hollow circle, not a tick:
+# it only means the agent exited, maybe after a crash.
+G_IN='◐' G_RUN='●' G_DONE='○' G_OFF='·' G_MAIN='⌂' G_DIRTY='±' G_AHEAD='↑'
 if [ -n "${ST_ASCII:-}" ]; then
   G_OK='+' G_ERR='x' G_INFO='>'
-  G_IN='!' G_RUN='*' G_DONE='+' G_OFF='-' G_MAIN='@' G_DIRTY='~' G_AHEAD='^'
+  G_IN='!' G_RUN='*' G_DONE='o' G_OFF='.' G_MAIN='@' G_DIRTY='~' G_AHEAD='^'
 fi
 
 # Every glyph above is one column wide, so widths below count it as 1
@@ -31,7 +33,7 @@ ui_status() {
   case $status in
     input) glyph=$G_IN color=$UI_IN;;
     running) glyph=$G_RUN color=$UI_RUN;;
-    done) glyph=$G_DONE color=$UI_OK;;
+    done) glyph=$G_DONE color='';;
     *) glyph=$G_OFF color=$UI_DIM;;
   esac
   pad=$((width - 2 - ${#status}))
@@ -61,6 +63,16 @@ ui_row() {
 }
 
 ui_info() { ui_row "$G_INFO" "$UI_DIM" "$@"; }
+
+# Key bindings run st through run-shell, which drops stderr
+# (https://man.openbsd.org/tmux#run-shell), so a message there goes to tmux's message line.
+ui_toast() { # message
+  if [ -n "${TMUX:-}" ] && [ ! -t 2 ] &&
+     tmux display-message -d 3000 "${1//#/##}" 2>/dev/null; then
+    return 0
+  fi
+  ui_info "$1"
+}
 ui_ok()   { ui_row "$G_OK" "$UI_OK" "$@"; }
 ui_warn() { ui_row "$G_WARN" "$UI_WARN" "$@"; }
 

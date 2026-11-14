@@ -151,8 +151,8 @@ ROWS
   printf '\n  %s%s trees%s' "$UI_DIM" "$total" "$UI_R"
   [ "$need" = 0 ] || printf '%s · %s%s %s need you%s' "$UI_DIM" "$UI_IN" "$G_IN" "$need" "$UI_R"
   [ "$run" = 0 ] || printf '%s · %s%s %s%s' "$UI_DIM" "$UI_RUN" "$G_RUN" "$run" "$UI_R"
-  [ "$finished" = 0 ] || printf '%s · %s%s %s%s' "$UI_DIM" "$UI_OK" "$G_DONE" "$finished" "$UI_R"
-  [ "$closed" = 0 ] || printf '%s · %s %s%s' "$UI_DIM" "$G_OFF" "$closed" "$UI_R"
+  [ "$finished" = 0 ] || printf '%s · %s%s %s' "$UI_DIM" "$UI_R" "$G_DONE" "$finished"
+  [ "$closed" = 0 ] || printf '%s · %s closed%s' "$UI_DIM" "$closed" "$UI_R"
   printf '\n'
 }
 
@@ -451,7 +451,7 @@ cmd_remove() {
 
 st_register_command 'new' cmd_new 'create a worktree and open its session' 'new <branch> [--from <base>] [--bare]'
 st_register_command 'trust' cmd_trust 'trust a reviewed .supertree config (--show: what changed)' 'trust [--show]'
-st_register_command 'ls' cmd_ls 'show every tree in a readable grid'
+st_register_command 'ls' cmd_ls 'every tree grouped by repo, waiting ones first'
 st_register_command 'status' cmd_status 'show agent status' 'status [tree]'
 st_register_command 'rm' cmd_rm 'remove a worktree and its session' 'rm <branch> [--force]'
 st_register_command 'remove' cmd_remove 'remove Git checkouts under the worktree root' 'remove all [--force]'
