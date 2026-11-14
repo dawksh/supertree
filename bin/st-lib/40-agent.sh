@@ -43,19 +43,31 @@ agent_needs_input() {
 }
 
 agent_status() {
-  local sess=$1 pane state command
-  if ! tmux has-session -t "=$sess" 2>/dev/null; then
-    printf 'closed'; return
-  fi
-  pane=$(agent_pane "$sess")
+  local sess=$1 tab=$'\t' rows row wanted='' pane='' state='' command='' bin format
+  format="#{@st_sidebar}$tab#{@st_agent_window}$tab#{window_name}$tab#{pane_id}$tab#{@st_agent_state}$tab#{pane_current_command}"
+  rows=$(tmux list-panes -s -t "=$sess" -F "$format" 2>/dev/null) || { printf 'closed'; return; }
+  # Split by hand: `IFS=$'\t' read` merges empty fields and shifts the columns.
+  while IFS= read -r row; do
+    [ "${row%%"$tab"*}" != 1 ] || continue
+    row=${row#*"$tab"}
+    [ -n "$wanted" ] || wanted=${row%%"$tab"*}
+    [ -n "$wanted" ] || wanted=$(harness_window)
+    row=${row#*"$tab"}
+    [ "${row%%"$tab"*}" = "$wanted" ] || continue
+    row=${row#*"$tab"}; pane=${row%%"$tab"*}
+    row=${row#*"$tab"}; state=${row%%"$tab"*}
+    command=${row#*"$tab"}
+    break
+  done <<EOF
+$rows
+EOF
   [ -n "$pane" ] || { printf 'done'; return; }
-  state=$(tmux show-options -pqv -t "$pane" @st_agent_state 2>/dev/null) || state=""
   if [ "$state" = done ]; then printf 'done'; return; fi
   if [ -z "$state" ]; then
     # Sessions created before status tracking have no pane option yet.
-    command=$(tmux display-message -p -t "$pane" '#{pane_current_command}' 2>/dev/null) || command=""
+    bin=$(harness_bin)
     case $command in
-      "$(basename "$(harness_bin)")"|node|bun) ;;
+      "${bin##*/}"|node|bun) ;;
       *) printf 'done'; return;;
     esac
   fi

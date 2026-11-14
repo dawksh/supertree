@@ -37,6 +37,9 @@ case ${1:-} in
   list-panes)
     if [ "${2:-}" = -a ]; then
       printf '%s\n' "${ST_TEST_PANES:-}"
+    elif [ "${2:-}" = -s ]; then
+      [ "${ST_TEST_HAS_SESSIONS:-0}" = 1 ] || exit 1
+      printf '\tcodex\tcodex\t%%0\t%s\tcodex\n' "${ST_TEST_AGENT_STATE:-running}"
     else
       printf '%%0\n'
     fi;;

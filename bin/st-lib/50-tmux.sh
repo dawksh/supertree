@@ -553,7 +553,7 @@ EOF
 }
 
 cmd_toggle() {
-  local pane cur windows first second first_name target
+  local pane cur windows first='' second='' first_name target
   pane=${TMUX_PANE:-}
   if [ -n "$pane" ]; then
     cur=$(tmux display-message -p -t "$pane" '#W')
@@ -561,8 +561,9 @@ cmd_toggle() {
     cur=$(tmux display-message -p '#W')
   fi
   windows=$(configured_windows)
-  first=$(printf '%s\n' "$windows" | sed -n '1p')
-  second=$(printf '%s\n' "$windows" | sed -n '2p')
+  { read -r first || true; read -r second || true; } <<EOF
+$windows
+EOF
   [ -n "$second" ] || { ui_toast "toggle needs at least two configured windows"; return 0; }
   first_name=$(window_name "$first")
   if [ "$cur" = "$first_name" ]; then target=$second; else target=$first; fi
@@ -584,10 +585,17 @@ select_window_type() {
 }
 
 cmd_window() {
-  local slot=${1:-} windows type
+  local slot=${1:-} windows type='' line i=0
   case $slot in ''|*[!0-9]*|0) die "usage: st window <positive slot>";; esac
   windows=$(configured_windows)
-  type=$(printf '%s\n' "$windows" | sed -n "${slot}p")
+  while IFS= read -r line; do
+    i=$((i + 1))
+    [ "$i" -eq "$slot" ] || continue
+    type=$line
+    break
+  done <<EOF
+$windows
+EOF
   [ -n "$type" ] || { ui_toast "no window configured for slot $slot"; return 0; }
   select_window_type "$type" "$windows"
 }
