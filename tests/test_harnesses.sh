@@ -130,8 +130,20 @@ grep -F -- '_run _agent' "$ST_TMUX_LOG" >/dev/null || fail 'session did not use 
 screens="$TEST_ROOT/screens"
 mkdir -p "$screens"
 printf '%s\n' \
-  '#!/bin/sh' \
+  '#!/usr/bin/env bash' \
   'printf "%s\n" "$*" >> "$ST_TMUX_LOG"' \
+  'if [[ " $* " == *" ; "* ]]; then' \
+  '  seg=()' \
+  '  for arg in "$@" ";"; do' \
+  '    if [ "$arg" != ";" ]; then seg+=("$arg"); continue; fi' \
+  '    case ${seg[0]} in' \
+  '      display-message) printf "%s\n" "${seg[${#seg[@]}-1]}";;' \
+  '      capture-pane) cat "$ST_TEST_SCREENS/${seg[3]#%}" 2>/dev/null || printf "Working...\n";;' \
+  '    esac' \
+  '    seg=()' \
+  '  done' \
+  '  exit 0' \
+  'fi' \
   'case ${1:-} in' \
   '  list-panes) printf "%s\n" "$ST_TEST_PANES";;' \
   '  capture-pane) cat "$ST_TEST_SCREENS/${4#%}" 2>/dev/null || printf "Working...\n";;' \
@@ -164,7 +176,7 @@ expected=$(printf '%s\t%s\n' plain done harness running node running bun running
 [ "$statuses" = "$expected" ] || fail "agent_statuses gave [$statuses], expected [$expected]"
 [ "$(grep -c '^list-panes -a ' "$ST_TMUX_LOG")" = 1 ] || fail 'agent_statuses did not use one list-panes -a call'
 [ "$(grep -c '^list-panes' "$ST_TMUX_LOG")" = 1 ] || fail 'agent_statuses listed panes per session'
-captured=$(sed -n 's/^capture-pane -p -t \(%[0-9]*\) .*/\1/p' "$ST_TMUX_LOG" | tr '\n' ' ')
+captured=$(grep -o 'capture-pane -p -t %[0-9]*' "$ST_TMUX_LOG" | sed 's/.* //' | tr '\n' ' ')
 [ "$captured" = '%2 %3 %4 %6 %7 %8 %10 %12 ' ] || fail "screens captured for non-running panes: [$captured]"
 
 printf 'ok: harness launch, continuation, tmux window selection, and agent statuses\n'

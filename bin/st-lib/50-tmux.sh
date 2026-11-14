@@ -369,16 +369,17 @@ EOF
 }
 
 rewrite_recent() {
-  local sess=$1 put_first=$2 tmp
-  mkdir -p "$ST_STATE"
-  tmp=$(mktemp "$ST_STATE/.recent.XXXXXX")
+  local sess=$1 put_first=$2 recent="$ST_STATE/recent" tmp="$ST_STATE/.recent.$$" line
+  [ -d "$ST_STATE" ] || mkdir -p "$ST_STATE"
   {
     [ "$put_first" = 0 ] || printf '%s\n' "$sess"
-    if [ -f "$ST_STATE/recent" ]; then
-      grep -vxF -- "$sess" "$ST_STATE/recent" || true
+    if [ -f "$recent" ]; then
+      while IFS= read -r line || [ -n "$line" ]; do
+        if [ "$line" != "$sess" ]; then printf '%s\n' "$line"; fi
+      done < "$recent"
     fi
   } > "$tmp"
-  mv "$tmp" "$ST_STATE/recent"
+  mv "$tmp" "$recent"
 }
 
 remember_recent() { rewrite_recent "$1" 1; }
@@ -391,22 +392,22 @@ sort_recent() {
     "$recent" - | sort -n -k1,1 | cut -f2-
 }
 
-tty_key() { printf '%s' "$1" | tr '/' '-'; }
 
 current_session() {
   tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#S' 2>/dev/null || true
 }
 
 remember_origin() {
-  local tty cur
-  tty=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#{client_tty}' 2>/dev/null) || return 0
-  cur=$(current_session)
+  local tab=$'\t' info tty cur
+  info=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} "#{client_tty}$tab#S" 2>/dev/null) || return 0
+  tty=${info%%"$tab"*}
+  cur=${info#*"$tab"}
   [ -n "$tty" ] && [ -n "$cur" ] && [ "$cur" != "$1" ] || return 0
   if home_is_open; then cur=$ST_HOME_SESSION; fi
   # Hops between trees keep home as their return point.
   ! is_tree_session "$cur" || return 0
-  mkdir -p "$ST_STATE/origin"
-  printf '%s\n' "$cur" > "$ST_STATE/origin/$(tty_key "$tty")"
+  [ -d "$ST_STATE/origin" ] || mkdir -p "$ST_STATE/origin"
+  printf '%s\n' "$cur" > "$ST_STATE/origin/${tty//\//-}"
 }
 
 evacuate_clients() {
@@ -415,8 +416,9 @@ evacuate_clients() {
   [ -n "$ttys" ] || return 0
   while read -r tty; do
     [ -n "$tty" ] || continue
-    origin_file="$ST_STATE/origin/$(tty_key "$tty")"
-    origin=$(cat "$origin_file" 2>/dev/null) || origin=""
+    origin_file="$ST_STATE/origin/${tty//\//-}"
+    origin=''
+    IFS= read -r origin 2>/dev/null < "$origin_file" || true
     if [ -n "$origin" ] && [ "$origin" != "$sess" ] && tmux has-session -t "=$origin" 2>/dev/null; then
       tmux switch-client -c "$tty" -t "=$origin" 2>/dev/null && { rm -f "$origin_file"; continue; }
     fi
@@ -553,7 +555,7 @@ EOF
 }
 
 cmd_toggle() {
-  local pane cur windows first second first_name target
+  local pane cur windows first='' second='' first_name target
   pane=${TMUX_PANE:-}
   if [ -n "$pane" ]; then
     cur=$(tmux display-message -p -t "$pane" '#W')
@@ -561,8 +563,9 @@ cmd_toggle() {
     cur=$(tmux display-message -p '#W')
   fi
   windows=$(configured_windows)
-  first=$(printf '%s\n' "$windows" | sed -n '1p')
-  second=$(printf '%s\n' "$windows" | sed -n '2p')
+  { read -r first || true; read -r second || true; } <<EOF
+$windows
+EOF
   [ -n "$second" ] || { ui_toast "toggle needs at least two configured windows"; return 0; }
   first_name=$(window_name "$first")
   if [ "$cur" = "$first_name" ]; then target=$second; else target=$first; fi
@@ -584,10 +587,17 @@ select_window_type() {
 }
 
 cmd_window() {
-  local slot=${1:-} windows type
+  local slot=${1:-} windows type='' line i=0
   case $slot in ''|*[!0-9]*|0) die "usage: st window <positive slot>";; esac
   windows=$(configured_windows)
-  type=$(printf '%s\n' "$windows" | sed -n "${slot}p")
+  while IFS= read -r line; do
+    i=$((i + 1))
+    [ "$i" -eq "$slot" ] || continue
+    type=$line
+    break
+  done <<EOF
+$windows
+EOF
   [ -n "$type" ] || { ui_toast "no window configured for slot $slot"; return 0; }
   select_window_type "$type" "$windows"
 }
@@ -599,13 +609,12 @@ cmd_last() {
   current=$(current_session)
   trees=$(list_trees)
   # Record the current tree so the next M-Tab comes straight back.
-  if printf '%s\n' "$trees" | cut -f4 | grep -qxF -- "$current"; then
+  if session_path "$current" "$trees" >/dev/null; then
     remember_recent "$current"
   fi
   while IFS= read -r sess; do
     [ -n "$sess" ] && [ "$sess" != "$current" ] || continue
-    path=$(printf '%s\n' "$trees" | awk -F '\t' -v s="$sess" '$4 == s && !found { print $3; found = 1 }')
-    [ -n "$path" ] || continue
+    path=$(session_path "$sess" "$trees") || continue
     build_session "$sess" "$path"
     attach "$sess"
     return 0
@@ -621,7 +630,7 @@ cmd_leave() {
   local tty=${1:-} origin_file
   [ -n "${TMUX:-}" ] || die "st leave only works inside tmux"
   [ -n "$tty" ] || tty=$(tmux display-message -p '#{client_tty}')
-  origin_file="$ST_STATE/origin/$(tty_key "$tty")"
+  origin_file="$ST_STATE/origin/${tty//\//-}"
   rm -f "$origin_file"
   tmux detach-client -t "$tty"
 }

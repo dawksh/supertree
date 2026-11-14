@@ -129,10 +129,17 @@ while [ -L "$st_source" ]; do
   st_link=$(readlink "$st_source")
   case $st_link in
     /*) st_source=$st_link;;
-    *) st_source=$(dirname "$st_source")/$st_link;;
+    *) st_source=${st_source%/*}/$st_link;;
   esac
 done
-st_lib_dir=$(cd "$(dirname "$st_source")" && pwd)/st-lib
+st_bin_dir=${st_source%/*}
+# Runs on every keypress: only fork cd/pwd when the path is relative or not already clean.
+case $st_bin_dir in
+  '') st_bin_dir=/;;
+  /*) case $st_bin_dir/ in *//*|*/./*|*/../*) st_bin_dir=$(cd "$st_bin_dir" && pwd);; esac;;
+  *) st_bin_dir=$(cd "$st_bin_dir" && pwd);;
+esac
+st_lib_dir=$st_bin_dir/st-lib
 if [ "$ST_VERSION" != dev ]; then
   st_lib_dir="$st_lib_dir-$ST_VERSION"
 fi
