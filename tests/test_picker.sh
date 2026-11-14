@@ -42,6 +42,18 @@ done
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   '{ printf "%s\n" "$@"; printf -- "--\n"; } >> "$ST_TMUX_LOG"' \
+  'if [[ " $* " == *" ; "* ]]; then' \
+  '  seg=()' \
+  '  for arg in "$@" ";"; do' \
+  '    if [ "$arg" != ";" ]; then seg+=("$arg"); continue; fi' \
+  '    case ${seg[0]} in' \
+  '      display-message) printf "%s\n" "${seg[${#seg[@]}-1]}";;' \
+  '      capture-pane) case " ${ST_TEST_INPUT_PANES:-} " in *" ${seg[3]} "*) printf "❯ \n";; *) printf "Working...\n";; esac;;' \
+  '    esac' \
+  '    seg=()' \
+  '  done' \
+  '  exit 0' \
+  'fi' \
   '[ "${1:-}" = has-session ] && [ "${ST_TEST_HAS_SESSION:-0}" != 1 ] && exit 1' \
   '[ "${1:-}" = list-windows ] && printf "%s\n" "${ST_TEST_LIVE_WINDOWS:-}"' \
   'case "$*" in *"@st_layout"*) printf "7\n";; esac' \

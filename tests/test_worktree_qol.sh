@@ -20,6 +20,18 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 cat > "$HOME/.local/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$ST_TEST_LOG"
+if [[ " $* " == *' ; '* ]]; then
+  seg=()
+  for arg in "$@" ';'; do
+    if [ "$arg" != ';' ]; then seg+=("$arg"); continue; fi
+    case ${seg[0]} in
+      display-message) printf '%s\n' "${seg[${#seg[@]}-1]}";;
+      capture-pane) printf '%s\n' "${ST_TEST_SCREEN:-Working...}";;
+    esac
+    seg=()
+  done
+  exit 0
+fi
 case ${1:-} in
   has-session)
     if [ -n "${ST_TEST_SESSIONS:-}" ]; then

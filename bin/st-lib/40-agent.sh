@@ -35,11 +35,53 @@ agent_pane() {
   tmux list-panes -t "=$sess:$name" -f '#{!=:#{@st_sidebar},1}' -F '#{pane_id}' 2>/dev/null | head -1
 }
 
+ST_PANE_MARKER='@@st-pane@@'
+
+# Input: "$ST_PANE_MARKER <pane id without %>" lines, each followed by that pane's
+# capture. Prints the ids of panes whose last 8 non-blank-trailing lines show a prompt.
+panes_needing_input() {
+  awk -v marker="$ST_PANE_MARKER" '
+    function flush(  i, last, start) {
+      if (pane == "") return
+      last = n; while (last > 0 && line[last] == "") last--
+      start = last - 7; if (start < 1) start = 1
+      for (i = start; i <= last; i++)
+        if (line[i] ~ /^[[:space:]]*(›|❯)([[:space:]]|$)|\[[yY]\/[nN]\][[:space:]]*$/) { print pane; break }
+    }
+    index($0, marker " ") == 1 { flush(); pane = "%" substr($0, length(marker) + 2); n = 0; next }
+    { line[++n] = $0 }
+    END { flush() }'
+}
+
 agent_needs_input() {
   local pane=$1 screen
   screen=$(tmux capture-pane -p -t "$pane" -S -12 2>/dev/null) || return 1
-  printf '%s\n' "$screen" | tail -8 | grep -Eq \
-    '^[[:space:]]*(›|❯)([[:space:]]|$)|\[[yY]/[nN]\][[:space:]]*$'
+  [ -n "$(printf '%s %s\n%s\n' "$ST_PANE_MARKER" "${pane#%}" "$screen" | panes_needing_input)" ]
+}
+
+# Captures every listed pane in one tmux call. A pane that vanishes mid-call
+# aborts the whole chain, so fall back to one capture per pane.
+panes_waiting_for_input() {
+  local panes=$1 pane screens
+  local -a capture=()
+  while IFS= read -r pane; do
+    [ -n "$pane" ] || continue
+    [ ${#capture[@]} -eq 0 ] || capture+=(';')
+    capture+=(display-message -p "$ST_PANE_MARKER ${pane#%}" ';' capture-pane -p -t "$pane" -S -12)
+  done <<EOF
+$panes
+EOF
+  [ ${#capture[@]} -gt 0 ] || return 0
+  if screens=$(tmux "${capture[@]}" 2>/dev/null); then
+    printf '%s\n' "$screens" | panes_needing_input
+    return 0
+  fi
+  while IFS= read -r pane; do
+    [ -n "$pane" ] || continue
+    if agent_needs_input "$pane"; then printf '%s\n' "$pane"; fi
+  done <<EOF
+$panes
+EOF
 }
 
 agent_status() {
@@ -85,7 +127,7 @@ agent_tail() {
 }
 
 agent_statuses() {
-  local format panes name bin sess status pane
+  local format panes name bin sess status pane rows running='' waiting
   format='#{session_name}'$'\t''#{window_name}'$'\t''#{pane_id}'$'\t''#{@st_agent_state}'$'\t''#{@st_agent_window}'$'\t''#{pane_current_command}'$'\t''#{@st_sidebar}'
   panes=$(tmux list-panes -a -F "$format" 2>/dev/null) || panes=''
   [ -n "$panes" ] || return 0
@@ -93,7 +135,7 @@ agent_statuses() {
   bin=$(harness_bin)
   bin=${bin##*/}
   # \037 separates fields because read collapses consecutive tabs, shifting empty ones.
-  printf '%s\n' "$panes" | awk -F '\t' -v default_name="$name" -v bin="$bin" '
+  rows=$(printf '%s\n' "$panes" | awk -F '\t' -v default_name="$name" -v bin="$bin" '
     $1 == "" || $7 == 1 { next }
     !($1 in seen) { seen[$1] = 1; order[++n] = $1 }
     $5 != "" { agent_window[$1] = $5 }
@@ -108,10 +150,22 @@ agent_statuses() {
         else if (state[s] == "" && command[s] != bin && command[s] != "node" && command[s] != "bun") status = "done"
         printf "%s\037%s\037%s\n", s, status, pane[s]
       }
-    }' | while IFS=$'\037' read -r sess status pane; do
-    if [ "$status" = running ] && agent_needs_input "$pane"; then status=input; fi
+    }')
+  [ -n "$rows" ] || return 0
+  while IFS=$'\037' read -r sess status pane; do
+    [ "$status" != running ] || running="$running$pane"$'\n'
+  done <<EOF
+$rows
+EOF
+  waiting=$'\n'$(panes_waiting_for_input "$running")$'\n'
+  while IFS=$'\037' read -r sess status pane; do
+    if [ "$status" = running ]; then
+      case $waiting in *$'\n'"$pane"$'\n'*) status=input;; esac
+    fi
     printf '%s\t%s\n' "$sess" "$status"
-  done
+  done <<EOF
+$rows
+EOF
 }
 
 # Same rule as st rm: trees branched off origin/dev track it, so `@{u}..` would
