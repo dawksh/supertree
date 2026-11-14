@@ -64,6 +64,7 @@ case ${1:-} in
       "#S") printf "%s\n" "$ST_TEST_SESSION";;
       "#{pane_current_path}") printf "%s\n" "$ST_TEST_PATH";;
       "#{client_tty}") printf "%s\n" "${ST_TEST_TTY:-}";;
+      "#{client_tty}"$'\t'"#S") printf "%s\t%s\n" "${ST_TEST_TTY:-}" "$ST_TEST_SESSION";;
       "#{@st_sidebar}") printf "%s\n" "${ST_TEST_FOCUSED_SIDEBAR:-}";;
     esac;;
   list-windows)

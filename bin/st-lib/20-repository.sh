@@ -327,6 +327,18 @@ list_trees() {
   done
 }
 
+session_path() {
+  local wanted=$1 repo branch path sess
+  while IFS=$'\t' read -r repo branch path sess; do
+    [ "$sess" = "$wanted" ] || continue
+    printf '%s' "$path"
+    return 0
+  done <<EOF
+$2
+EOF
+  return 1
+}
+
 tree_session() {
   local trees
   trees=$(trees_or_list "${@:3}")
