@@ -82,17 +82,19 @@ bootstrap() {
 }
 
 run_install() { # dir command
-  ( cd "$1"
-    # shellcheck disable=SC1090
-    [ -z "$trusted_config_snapshot" ] || . "$trusted_config_snapshot"
+  ( cd "$1" || return
+    if [ -n "$trusted_config_snapshot" ]; then
+      # shellcheck disable=SC1090
+      . "$trusted_config_snapshot" || return
+    fi
     eval "$2" )
 }
 
 run_post_create() { # dir branch index command
-  ( cd "$1"
+  ( cd "$1" || return
     export ST_TREE_DIR="$1" ST_TREE_BRANCH="$2" ST_TREE_INDEX="$3"
     # shellcheck disable=SC1090
-    . "$trusted_config_snapshot"
+    . "$trusted_config_snapshot" || return
     eval "$4" )
 }
 

@@ -161,7 +161,9 @@ create_window() {
   local cmd=()
   self=$(st_self)
   name=$(window_name "$type")
-  printf -v run 'env HOME=%q SHELL=%q ST_CONFIG=%q ST_STATE=%q ST_WORKTREE_ROOT=%q ST_HARNESS=%q ST_WINDOWS=%q ST_HARNESS_COMMAND=%q ST_HARNESS_RESUME_COMMAND=%q ST_SHELL=%q %q _run' \
+  # The first pane starts before session_environment can remove NO_COLOR from
+  # tmux's server environment. Keep the user's UI preference out of programs.
+  printf -v run 'env -u NO_COLOR HOME=%q SHELL=%q ST_CONFIG=%q ST_STATE=%q ST_WORKTREE_ROOT=%q ST_HARNESS=%q ST_WINDOWS=%q ST_HARNESS_COMMAND=%q ST_HARNESS_RESUME_COMMAND=%q ST_SHELL=%q %q _run' \
     "$HOME" "$(tree_shell)" "$ST_CONFIG" "$ST_STATE" "$ST_WORKTREE_ROOT" \
     "$ST_HARNESS" "$ST_WINDOWS" "$ST_HARNESS_COMMAND" "$ST_HARNESS_RESUME_COMMAND" "${ST_SHELL:-}" "$self"
   case $type in
@@ -169,7 +171,7 @@ create_window() {
     vim) cmd=("$run nvim");;
     shell) cmd=("$(shell_command)");;
     # Argument form skips tmux's own `sh -c`, so the configured command is parsed once.
-    *) cmd=("$self" _run /bin/sh -c "$(tab_command "$type")");;
+    *) cmd=(env -u NO_COLOR "$self" _run /bin/sh -c "$(tab_command "$type")");;
   esac
   if [ "$initial" = 1 ]; then
     tmux new-session -d -s "$sess" -c "$dir" -n "$name" ${cmd[@]+"${cmd[@]}"} || return 1
@@ -181,13 +183,23 @@ create_window() {
 
 # Tab look is set per session and window so other tmux sessions keep the user's status bar.
 style_session() {
+  local width=$(( ${ST_SIDEBAR_WIDTH:-24} + 1 )) label_width left_half right_half left
+  label_width=$((width - 4))
+  left_half=$(((label_width - 1) / 2))
+  right_half=$((label_width - 1 - left_half))
+  # Keep the tab strip aligned with the configured sidebar width. A long name
+  # keeps both ends so its repo and branch suffix stay identifiable.
+  printf -v left ' #{?@supertree_home,#{p%d:@supertree_label},#{?@st_state_glyph,#{@st_state_glyph},%s} #{p%d:#{?#{==:#{@supertree_label},#{=%d:@supertree_label}},#{@supertree_label},#{=%d:@supertree_label}…#{=-%d:@supertree_label}}}} ' \
+    "$((width - 2))" "${G_OFF:-·}" "$label_width" "$label_width" "$left_half" "$right_half"
   tmux set-option -t "=$1:" default-shell "$(tree_shell)" &&
   tmux set-option -t "=$1:" status-position top &&
   tmux set-option -t "=$1:" status-justify left &&
   tmux set-option -t "=$1:" status-style 'fg=default,bg=default' &&
+  tmux set-option -t "=$1:" status-left-length "$width" &&
+  tmux set-option -t "=$1:" status-left "$left" &&
   tmux set-option -t "=$1:" status-right-length 80 &&
   # @st_need_text (global, opt-in) and @st_state_glyph (per tree) come from the sidebar refresher.
-  tmux set-option -t "=$1:" status-right '#{?@st_need_text,#[fg=yellow]#{@st_need_text}#[default]  ,}#{?@supertree_home,,#{?@st_state_glyph,#{@st_state_glyph} ,}#[dim]#{@supertree_label}#[default] }' &&
+  tmux set-option -t "=$1:" status-right '#{?@st_need_text,#[fg=yellow]#{@st_need_text}#[default]  ,}' &&
   tmux set-option -t "=$1:" status on &&
   # When a tree's last program exits, switch to the most recent session instead of
   # leaving tmux. Session-scoped, so the global setting is untouched.

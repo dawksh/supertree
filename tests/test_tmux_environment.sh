@@ -40,6 +40,10 @@ NO_COLOR=1 ST_CONFIG="$TEST_ROOT/poison.conf" ST_STATE="$TEST_ROOT/poison-state"
   "$REAL_TMUX" -L "$SOCKET" -f /dev/null new-session -d -s sentinel 'sleep 30'
 
 (cd "$TEST_ROOT/repo" && "$ROOT/bin/st" new feature --bare >/dev/null 2>&1)
+rows=$(NO_COLOR=1 "$ROOT/bin/st" _rows)
+case $rows in *$'\033'*) printf 'FAIL: st UI ignored NO_COLOR\n' >&2; exit 1;; esac
+rows=$(NO_COLOR= "$ROOT/bin/st" _rows)
+case $rows in *$'\033'*) ;; *) printf 'FAIL: st UI omitted color when enabled\n' >&2; exit 1;; esac
 (cd "$TEST_ROOT/repo" && "$ROOT/bin/st" go feature >/dev/null 2>&1) || true
 
 for _ in $(seq 30); do

@@ -102,10 +102,7 @@ sidebar_session() {
   for win in $(tmux list-windows -t "=$sess" -F '#{window_id}'); do
     add_sidebar "$win" "$dir"
   done
-  # Align the tabs with the program pane while the sidebar is visible.
-  tmux set-option -t "=$sess:" status-left-length $((ST_SIDEBAR_WIDTH + 1))
-  tmux set-option -t "=$sess:" status-left \
-    "#{?@st_sidebar_off, Supertree ,#[dim]#{p$((ST_SIDEBAR_WIDTH + 1)): Supertree}#[default]}"
+  # style_session keeps the left label aligned with the configured sidebar width.
   tmux set-hook -t "$sess" after-new-window "run-shell \"$(tmux_cmd_word "$self" dq) _sidebar-attach '#{window_id}'\""
 }
 
@@ -212,6 +209,7 @@ status_notices() { # old-rows new-rows
     $3 == "input" && ($5 in was) && was[$5] != "input" { print $1 "/" $2 "\t" $5 }' \
     <(printf '%s\n' "$1") <(printf '%s\n' "$2") |
     while IFS=$'\t' read -r label sess; do
+      desktop_notify "$label"
       tmux list-clients -F '#{client_tty}'$'\t''#{session_name}' 2>/dev/null |
         while IFS=$'\t' read -r tty client_sess; do
           [ "$client_sess" != "$sess" ] || continue
@@ -219,6 +217,23 @@ status_notices() { # old-rows new-rows
             "$G_IN ${label//#/##} needs you · ${ST_KEY_PICKER:-M-w}" 2>/dev/null || true
         done
     done
+}
+
+# Local desktop notice, once per transition even when no other tmux client is
+# attached. Both backends receive the label as an argument, never as script code.
+desktop_notify() { # tree label
+  [ "${ST_NOTIFY:-0}" = 1 ] || return 0
+  local message="$1 needs you"
+  case $(uname -s) in
+    Darwin)
+      command -v osascript >/dev/null 2>&1 || return 0
+      osascript -e 'on run argv' \
+        -e 'display notification (item 1 of argv) with title "supertree"' \
+        -e 'end run' "$message" >/dev/null 2>&1 || true;;
+    *)
+      command -v notify-send >/dev/null 2>&1 || return 0
+      notify-send 'supertree' "$message" >/dev/null 2>&1 || true;;
+  esac
 }
 
 # Opt-in (ST_STATUS_RIGHT=1): every tree's status line counts the trees waiting on you.

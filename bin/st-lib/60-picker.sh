@@ -22,10 +22,15 @@ picker_rows() {
 
 # Row fields: display, path, session. fzf shows only the display.
 picker_display_rows() {
-  local rows width=0 label pad mark_width
+  local rows width=0 label pad mark_width state
+  local state_input state_running state_done state_closed
   local status repo rname branch kind path sess rank dirty unpushed
   rows=$(tree_rows "$@" | order_by_need)
   [ -n "$rows" ] || return 0
+  state_input=$(ui_status input 11)
+  state_running=$(ui_status running 11)
+  state_done=$(ui_status done 11)
+  state_closed=$(ui_status closed 11)
   while IFS=$'\t' read -r status repo rname branch kind path sess rank dirty unpushed; do
     label="$rname/$branch"
     [ "${#label}" -le "$width" ] || width=${#label}
@@ -35,7 +40,13 @@ ROWS
 
   while IFS=$'\t' read -r status repo rname branch kind path sess rank dirty unpushed; do
     label="$rname/$branch"
-    printf '%s%s%s/%s%s%s%s' "$(ui_status "$status" 11)" "$UI_REPO" "$rname" "$UI_R" "$UI_B" "$branch" "$UI_R"
+    case $status in
+      input) state=$state_input;;
+      running) state=$state_running;;
+      done) state=$state_done;;
+      *) state=$state_closed;;
+    esac
+    printf '%s%s%s/%s%s%s%s' "$state" "$UI_REPO" "$rname" "$UI_R" "$UI_B" "$branch" "$UI_R"
     mark_width=0
     if [ "$kind" = main ]; then
       printf ' %s%s%s' "$UI_DIM" "$G_MAIN" "$UI_R"

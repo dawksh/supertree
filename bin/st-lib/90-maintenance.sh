@@ -247,6 +247,8 @@ config_rows() {
   printf 'windows    %s%s%s\twindows\n' "$UI_B" "$windows" "$UI_R"
   printf 'waiting    %s%s%s  %scount on the status line%s\tstatus\n' "$UI_B" \
     "$([ "${ST_STATUS_RIGHT:-0}" = 1 ] && printf on || printf off)" "$UI_R" "$UI_DIM" "$UI_R"
+  printf 'notify     %s%s%s  %sdesktop notices%s\tnotify\n' "$UI_B" \
+    "$([ "${ST_NOTIFY:-0}" = 1 ] && printf on || printf off)" "$UI_R" "$UI_DIM" "$UI_R"
   printf 'sidebar    %s%s%s\tsidebar\n' "$UI_B" \
     "$([ "${ST_SIDEBAR:-1}" = 0 ] && printf off || printf on)" "$UI_R"
 }
@@ -293,8 +295,9 @@ cmd_config() {
   local pick changed=0 pid
   [ $# -eq 0 ] || die "usage: st config"
   if [ ! -t 0 ] || [ ! -t 1 ] || ! command -v fzf >/dev/null 2>&1; then
-    printf 'agent\t%s\nwindows\t%s\nwaiting\t%s\nsidebar\t%s\nconfig\t%s\n' "$ST_HARNESS" "$ST_WINDOWS" \
+    printf 'agent\t%s\nwindows\t%s\nwaiting\t%s\nnotify\t%s\nsidebar\t%s\nconfig\t%s\n' "$ST_HARNESS" "$ST_WINDOWS" \
       "$([ "${ST_STATUS_RIGHT:-0}" = 1 ] && printf on || printf off)" \
+      "$([ "${ST_NOTIFY:-0}" = 1 ] && printf on || printf off)" \
       "$([ "${ST_SIDEBAR:-1}" = 0 ] && printf off || printf on)" "$ST_CONFIG"
     return 0
   fi
@@ -310,6 +313,8 @@ cmd_config() {
       windows) config_pick_windows;;
       status) if [ "${ST_STATUS_RIGHT:-0}" = 1 ]; then ST_STATUS_RIGHT=''; else ST_STATUS_RIGHT=1; fi
               config_set ST_STATUS_RIGHT "$ST_STATUS_RIGHT";;
+      notify) if [ "${ST_NOTIFY:-0}" = 1 ]; then ST_NOTIFY=''; else ST_NOTIFY=1; fi
+              config_set ST_NOTIFY "$ST_NOTIFY";;
       sidebar) if [ "${ST_SIDEBAR:-1}" = 0 ]; then ST_SIDEBAR=1; config_set ST_SIDEBAR ''
                else ST_SIDEBAR=0; config_set ST_SIDEBAR 0; fi;;
     esac

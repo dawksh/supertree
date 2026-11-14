@@ -120,7 +120,6 @@ unpushed_log() { # dir [git log format]
 # recency rank, then with --git the uncommitted and unpushed counts.
 tree_rows() {
   local with_git=0 trees statuses mains recent
-  local status repo rname branch kind path sess rank dirty unpushed
   [ "${1:-}" != --git ] || with_git=1
   trees=$(list_trees)
   [ -n "$trees" ] || return 0
@@ -142,16 +141,37 @@ tree_rows() {
         (($3 in main) ? "main" : "worktree") "\t" $3 "\t" s "\t" ((s in rank) ? rank[s] : 100000 + n)
     }
   ' "$recent" <(printf '%s\n' "$statuses") <(printf '%s\n' "$mains") - |
+  if [ "$with_git" = 1 ]; then tree_rows_git_counts
+  else awk '{ print $0 "\t\t" }'; fi
+}
+
+# Git counts are independent across worktrees. Run a bounded group together and
+# print their results in input order so the picker and `st ls` keep the same rows.
+tree_rows_git_counts() (
+  local status repo rname branch kind path sess rank dirty unpushed
+  local batch n=0 first=1 i pid pids='' failed=0
+  batch=$(mktemp -d) || return 1
+  trap 'rm -rf "$batch"' EXIT
   while IFS=$'\t' read -r status repo rname branch kind path sess rank; do
-    dirty='' unpushed=''
-    if [ "$with_git" = 1 ]; then
+    n=$((n + 1))
+    (
       dirty=$(git -C "$path" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
       unpushed=$(unpushed_count "$path")
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$status" "$repo" "$rname" "$branch" "$kind" "$path" "$sess" "$rank" "$dirty" "$unpushed"
+    ) > "$batch/$n" &
+    pids="$pids $!"
+    if [ $((n - first + 1)) -eq 8 ]; then
+      for pid in $pids; do wait "$pid" || failed=1; done
+      for ((i=first; i<=n; i++)); do cat "$batch/$i" || failed=1; done
+      first=$((n + 1))
+      pids=''
     fi
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$status" "$repo" "$rname" "$branch" "$kind" "$path" "$sess" "$rank" "$dirty" "$unpushed"
   done
-}
+  for pid in $pids; do wait "$pid" || failed=1; done
+  for ((i=first; i<=n; i++)); do cat "$batch/$i" || failed=1; done
+  [ "$failed" = 0 ]
+)
 
 # Trees waiting on the user first, then most recently opened.
 order_by_need() {

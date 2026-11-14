@@ -194,7 +194,7 @@ st rm feat-otp         # done with it: session, worktree and branch go away
 | `st update` | Check for the latest release and install it automatically when available. |
 | `st uninstall` | Remove the installed command, Supertree config, tmux source line, and state. |
 | `st doctor` | Check dependencies, fzf (0.45+) and tmux (3.3+) versions, config syntax, generated bindings, and live tmux keys. Each problem comes with a `fix` line; in a terminal it ends with a problem count. |
-| `st config` | Change the agent, the windows and their order, the waiting count on the status line, and the sidebar from an fzf screen. Writes the config file; open trees pick up agent and window changes when reopened. Piped, it prints the current settings. |
+| `st config` | Change the agent, the windows and their order, the waiting count on the status line, desktop notices, and the sidebar from an fzf screen. Writes the config file; open trees pick up agent and window changes when reopened. Piped, it prints the current settings. |
 | `st repair` | Reinstall this release and reload its tmux bindings. |
 | `st keys` | Print every tmux key binding (`M-/` shows the same list in a popup). |
 | `st help` | List commands grouped by task (trees, setup), then keys. `st --version` prints the installed version. |
@@ -274,8 +274,9 @@ newer it refreshes every two seconds while open and fills in the uncommitted
 (`±`) and unpushed (`↑`) counts shortly after it opens.
 
 Prefix stays `C-a`. `M-arrow` pane movement and `S-Enter` are untouched.
-`status-left` shows the current repository and branch, so the tree you are typing into is
-always on screen.
+`status-left` shows the agent state and current repository/branch. Long tree names
+keep their start and end with an ellipsis in the middle, so the tree you are
+typing into stays identifiable.
 
 Agent state appears in `st ls` and the `M-w` picker. `running` means the agent
 process is active, `input` means its pane shows a prompt, `done` means the agent
@@ -345,14 +346,17 @@ rows. Split panes get a quiet divider; a single program uses the full area.
 
 Tree sessions show their windows as tabs at the top (`1. codex ●`, `2. nvim`,
 `3. shell`). The active tab is underlined, and the current repository and branch
-appear on the right after the agent's state (`●` running, `◐` waiting for you,
+appear on the left after the agent's state (`●` running, `◐` waiting for you,
 `○` exited). Other tmux sessions keep your own status line.
 
 When an agent in another tree starts waiting for you, tmux shows a short notice
 (`◐ webauth/feat-otp needs you · M-w`) to every terminal looking at a different
 tree. Messages from the window keys (`M-e`, `M-1` … `M-9`, `M-Tab`) also appear
 on tmux's message line. Set `ST_STATUS_RIGHT=1` in the config to add a running
-count on the right of every tree's status line (`◐ 2 need you · M-w`).
+count on the right of every tree's status line (`◐ 2 need you · M-w`). Set
+`ST_NOTIFY=1` to also send a local desktop notice when an agent starts waiting
+for you (via `osascript` on macOS or `notify-send` on Linux). Both settings are
+available in `st config`.
 
 Order controls startup focus, `M-1` through `M-9`, and the pair switched by
 `M-e`. Reopening a tree adds newly configured windows and selects a newly
