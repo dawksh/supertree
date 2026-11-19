@@ -128,7 +128,7 @@ pick_tree() {
     --ansi --delimiter=$'\t' --with-nth=1 --height=100% --reverse --no-sort --sync
     --border=rounded --border-label="$label" --border-label-pos=3
     --prompt='Find tree › ' --pointer='▌' --info=inline-right
-    --header='⏎ open  ^n new  ^d delete  ^r repos  ^/ preview  esc' --header-first
+    --header="$(ui_hints ⏎ open ^n new ^d delete ^r repos ^/ preview esc '')" --header-first
     --preview="$self _preview {3} {2}" --preview-window='right,45%,border-left,<40(hidden)'
     --expect=ctrl-n,ctrl-r
     --bind='esc:abort,ctrl-/:toggle-preview'
@@ -204,7 +204,7 @@ pick_repo() {
     printf '%s%s%s  %s%s%s\t%s\n' "$UI_REPO$UI_B" "$(basename "$root")" "$UI_R" "$UI_DIM" "$(ui_path "$root")" "$UI_R" "$root"
   done | ui_fzf --ansi --delimiter=$'\t' --with-nth=1 --height=100% --reverse \
       --border=rounded --border-label=' New tree · repo ' --border-label-pos=3 \
-      --prompt='Repo › ' --pointer='▌' --header='⏎ next  esc' --header-first \
+      --prompt='Repo › ' --pointer='▌' --header="$(ui_hints ⏎ next esc '')" --header-first \
       --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"} | cut -f2
 }
 
@@ -216,7 +216,7 @@ pick_branch() {
   rows=$(mktemp)
   branch_rows "$main" > "$rows"
   while :; do
-    header="⏎ create  tab base: ${base:-default}  ^b bare: $([ "$bare" = 1 ] && printf on || printf off)  esc"
+    header=$(ui_hints ⏎ create tab "base: ${base:-default}" ^b "bare: $([ "$bare" = 1 ] && printf on || printf off)" esc '')
     out=$(cat "$rows" | ui_fzf --ansi --delimiter=$'\t' --with-nth=1 --height=100% --reverse --no-sort \
       --border=rounded --border-label=" New tree · $(basename "$main") " --border-label-pos=3 \
       --prompt='Branch › ' --pointer='▌' --header="$header" --header-first \

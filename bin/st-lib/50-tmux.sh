@@ -323,7 +323,7 @@ EOF
 
 split_fzf() { # prompt
   ui_fzf --delimiter=$'\t' --with-nth=1 --reverse --no-sort --height=100% \
-    --prompt="$1 › " --pointer='▌' --header='⏎ pick  esc' --header-first --bind='esc:abort'
+    --prompt="$1 › " --pointer='▌' --header="$(ui_hints ⏎ pick esc '')" --header-first --bind='esc:abort'
 }
 
 cmd_split_pick() {

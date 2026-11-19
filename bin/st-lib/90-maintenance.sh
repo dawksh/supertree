@@ -258,7 +258,7 @@ config_pick_harness() {
   pick=$(printf '%s\n' claude codex openrouter |
     awk -v cur="$ST_HARNESS" '{ print ($0 == cur ? "● " : "  ") $0 }' |
     ui_fzf --height=100% --reverse --border=rounded --border-label=' Agent ' --prompt='Agent › ' \
-        --pointer='▌' --header='⏎ choose  esc back' --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || return 0
+        --pointer='▌' --header="$(ui_hints ⏎ choose esc back)" --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || return 0
   pick=${pick#??}
   [ "$pick" != "$ST_HARNESS" ] || return 0
   config_set ST_HARNESS "$pick"
@@ -276,7 +276,7 @@ config_pick_windows() {
       printf '%s  %s%s\t%s\n' "${n:- }" "$type" "$([ "$type" != agent ] || printf ' (%s)' "$(harness_label)")" "$type"
     done | ui_fzf --delimiter=$'\t' --with-nth=1 --height=100% --reverse --border=rounded \
         --border-label=' Windows ' --prompt='Window › ' --pointer='▌' \
-        --header='⏎ add at the end / remove  esc save' --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || break
+        --header="$(ui_hints ⏎ 'add at the end / remove' esc save)" --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || break
     type=${pick##*$'\t'}
     if printf '%s\n' $list | grep -qxF -- "$type"; then
       list=$(printf '%s\n' $list | grep -vxF -- "$type" | tr '\n' ' ')
@@ -306,7 +306,7 @@ cmd_config() {
   while :; do
     pick=$(config_rows | ui_fzf --ansi --delimiter=$'\t' --with-nth=1 --height=100% --reverse --no-sort \
       --border=rounded --border-label=' Settings ' --border-label-pos=3 --prompt='Setting › ' \
-      --pointer='▌' --header="⏎ change  esc done   $(ui_path "$ST_CONFIG")" --header-first \
+      --pointer='▌' --header="$(ui_hints ⏎ change esc done)   $(ui_path "$ST_CONFIG")" --header-first \
       --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || break
     case ${pick##*$'\t'} in
       agent) config_pick_harness;;

@@ -93,8 +93,9 @@ G_OK='✓' G_ERR='✗' G_WARN='!' G_INFO='›' G_ASK='?'
 # Agent states match the sidebar and tabs. done is a hollow circle, not a tick:
 # it only means the agent exited, maybe after a crash.
 G_IN='◐' G_RUN='●' G_DONE='○' G_OFF='·' G_MAIN='⌂' G_DIRTY='±' G_AHEAD='↑'
+G_HERE='▌'
 if [ -n "${ST_ASCII:-}" ]; then
-  G_OK='+' G_ERR='x' G_INFO='>'
+  G_OK='+' G_ERR='x' G_INFO='>' G_HERE='|'
   G_IN='!' G_RUN='*' G_DONE='o' G_OFF='.' G_MAIN='@' G_DIRTY='~' G_AHEAD='^'
 fi
 
@@ -175,6 +176,16 @@ ui_keys() {
     shift 2
   done
   printf '\n' >&2
+}
+
+# The same hints as text for an fzf header, which draws the rest of the line dim.
+ui_hints() {
+  local out=''
+  while [ $# -ge 2 ]; do
+    out="$out${out:+  }$UI_A$1$UI_R${2:+ $2}"
+    shift 2
+  done
+  printf '%s' "$out"
 }
 
 # One key press; Enter reads as an empty string.

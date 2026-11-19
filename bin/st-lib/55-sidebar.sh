@@ -126,20 +126,24 @@ sidebar_rows() {
     tmp=$(mktemp "$ST_SIDEBAR_DIR/.rows.XXXXXX")
     sidebar_snapshot > "$tmp" && mv "$tmp" "$cache"
   fi
-  awk -F '\t' -v cur="$sess" -v g_run="$G_RUN" -v g_in="$G_IN" -v g_done="$G_DONE" -v g_off="$G_OFF" '
+  ui_colour_on
+  awk -F '\t' -v cur="$sess" -v g_run="$G_RUN" -v g_in="$G_IN" -v g_done="$G_DONE" -v g_off="$G_OFF" \
+    -v here="$UI_A$G_HERE$UI_R" -v c_run="$UI_RUN" -v c_in="$UI_IN" -v c_dim="$UI_DIM" \
+    -v c_repo="$UI_REPO" -v bold="$UI_B" -v r="$UI_R" '
     !($1 in seen) { seen[$1] = 1; order[++n] = $1 }
     {
-      if ($3 == "running") glyph = "\033[32m" g_run "\033[0m"
-      else if ($3 == "input") glyph = "\033[33m" g_in "\033[0m"
+      if ($3 == "running") glyph = c_run g_run r
+      else if ($3 == "input") glyph = c_in g_in r
       else if ($3 == "done") glyph = g_done
-      else glyph = "\033[2m" g_off "\033[0m"
+      else glyph = c_dim g_off r
       name = $2
-      if ($5 == cur) name = "\033[1m" name "\033[0m"
-      rows[$1] = rows[$1] " " glyph " " name "\t" $5 "\t" $4 "\t" ($5 == cur) "\n"
+      mark = " "
+      if ($5 == cur) { name = bold name r; mark = here }
+      rows[$1] = rows[$1] mark glyph " " name "\t" $5 "\t" $4 "\t" ($5 == cur) "\n"
     }
     END {
       for (i = 1; i <= n; i++) {
-        printf "\033[2m%s\033[0m\t#%s\t\n%s", order[i], order[i], rows[order[i]]
+        printf "%s%s%s\t#%s\t\n%s", c_repo, order[i], r, order[i], rows[order[i]]
       }
     }' "$cache"
 }
@@ -340,7 +344,7 @@ cmd_sidebar() {
       ui_fzf --ansi --no-input --no-sort --reverse --info=hidden --no-scrollbar \
           --delimiter=$'\t' --with-nth=1 --track --id-nth=2 \
           ${listen[@]+"${listen[@]}"} --pointer='›' --gutter=' ' --ellipsis='…' \
-          --header='n new · d remove' \
+          --header="$(ui_hints n new d remove)" \
           --bind="load:pos(${start:-1})+unbind(load)" \
           --bind='j:down,k:up,g:first,G:last' \
           --bind="n:execute-silent:$self _sidebar-open +new" \
