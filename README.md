@@ -615,7 +615,8 @@ In a terminal, messages are styled rows (`✓ removed …`, `! branch …`, `✗
 Colours are exact values, so they look the same in every terminal. Set
 `ST_THEME=light` in the config for a light background, or `ST_THEME=ansi` to use
 your terminal theme's own colours. `st _palette` prints every colour as your
-terminal draws it.
+terminal draws it. The pickers and the sidebar use the same colours and ignore
+`FZF_DEFAULT_OPTS`, so your own fzf theme does not change them.
 When output is piped or redirected, `st` prints the plain `:: msg` and `st: msg`
 lines it always has, so scripts keep working.
 

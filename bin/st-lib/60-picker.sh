@@ -137,7 +137,7 @@ pick_tree() {
   opts+=(${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"})
   if [ "$refresh" = 0 ]; then
     opts+=("--bind=ctrl-d:execute(ST_PICK_RESULT=$qresult $self _pick_rm {2} </dev/tty >/dev/tty 2>&1)+transform(cat $qresult)")
-    printf '%s\n' "$rows" | fzf "${opts[@]}" || rc=$?
+    printf '%s\n' "$rows" | ui_fzf "${opts[@]}" || rc=$?
     rm -f "$result"
     return "$rc"
   fi
@@ -167,7 +167,7 @@ pick_tree() {
     done
   ) >/dev/null 2>&1 &
   refresher=$!
-  printf '%s\n' "$rows" | fzf "${opts[@]}" || rc=$?
+  printf '%s\n' "$rows" | ui_fzf "${opts[@]}" || rc=$?
   kill "$refresher" 2>/dev/null || true
   rm -f "$cache" "$cache.next" "$cache.building" "$result"
   return "$rc"
@@ -202,7 +202,7 @@ pick_repo() {
   fzf_gutter_init
   printf '%s\n' "$repos" | while IFS= read -r root; do
     printf '%s%s%s  %s%s%s\t%s\n' "$UI_REPO$UI_B" "$(basename "$root")" "$UI_R" "$UI_DIM" "$(ui_path "$root")" "$UI_R" "$root"
-  done | fzf --ansi --delimiter=$'\t' --with-nth=1 --height=100% --reverse \
+  done | ui_fzf --ansi --delimiter=$'\t' --with-nth=1 --height=100% --reverse \
       --border=rounded --border-label=' New tree · repo ' --border-label-pos=3 \
       --prompt='Repo › ' --pointer='▌' --header='⏎ next  esc' --header-first \
       --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"} | cut -f2
@@ -217,7 +217,7 @@ pick_branch() {
   branch_rows "$main" > "$rows"
   while :; do
     header="⏎ create  tab base: ${base:-default}  ^b bare: $([ "$bare" = 1 ] && printf on || printf off)  esc"
-    out=$(cat "$rows" | fzf --ansi --delimiter=$'\t' --with-nth=1 --height=100% --reverse --no-sort \
+    out=$(cat "$rows" | ui_fzf --ansi --delimiter=$'\t' --with-nth=1 --height=100% --reverse --no-sort \
       --border=rounded --border-label=" New tree · $(basename "$main") " --border-label-pos=3 \
       --prompt='Branch › ' --pointer='▌' --header="$header" --header-first \
       --print-query --expect=tab,ctrl-b --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"} \
@@ -229,7 +229,7 @@ pick_branch() {
     name=$(printf '%s' "$sel" | cut -f3)
     case $key in
       ctrl-b) bare=$((1 - bare)); continue;;
-      tab) base=$(cut -f3 "$rows" | fzf --height=100% --reverse --border=rounded \
+      tab) base=$(cut -f3 "$rows" | ui_fzf --height=100% --reverse --border=rounded \
              --border-label=' Base branch ' --prompt='Base › ' --pointer='▌' \
              --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || true
            continue;;

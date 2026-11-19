@@ -337,7 +337,7 @@ cmd_sidebar() {
     rows=$(sidebar_rows)
     start=$(printf '%s\n' "$rows" | awk -F '\t' '$4 == 1 { print NR; exit }')
     printf '%s\n' "$rows" |
-      fzf --ansi --no-input --no-sort --reverse --info=hidden --no-scrollbar \
+      ui_fzf --ansi --no-input --no-sort --reverse --info=hidden --no-scrollbar \
           --delimiter=$'\t' --with-nth=1 --track --id-nth=2 \
           ${listen[@]+"${listen[@]}"} --pointer='›' --gutter=' ' --ellipsis='…' \
           --header='n new · d remove' \

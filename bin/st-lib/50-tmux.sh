@@ -317,7 +317,7 @@ EOF
 }
 
 split_fzf() { # prompt
-  fzf --delimiter=$'\t' --with-nth=1 --reverse --no-sort --height=100% \
+  ui_fzf --delimiter=$'\t' --with-nth=1 --reverse --no-sort --height=100% \
     --prompt="$1 › " --pointer='▌' --header='⏎ pick  esc' --header-first --bind='esc:abort'
 }
 
