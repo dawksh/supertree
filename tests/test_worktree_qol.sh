@@ -51,7 +51,7 @@ case ${1:-} in
       printf '%s\n' "${ST_TEST_PANES:-}"
     elif [ "${2:-}" = -s ]; then
       [ "${ST_TEST_HAS_SESSIONS:-0}" = 1 ] || exit 1
-      printf '\tcodex\tcodex\t%%0\t%s\tcodex\n' "${ST_TEST_AGENT_STATE:-running}"
+      printf '\tcodex\tcodex\t%%0\t%s\t\tcodex\n' "${ST_TEST_AGENT_STATE:-running}"
     else
       printf '%%0\n'
     fi;;

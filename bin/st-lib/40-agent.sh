@@ -28,11 +28,15 @@ harness_label() {
   esac
 }
 
+# A tree's agent shown beside another tree leaves a holder pane naming it in @st_lent_pane.
 agent_pane() {
-  local sess=$1 name
+  local sess=$1 name pane
   name=$(tmux show-options -qv -t "=$sess:" @st_agent_window 2>/dev/null) || name=""
   [ -n "$name" ] || name=$(harness_window)
-  tmux list-panes -t "=$sess:$name" -f '#{!=:#{@st_sidebar},1}' -F '#{pane_id}' 2>/dev/null | head -1
+  pane=$(tmux list-panes -t "=$sess:$name" -F '#{pane_id}'$'\t''#{@st_lent_pane}' \
+    -f '#{&&:#{!=:#{@st_sidebar},1},#{==:#{@st_home_pane},}}' 2>/dev/null | head -1)
+  [ -z "${pane#*$'\t'}" ] || pane=${pane#*$'\t'}
+  printf '%s\n' "${pane%%$'\t'*}"
 }
 
 ST_PANE_MARKER='@@st-pane@@'
@@ -85,8 +89,9 @@ EOF
 }
 
 agent_status() {
-  local sess=$1 tab=$'\t' rows row wanted='' pane='' state='' command='' bin format
-  format="#{@st_sidebar}$tab#{@st_agent_window}$tab#{window_name}$tab#{pane_id}$tab#{@st_agent_state}$tab#{pane_current_command}"
+  local sess=$1 tab=$'\t' rows row wanted='' pane='' state='' command='' lent='' bin format
+  # A pane borrowed from another tree reports 1 in the first column, like a sidebar.
+  format="#{?#{||:#{@st_sidebar},#{@st_home_pane}},1,}$tab#{@st_agent_window}$tab#{window_name}$tab#{pane_id}$tab#{@st_agent_state}$tab#{@st_lent_pane}$tab#{pane_current_command}"
   rows=$(tmux list-panes -s -t "=$sess" -F "$format" 2>/dev/null) || { printf 'closed'; return; }
   # Split by hand: `IFS=$'\t' read` merges empty fields and shifts the columns.
   while IFS= read -r row; do
@@ -98,12 +103,18 @@ agent_status() {
     [ "${row%%"$tab"*}" = "$wanted" ] || continue
     row=${row#*"$tab"}; pane=${row%%"$tab"*}
     row=${row#*"$tab"}; state=${row%%"$tab"*}
+    row=${row#*"$tab"}; lent=${row%%"$tab"*}
     command=${row#*"$tab"}
     break
   done <<EOF
 $rows
 EOF
   [ -n "$pane" ] || { printf 'done'; return; }
+  if [ -n "$lent" ]; then
+    # This tree's agent is on view beside another tree; read the agent, not its holder.
+    row=$(tmux display-message -p -t "$lent" "#{@st_agent_state}$tab#{pane_current_command}" 2>/dev/null) || row=''
+    pane=$lent; state=${row%%"$tab"*}; command=${row#*"$tab"}
+  fi
   if [ "$state" = done ]; then printf 'done'; return; fi
   if [ -z "$state" ]; then
     # Sessions created before status tracking have no pane option yet.
@@ -128,7 +139,7 @@ agent_tail() {
 
 agent_statuses() {
   local format panes name bin sess status pane rows running='' waiting
-  format='#{session_name}'$'\t''#{window_name}'$'\t''#{pane_id}'$'\t''#{@st_agent_state}'$'\t''#{@st_agent_window}'$'\t''#{pane_current_command}'$'\t''#{@st_sidebar}'
+  format='#{session_name}'$'\t''#{window_name}'$'\t''#{pane_id}'$'\t''#{@st_agent_state}'$'\t''#{@st_agent_window}'$'\t''#{pane_current_command}'$'\t''#{@st_sidebar}'$'\t''#{@st_lent_pane}'$'\t''#{@st_home_pane}'
   panes=$(tmux list-panes -a -F "$format" 2>/dev/null) || panes=''
   [ -n "$panes" ] || return 0
   name=$(harness_window)
@@ -136,16 +147,18 @@ agent_statuses() {
   bin=${bin##*/}
   # \037 separates fields because read collapses consecutive tabs, shifting empty ones.
   rows=$(printf '%s\n' "$panes" | awk -F '\t' -v default_name="$name" -v bin="$bin" '
-    $1 == "" || $7 == 1 { next }
+    { pane_state[$3] = $4; pane_command[$3] = $6 }
+    $1 == "" || $7 == 1 || $9 != "" { next }
     !($1 in seen) { seen[$1] = 1; order[++n] = $1 }
     $5 != "" { agent_window[$1] = $5 }
     {
       wanted = ($1 in agent_window) ? agent_window[$1] : default_name
-      if ($2 == wanted && !($1 in pane)) { pane[$1] = $3; state[$1] = $4; command[$1] = $6 }
+      if ($2 == wanted && !($1 in pane)) { pane[$1] = ($8 != "") ? $8 : $3 }
     }
     END {
       for (i = 1; i <= n; i++) {
         s = order[i]; status = "running"
+        if (s in pane) { state[s] = pane_state[pane[s]]; command[s] = pane_command[pane[s]] }
         if (!(s in pane) || state[s] == "done") status = "done"
         else if (state[s] == "" && command[s] != bin && command[s] != "node" && command[s] != "bun") status = "done"
         printf "%s\037%s\037%s\n", s, status, pane[s]
