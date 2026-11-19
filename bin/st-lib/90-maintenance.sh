@@ -166,6 +166,9 @@ doctor_checks() {
   printf '  --    harness       %s (%s)\n' "$(harness_label)" "$ST_HARNESS"
   printf '  --    windows       %s\n' "$(printf '%s\n' "$windows" | while read -r type; do window_name "$type"; printf ' '; done | sed 's/ $//')"
   printf '  --    config        %s\n' "$ST_CONFIG"
+  ui_depth
+  [ -z "${NO_COLOR:-}" ] || UI_DEPTH=off
+  printf '  --    colours       %s theme, %s\n' "${ST_THEME:-dark}" "$UI_DEPTH"
   return $ok
 }
 
