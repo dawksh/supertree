@@ -232,8 +232,7 @@ style_panes() {
 }
 
 cmd_split() {
-  local pane win dir self tab orientation=${1:---horizontal} split_flag
-  local cmd=()
+  local pane self orientation=${1:---horizontal} split_flag
   [ $# -le 1 ] || die "usage: st split [--horizontal|--vertical]"
   case $orientation in
     --horizontal) split_flag=-h;;
@@ -248,9 +247,26 @@ cmd_split() {
     pane=$(tmux list-panes -t "$pane" -f '#{!=:#{@st_sidebar},1}' -F '#{pane_id}' | tail -1)
   fi
   [ -n "$pane" ] || die "no program pane to split"
-  local sess
+  local sess tty
   sess=$(tmux display-message -p -t "$pane" '#S')
   is_tree_session "$sess" || { ui_toast "not a supertree session"; return 0; }
+  # With other trees open, ask whether to copy this tab or bring one of theirs beside it.
+  if [ -n "$(split_trees "$sess")" ] && command -v fzf >/dev/null 2>&1; then
+    tty=$(tmux display-message -p -t "$pane" '#{client_tty}')
+    if [ -n "$tty" ]; then
+      tmux display-popup -c "$tty" -E -w 64 -h 16 -T ' Split ' \
+        "$(printf '%q _split-pick %q %q' "$self" "$pane" "$split_flag")"
+      return 0
+    fi
+  fi
+  split_copy "$pane" "$split_flag"
+}
+
+split_copy() {
+  local pane=$1 split_flag=$2 sess win dir self tab
+  local cmd=()
+  self=$(st_self)
+  sess=$(tmux display-message -p -t "$pane" '#S')
   session_environment "$sess"
   win=$(tmux display-message -p -t "$pane" '#W')
   dir=$(tmux display-message -p -t "$pane" '#{pane_current_path}')
@@ -271,6 +287,131 @@ cmd_split() {
   # Pin the sidebar first so the split halves the program pane evenly.
   if declare -F sidebar_fit >/dev/null; then sidebar_fit "$(tmux display-message -p -t "$pane" '#S')"; fi
   tmux split-window "$split_flag" -t "$pane" -c "$dir" ${cmd[@]+"${cmd[@]}"}
+}
+
+# Labels come from the session option, so listing open trees needs no git calls.
+split_trees() {
+  local cur=$1 sessions sess
+  sessions=$(tmux list-sessions -F '#S' 2>/dev/null) || return 0
+  while IFS= read -r sess; do
+    [ -n "$sess" ] && [ "$sess" != "$cur" ] && is_tree_session "$sess" || continue
+    printf '%s\t%s\n' "$(tmux show-options -qv -t "=$sess:" @supertree_label)" "$sess"
+  done <<EOF
+$sessions
+EOF
+}
+
+# First program pane of each tab, skipping panes already moved between trees.
+split_tabs() {
+  local windows win name pane
+  windows=$(tmux list-windows -t "=$1" -F '#{window_id}'$'\t''#W' 2>/dev/null) || return 0
+  while IFS=$'\t' read -r win name; do
+    [ -n "$win" ] || continue
+    pane=$(tmux list-panes -t "$win" -F '#{pane_id}' \
+      -f '#{&&:#{!=:#{@st_sidebar},1},#{&&:#{==:#{@st_lent_pane},},#{==:#{@st_home_pane},}}}' 2>/dev/null) || pane=''
+    pane=${pane%%$'\n'*}
+    [ -z "$pane" ] || printf '%s\t%s\n' "$name" "$pane"
+  done <<EOF
+$windows
+EOF
+}
+
+split_fzf() { # prompt
+  fzf --delimiter=$'\t' --with-nth=1 --reverse --no-sort --height=100% \
+    --prompt="$1 › " --pointer='▌' --header='⏎ pick  esc' --header-first --bind='esc:abort'
+}
+
+cmd_split_pick() {
+  local pane=${1:-} flag=${2:-} sess choice target label tabs
+  [ -n "$pane" ] && [ -n "$flag" ] || die "usage: st _split-pick <pane> <-h|-v>"
+  sess=$(tmux display-message -p -t "$pane" '#S') || return 0
+  choice=$({ printf 'this tab (another copy)\t+copy\n'; split_trees "$sess"; } | split_fzf 'Split with') || return 0
+  target=${choice##*$'\t'}
+  if [ "$target" = +copy ]; then split_copy "$pane" "$flag"; return 0; fi
+  label=${choice%%$'\t'*}
+  tabs=$(split_tabs "$target")
+  [ -n "$tabs" ] || { ui_toast "$label has no tab left to show"; return 0; }
+  choice=$({ printf 'all tabs\t+all\n'; printf '%s\n' "$tabs"; } | split_fzf "$label") || return 0
+  target=${choice##*$'\t'}
+  [ "$target" = +all ] || tabs=$(printf '%s\n' "$tabs" | awk -F '\t' -v p="$target" '$2 == p')
+  borrow_tabs "$pane" "$flag" "$(tmux display-message -p -t "${tabs##*$'\t'}" '#S')" "$tabs"
+}
+
+# The tree's own panes move here; it keeps a holder pane in their place until they go back.
+borrow_tabs() {
+  local anchor=$1 flag=$2 home=$3 tabs=$4 name src first=''
+  if declare -F sidebar_fit >/dev/null; then sidebar_fit "$(tmux display-message -p -t "$anchor" '#S')"; fi
+  while IFS=$'\t' read -r name src; do
+    [ -n "$src" ] || continue
+    borrow_pane "$anchor" "$flag" "$home" "$name" "$src" || continue
+    # The other tree's tabs stack in one column (or row) beside this one.
+    if [ -z "$first" ]; then
+      first=$src
+      if [ "$flag" = -h ]; then flag=-v; else flag=-h; fi
+    fi
+    anchor=$src
+  done <<EOF
+$tabs
+EOF
+  [ -z "$first" ] || tmux select-pane -t "$first"
+}
+
+borrow_pane() { # anchor flag home-session tab-name pane
+  local anchor=$1 flag=$2 home=$3 name=$4 src=$5 holder label
+  label=$(tmux show-options -qv -t "=$(tmux display-message -p -t "$anchor" '#S'):" @supertree_label 2>/dev/null) || label=''
+  holder=$(tmux split-window -d "$flag" -t "$anchor" -P -F '#{pane_id}' \
+    "$(st_self)" _split-holder "$src" "$label") || return 1
+  tmux set-option -p -t "$holder" @st_lent_pane "$src"
+  tmux set-option -p -t "$src" @st_home_pane "$holder" \; \
+    set-option -p -t "$src" @st_home_session "$home" \; \
+    set-option -p -t "$src" @st_home_window "$name"
+  tmux swap-pane -d -s "$src" -t "$holder" && return 0
+  tmux kill-pane -t "$holder" 2>/dev/null || true
+  tmux set-option -pu -t "$src" @st_home_pane \; set-option -pu -t "$src" @st_home_session \; \
+    set-option -pu -t "$src" @st_home_window 2>/dev/null || true
+  return 1
+}
+
+# Accepts either side: the moved pane or the holder left in its tree.
+cmd_split_return() {
+  local pane=${1:-} src holder home name
+  [ -n "$pane" ] || return 0
+  src=$(tmux show-options -pqv -t "$pane" @st_lent_pane 2>/dev/null) || src=''
+  [ -n "$src" ] || src=$pane
+  holder=$(tmux show-options -pqv -t "$src" @st_home_pane 2>/dev/null) || holder=''
+  [ -n "$holder" ] || return 0
+  home=$(tmux show-options -pqv -t "$src" @st_home_session 2>/dev/null) || home=''
+  name=$(tmux show-options -pqv -t "$src" @st_home_window 2>/dev/null) || name=''
+  tmux set-option -pu -t "$src" @st_home_pane \; set-option -pu -t "$src" @st_home_session \; \
+    set-option -pu -t "$src" @st_home_window 2>/dev/null || true
+  if tmux swap-pane -d -s "$src" -t "$holder" 2>/dev/null; then
+    tmux kill-pane -t "$holder" 2>/dev/null || true
+    return 0
+  fi
+  # The holder was closed by hand: give the program its own tab back in its tree.
+  [ -n "$home" ] && tmux has-session -t "=$home" 2>/dev/null || return 0
+  tmux break-pane -d -s "$src" -t "=$home:" -n "${name:-shell}" 2>/dev/null || true
+}
+
+# Runs in the holder pane, inside the tree that lent its program out.
+cmd_split_holder() {
+  local src=${1:-} label=${2:-another tree} rc
+  [ -n "$src" ] || return 0
+  set +e
+  printf '\n  on view beside %s\n\n  ⏎ bring it back\n' "$label"
+  while tmux display-message -p -t "$src" '' >/dev/null 2>&1; do
+    read -r -t 5 _; rc=$?
+    if [ "$rc" = 0 ]; then cmd_split_return "$src"; return 0; fi
+    [ "$rc" -gt 128 ] || sleep 5
+  done
+}
+
+# Before a tree closes, its lent programs and any borrowed from other trees go home.
+return_lent_panes() {
+  local panes pane
+  panes=$(tmux list-panes -s -t "=$1" -F '#{pane_id}' \
+    -f '#{||:#{@st_home_pane},#{@st_lent_pane}}' 2>/dev/null) || return 0
+  for pane in $panes; do cmd_split_return "$pane"; done
 }
 
 build_session() {
@@ -412,6 +553,7 @@ remember_origin() {
 
 evacuate_clients() {
   local sess=$1 ttys tty origin origin_file other
+  return_lent_panes "$sess"
   ttys=$(tmux list-clients -t "=$sess" -F '#{client_tty}' 2>/dev/null) || return 0
   [ -n "$ttys" ] || return 0
   while read -r tty; do
@@ -641,6 +783,9 @@ st_register_command 'toggle' cmd_toggle ''
 st_register_command 'window' cmd_window ''
 st_register_command 'last' cmd_last 'switch to the previous tree'
 st_register_command 'agent' cmd_agent ''
-st_register_command 'split' cmd_split 'open another copy of this tab' 'split [--horizontal|--vertical]'
+st_register_command 'split' cmd_split 'copy this tab, or show another tree beside it' 'split [--horizontal|--vertical]'
 st_register_command 'leave' cmd_leave ''
+st_register_command '_split-pick' cmd_split_pick ''
+st_register_command '_split-return' cmd_split_return ''
+st_register_command '_split-holder' cmd_split_holder ''
 st_register_command '_sessions' known_sessions ''

@@ -216,10 +216,10 @@ keys (inside tmux; defaults, rebind with ST_KEY_* in the config)
   M-1 … M-9   select configured window (tab) by position
   M-n / M-p   next / previous tab
   M-j / M-k   next / previous open tree
-  M-v         split this tab side by side
-  M-V         split this tab top and bottom
+  M-v         split side by side: copy this tab or show another tree's tabs
+  M-V         same, top and bottom
   M-h / M-l   move to the pane on the left / right
-  M-x         close the focused pane (asks first)
+  M-x         close the focused pane (asks first); another tree's pane goes back
   M-s         focus the tree sidebar   M-B   hide/show the sidebar
   M-q         leave tmux; keep the tree running
   M-Q         leave tmux; keep the tree session running
