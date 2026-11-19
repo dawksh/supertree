@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # supertree tmux module
 
-ST_LAYOUT_VERSION=7
+# The theme is part of it so open sessions restyle after ST_THEME changes.
+ST_LAYOUT_VERSION=8${ST_THEME:+-$ST_THEME}
 
 layout_signature() {
   printf '%s|%s|%s' "$ST_HARNESS" "$ST_WINDOWS" "${ST_SHELL:-${SHELL:-/bin/zsh}}"
@@ -194,12 +195,13 @@ style_session() {
   tmux set-option -t "=$1:" default-shell "$(tree_shell)" &&
   tmux set-option -t "=$1:" status-position top &&
   tmux set-option -t "=$1:" status-justify left &&
-  tmux set-option -t "=$1:" status-style 'fg=default,bg=default' &&
+  tmux set-option -t "=$1:" status-style "fg=$UI_TEXT_T,bg=$UI_BAR_T" &&
+  tmux set-option -t "=$1:" message-style "fg=$UI_TEXT_T,bg=$UI_TAB_T" &&
   tmux set-option -t "=$1:" status-left-length "$width" &&
   tmux set-option -t "=$1:" status-left "$left" &&
   tmux set-option -t "=$1:" status-right-length 80 &&
   # @st_need_text (global, opt-in) and @st_state_glyph (per tree) come from the sidebar refresher.
-  tmux set-option -t "=$1:" status-right '#{?@st_need_text,#[fg=yellow]#{@st_need_text}#[default]  ,}' &&
+  tmux set-option -t "=$1:" status-right "#{?@st_need_text,#[fg=$UI_PANEL_T]#[bg=$UI_IN_T]#[bold] #{@st_need_text} #[default] ,}" &&
   tmux set-option -t "=$1:" status on &&
   # When a tree's last program exits, switch to the most recent session instead of
   # leaving tmux. Session-scoped, so the global setting is untouched.
@@ -210,11 +212,11 @@ style_tab() {
   local target=$1 slot=$2 label
   # @st_tab_state comes from the sidebar refresher (running/input); without it, fall back to the pane state.
   label='#{?@st_slot,#{@st_slot}. ,}#W'
-  label="$label"'#{?@st_tab_state,#{?#{==:#{@st_tab_state},input}, ◐,#{?#{==:#{@st_tab_state},running}, ●,}},#{?#{==:#{@st_agent_state},running}, ●,}}'
+  label="$label#{?@st_tab_state,#{?#{==:#{@st_tab_state},input}, #[fg=$UI_IN_T]◐,#{?#{==:#{@st_tab_state},running}, #[fg=$UI_RUN_T]●,}},#{?#{==:#{@st_agent_state},running}, #[fg=$UI_RUN_T]●,}}"
   tmux set-option -w -t "$target" @st_slot "$slot" &&
   tmux set-option -w -t "$target" window-status-separator '  ' &&
-  tmux set-option -w -t "$target" window-status-format "#[dim] $label #[default]" &&
-  tmux set-option -w -t "$target" window-status-current-format "#[bold,underscore] $label #[default]" &&
+  tmux set-option -w -t "$target" window-status-format "#[fg=$UI_DIM_T] $label #[default]" &&
+  tmux set-option -w -t "$target" window-status-current-format "#[fg=$UI_A_T]#[bg=$UI_TAB_T]#[bold] $label #[default]" &&
   tmux set-option -w -t "$target" window-status-current-style default &&
   style_panes "$target"
 }
@@ -224,8 +226,11 @@ style_tab() {
 style_panes() {
   local target=$1
   tmux set-option -w -t "$target" pane-border-status off
-  tmux set-option -w -t "$target" pane-border-style 'fg=default,bg=default,dim'
-  tmux set-option -w -t "$target" pane-active-border-style 'fg=default,bg=default'
+  tmux set-option -w -t "$target" pane-border-style "fg=$UI_BORDER_T,bg=default"
+  tmux set-option -w -t "$target" pane-active-border-style "fg=$UI_DIM_T,bg=default"
+  tmux set-option -w -t "$target" popup-style "fg=$UI_TEXT_T,bg=$UI_PANEL_T"
+  tmux set-option -w -t "$target" popup-border-style "fg=$UI_BORDER_T,bg=$UI_PANEL_T"
+  tmux set-option -w -t "$target" popup-border-lines rounded
   tmux set-option -w -t "$target" window-style 'bg=default'
   tmux set-option -w -t "$target" window-active-style 'bg=default'
   tmux set-option -w -t "$target" pane-scrollbars off 2>/dev/null || true

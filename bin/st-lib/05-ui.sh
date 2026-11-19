@@ -20,11 +20,17 @@ ui_depth() {
   case ${TERM:-} in *256color*|*-direct) UI_DEPTH=256;; esac
 }
 
-# Sets <name> to the escape code, and <name>_C to the bare colour fzf takes
-# (#rrggbb or a palette index; -1 is the terminal's own colour).
+# Sets <name>_T, the colour for a tmux style; with colour on, also <name> (the escape
+# code) and <name>_C (the bare colour fzf takes: #rrggbb or a palette index).
+# tmux styles always get the exact colour: tmux converts it per attached terminal.
 ui_tone() { # name dark-hex dark-256 light-hex light-256 16-colour-index [bold]
-  local hex=$2 index=$3 code value
+  local hex=$2 index=$3 code value tmux
   if [ "${ST_THEME:-dark}" = light ]; then hex=$4 index=$5; fi
+  tmux="#$hex"
+  [ "${ST_THEME:-dark}" != ansi ] || tmux=colour$6
+  if [ -n "${NO_COLOR:-}" ] || [ "$tmux" = colour-1 ]; then tmux=default; fi
+  printf -v "$1_T" '%s' "$tmux"
+  [ -n "$UI_DEPTH" ] || return 0
   case $UI_DEPTH in
     rgb) value="#$hex"
          printf -v code '38;2;%d;%d;%d' "0x${hex:0:2}" "0x${hex:2:2}" "0x${hex:4:2}";;
@@ -39,10 +45,7 @@ ui_tone() { # name dark-hex dark-256 light-hex light-256 16-colour-index [bold]
 # Exact colours, so a terminal's own theme can't repaint them. The 16-colour indexes are
 # the fallback and ST_THEME=ansi. Dim is lighter than the design's: rows are also drawn
 # on the user's own background, and must stay readable on mid-dark ones.
-# Also called directly for text fzf renders with --ansi, which has no terminal of its own.
-ui_colour_on() {
-  [ -z "${NO_COLOR:-}" ] || return 0
-  ui_depth
+ui_tones() {
   ui_tone UI_A      5ccfe6 80  0b6680 24  6
   ui_tone UI_IN     ffb454 215 9a4a08 94  3 bold
   ui_tone UI_WARN   ffb454 215 9a4a08 94  3
@@ -54,7 +57,17 @@ ui_colour_on() {
   ui_tone UI_TEXT   d4d8e0 253 1f2733 235 -1
   ui_tone UI_PANEL  0f131b 233 f6f7f9 231 -1
   ui_tone UI_SEL    1c2433 235 e3e8f0 254 -1
+  ui_tone UI_BAR    151a24 234 e9ecf1 255 -1
+  ui_tone UI_TAB    232b3a 236 d5dbe5 253 -1
   ui_tone UI_BORDER 3a4458 238 9aa4b2 248 8
+}
+ui_tones
+
+# Also called directly for text fzf renders with --ansi, which has no terminal of its own.
+ui_colour_on() {
+  [ -z "${NO_COLOR:-}" ] || return 0
+  ui_depth
+  ui_tones
   UI_R=$'\033[0m' UI_B=$'\033[1m'
   ui_fzf_colours
 }

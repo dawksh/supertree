@@ -56,7 +56,7 @@ printf '%s\n' \
   'fi' \
   '[ "${1:-}" = has-session ] && [ "${ST_TEST_HAS_SESSION:-0}" != 1 ] && exit 1' \
   '[ "${1:-}" = list-windows ] && printf "%s\n" "${ST_TEST_LIVE_WINDOWS:-}"' \
-  'case "$*" in *"@st_layout"*) printf "7\n";; esac' \
+  'case "$*" in *"@st_layout"*) printf "8\n";; esac' \
   '[ "${1:-}" = list-panes ] && printf "%s\n" "${ST_TEST_PANES:-}"' \
   'if [ "${1:-}" = capture-pane ]; then' \
   '  case " ${ST_TEST_INPUT_PANES:-} " in *" $4 "*) printf "❯ \n";; *) printf "Working...\n";; esac' \

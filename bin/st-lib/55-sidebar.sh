@@ -193,8 +193,8 @@ sidebar_tab_states() {
     win=$(tmux show-options -qv -t "=$sess:" @st_agent_window 2>/dev/null) || win=''
     tmux set-option -wq -t "=$sess:${win:-$default_name}" @st_tab_state "$status" 2>/dev/null || true
     case $status in
-      input) glyph="#[fg=yellow]$G_IN#[default]";;
-      running) glyph="#[fg=green]$G_RUN#[default]";;
+      input) glyph="#[fg=$UI_IN_T]#[bold]$G_IN#[default]";;
+      running) glyph="#[fg=$UI_RUN_T]$G_RUN#[default]";;
       *) glyph=$G_DONE;;
     esac
     tmux set-option -q -t "=$sess:" @st_state_glyph "$glyph" 2>/dev/null || true
