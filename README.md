@@ -612,6 +612,10 @@ worktree root with `ST_WORKTREE_ROOT`, the state dir with `ST_STATE`.
 
 In a terminal, messages are styled rows (`✓ removed …`, `! branch …`, `✗ …` with a
 `try` hint). Set `NO_COLOR=1` to drop colour, or `ST_ASCII=1` for ASCII glyphs.
+Colours are exact values, so they look the same in every terminal. Set
+`ST_THEME=light` in the config for a light background, or `ST_THEME=ansi` to use
+your terminal theme's own colours. `st _palette` prints every colour as your
+terminal draws it.
 When output is piped or redirected, `st` prints the plain `:: msg` and `st: msg`
 lines it always has, so scripts keep working.
 

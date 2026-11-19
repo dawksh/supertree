@@ -6,14 +6,46 @@
 UI_ROWS=0
 [ -t 2 ] && UI_ROWS=1
 UI_A='' UI_OK='' UI_WARN='' UI_ERR='' UI_DIM='' UI_R=''
-UI_IN='' UI_RUN='' UI_REPO='' UI_B=''
+UI_IN='' UI_RUN='' UI_REPO='' UI_B='' UI_DEPTH=''
 
+# Inside tmux always send full colour: tmux converts it to what each attached terminal
+# can show (checked on 3.6: TERM=xterm gets 16 colours, xterm-256color the full value).
+# Outside tmux, COLORTERM is the convention: https://github.com/termstandard/colors
+ui_depth() {
+  UI_DEPTH=16
+  [ "${ST_THEME:-dark}" != ansi ] || return 0
+  if [ -n "${TMUX:-}" ]; then UI_DEPTH=rgb; return 0; fi
+  case ${COLORTERM:-} in truecolor|24bit) UI_DEPTH=rgb; return 0;; esac
+  case ${TERM:-} in *256color*|*-direct) UI_DEPTH=256;; esac
+}
+
+ui_tone() { # variable dark-rgb dark-256 light-rgb light-256 16-colour-code [bold]
+  local rgb=$2 index=$3 code
+  if [ "${ST_THEME:-dark}" = light ]; then rgb=$4 index=$5; fi
+  case $UI_DEPTH in
+    rgb) code="38;2;$rgb";;
+    256) code="38;5;$index";;
+    *) code=$6;;
+  esac
+  printf -v "$1" '\033[%s%sm' "${7:+1;}" "$code"
+}
+
+# Exact colours, so a terminal's own theme can't repaint them. The 16-colour codes are
+# the fallback and ST_THEME=ansi. Dim is lighter than the design's: here it is drawn on
+# the user's background, and must stay readable on mid-dark ones.
 # Also called directly for text fzf renders with --ansi, which has no terminal of its own.
 ui_colour_on() {
   [ -z "${NO_COLOR:-}" ] || return 0
-  UI_A=$'\033[36m' UI_OK=$'\033[32m' UI_WARN=$'\033[33m'
-  UI_ERR=$'\033[31m' UI_DIM=$'\033[90m' UI_R=$'\033[0m'
-  UI_IN=$'\033[33m' UI_RUN=$'\033[32m' UI_REPO=$'\033[35m' UI_B=$'\033[1m'
+  ui_depth
+  ui_tone UI_A    '92;207;230'  80  '14;116;144' 24  36
+  ui_tone UI_IN   '255;180;84'  215 '180;83;9'   130 33 bold
+  ui_tone UI_WARN '255;180;84'  215 '180;83;9'   130 33
+  ui_tone UI_RUN  '115;184;255' 75  '29;78;216'  26  34
+  ui_tone UI_OK   '159;220;124' 150 '21;128;61'  29  32
+  ui_tone UI_ERR  '255;122;122' 210 '185;28;28'  124 31
+  ui_tone UI_DIM  '139;148;166' 246 '95;107;122' 60  90
+  ui_tone UI_REPO '210;166;255' 183 '126;34;206' 92  35
+  UI_R=$'\033[0m' UI_B=$'\033[1m'
 }
 if [ -t 1 ] || [ -t 2 ]; then ui_colour_on; fi
 

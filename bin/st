@@ -180,7 +180,7 @@ setup:config trust doctor keys update repair version uninstall'
 
 usage() {
   local i group title names name a='' b='' r='' shown=' '
-  if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then a=$'\033[36m' b=$'\033[1m' r=$'\033[0m'; fi
+  if [ -t 1 ]; then a=$UI_A b=$UI_B r=$UI_R; fi
   printf '%sst%s — supertree: worktree + tmux + coding-agent harness\n' "$b" "$r"
   while IFS=: read -r title names; do
     printf '\n%s%s%s\n' "$b" "$title" "$r"

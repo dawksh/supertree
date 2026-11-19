@@ -434,3 +434,16 @@ st_register_command 'config' cmd_config 'change agent, windows, status line and 
 cmd_binding_audit() { audit_bindings "$(installed_fragment)" "${1:-doctor}"; }
 st_register_command '_binding-audit' cmd_binding_audit
 st_register_command 'version' cmd_version 'show the installed version'
+
+# Every colour role as this terminal draws it, for comparing machines.
+cmd_palette() {
+  local role tone glyphs=unicode
+  [ -z "${ST_ASCII:-}" ] || glyphs=ascii
+  ui_colour_on
+  printf '  theme %s · colour %s · glyphs %s\n\n' "${ST_THEME:-dark}" "${UI_DEPTH:-off}" "$glyphs"
+  for role in A:accent IN:input RUN:running OK:ok WARN:warn ERR:error DIM:dim REPO:repo; do
+    tone="UI_${role%%:*}"
+    printf '  %s%s %s%s\n' "${!tone}" "$G_RUN" "${role#*:}" "$UI_R"
+  done
+}
+st_register_command '_palette' cmd_palette ''
