@@ -89,8 +89,9 @@ EOF
 }
 
 agent_status() {
-  local sess=$1 tab=$'\t' rows row wanted='' pane='' state='' command='' bin format
-  format="#{@st_sidebar}$tab#{@st_agent_window}$tab#{window_name}$tab#{pane_id}$tab#{@st_agent_state}$tab#{pane_current_command}"
+  local sess=$1 tab=$'\t' rows row wanted='' pane='' state='' command='' lent='' bin format
+  # A pane borrowed from another tree reports 1 in the first column, like a sidebar.
+  format="#{?#{||:#{@st_sidebar},#{@st_home_pane}},1,}$tab#{@st_agent_window}$tab#{window_name}$tab#{pane_id}$tab#{@st_agent_state}$tab#{@st_lent_pane}$tab#{pane_current_command}"
   rows=$(tmux list-panes -s -t "=$sess" -F "$format" 2>/dev/null) || { printf 'closed'; return; }
   # Split by hand: `IFS=$'\t' read` merges empty fields and shifts the columns.
   while IFS= read -r row; do
@@ -102,12 +103,18 @@ agent_status() {
     [ "${row%%"$tab"*}" = "$wanted" ] || continue
     row=${row#*"$tab"}; pane=${row%%"$tab"*}
     row=${row#*"$tab"}; state=${row%%"$tab"*}
+    row=${row#*"$tab"}; lent=${row%%"$tab"*}
     command=${row#*"$tab"}
     break
   done <<EOF
 $rows
 EOF
   [ -n "$pane" ] || { printf 'done'; return; }
+  if [ -n "$lent" ]; then
+    # This tree's agent is on view beside another tree; read the agent, not its holder.
+    row=$(tmux display-message -p -t "$lent" "#{@st_agent_state}$tab#{pane_current_command}" 2>/dev/null) || row=''
+    pane=$lent; state=${row%%"$tab"*}; command=${row#*"$tab"}
+  fi
   if [ "$state" = done ]; then printf 'done'; return; fi
   if [ -z "$state" ]; then
     # Sessions created before status tracking have no pane option yet.

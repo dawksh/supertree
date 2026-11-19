@@ -183,7 +183,7 @@ st rm feat-otp         # done with it: session, worktree and branch go away
 | `st resume [query]` | Same as `go`. Named for the case where you closed a tree earlier and want it back. |
 | `st roots` | Create a tree in any known repository: pick the repo, then a branch (what `M-r` runs). |
 | `st last` | Switch to the tree you were in before (what `M-Tab` runs). |
-| `st split [--horizontal\|--vertical]` | Split side by side or stacked (`M-v` / `M-V`). With other trees open, a picker asks for another copy of this tab, or one or all tabs of another open tree. |
+| `st split [--horizontal\|--vertical]` | Split side by side or stacked (`M-v` / `M-V`). With other trees open, a picker asks for another copy of this tab, or one tab of another open tree. |
 | `st down [branch]` | Close a tree's tmux session. Worktree, branch and agent history stay. No branch = the tree you are in. |
 | `st down --all` | Close every tree session. Lists them and asks first. |
 | `st down --subtrees` | Close linked worktree sessions and keep main sessions open. Lists them and asks first. |
@@ -232,7 +232,7 @@ the `st _split-*` commands and the `st _sidebar*` commands are called by the tmu
 | `M-j` / `M-k` | next / previous open tree, in sidebar order |
 | `M-h` / `M-l` | move to the pane on the left / right (the sidebar is leftmost) |
 | `M-x` | close the focused pane after a y/n prompt (does nothing on the sidebar); a pane shown from another tree goes back to it instead |
-| `M-v` | split side by side. With no other tree open, opens another copy of this tab's program (a fresh agent session in the agent tab). Otherwise a picker offers that copy first, then each open tree; picking a tree asks for one tab or all of them |
+| `M-v` | split side by side. With no other tree open, opens another copy of this tab's program (a fresh agent session in the agent tab). Otherwise a picker offers that copy first, then each open tree; picking a tree asks which of its tabs to show |
 | `M-V` (Option-Shift-V) | same as `M-v`, above or below the current pane |
 | `M-s` | focus the tree sidebar with the cursor on the tree you are in; Escape goes back to the tab |
 | `M-B` (Option-Shift-B) | hide or show the sidebar in every tree window; showing it also focuses it |
@@ -311,13 +311,12 @@ program exits. Window order and selection are configurable.
 ### Trees side by side
 
 `M-v` (or `M-V`) with another tree open asks what to put beside the current pane:
-another copy of this tab, or a tab of another open tree, or all of its tabs
-stacked in one column. The other tree's programs move over as they are, so its
-agent keeps the same conversation; that tree shows a holder pane in their place
-until they go back. Move between the halves with `M-h` / `M-l`. Press `M-x` on
-either the moved pane or its holder, or Enter in the holder, to send it home.
-Closing either tree also sends its panes home first. The sidebar and tree status
-keep following the moved agent.
+another copy of this tab, or one tab of another open tree. The other tree's
+program moves over as it is, so its agent keeps the same conversation; that tree
+shows a holder pane in its place until it goes back. Move between the halves
+with `M-h` / `M-l`. Press `M-x` on either the moved pane or its holder, or Enter
+in the holder, to send it home. Closing either tree also sends its pane home
+first. The sidebar and tree status keep following the moved agent.
 
 ## Windows
 

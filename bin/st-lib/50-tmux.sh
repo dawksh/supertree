@@ -331,31 +331,13 @@ cmd_split_pick() {
   label=${choice%%$'\t'*}
   tabs=$(split_tabs "$target")
   [ -n "$tabs" ] || { ui_toast "$label has no tab left to show"; return 0; }
-  choice=$({ printf 'all tabs\t+all\n'; printf '%s\n' "$tabs"; } | split_fzf "$label") || return 0
-  target=${choice##*$'\t'}
-  [ "$target" = +all ] || tabs=$(printf '%s\n' "$tabs" | awk -F '\t' -v p="$target" '$2 == p')
-  borrow_tabs "$pane" "$flag" "$(tmux display-message -p -t "${tabs##*$'\t'}" '#S')" "$tabs"
+  choice=$(printf '%s\n' "$tabs" | split_fzf "$label") || return 0
+  if declare -F sidebar_fit >/dev/null; then sidebar_fit "$sess"; fi
+  borrow_pane "$pane" "$flag" "$target" "${choice%%$'\t'*}" "${choice##*$'\t'}" &&
+    tmux select-pane -t "${choice##*$'\t'}"
 }
 
-# The tree's own panes move here; it keeps a holder pane in their place until they go back.
-borrow_tabs() {
-  local anchor=$1 flag=$2 home=$3 tabs=$4 name src first=''
-  if declare -F sidebar_fit >/dev/null; then sidebar_fit "$(tmux display-message -p -t "$anchor" '#S')"; fi
-  while IFS=$'\t' read -r name src; do
-    [ -n "$src" ] || continue
-    borrow_pane "$anchor" "$flag" "$home" "$name" "$src" || continue
-    # The other tree's tabs stack in one column (or row) beside this one.
-    if [ -z "$first" ]; then
-      first=$src
-      if [ "$flag" = -h ]; then flag=-v; else flag=-h; fi
-    fi
-    anchor=$src
-  done <<EOF
-$tabs
-EOF
-  [ -z "$first" ] || tmux select-pane -t "$first"
-}
-
+# The other tree's pane moves here; it keeps a holder pane in its place until it goes back.
 borrow_pane() { # anchor flag home-session tab-name pane
   local anchor=$1 flag=$2 home=$3 name=$4 src=$5 holder label
   label=$(tmux show-options -qv -t "=$(tmux display-message -p -t "$anchor" '#S'):" @supertree_label 2>/dev/null) || label=''
@@ -399,10 +381,12 @@ cmd_split_holder() {
   [ -n "$src" ] || return 0
   set +e
   printf '\n  on view beside %s\n\n  ⏎ bring it back\n' "$label"
-  while tmux display-message -p -t "$src" '' >/dev/null 2>&1; do
-    read -r -t 5 _; rc=$?
+  # tmux 3.6 display-message succeeds for a dead pane id; list-panes fails for it.
+  # Once the program is gone this pane exits too, so the tree can rebuild the tab.
+  while tmux list-panes -t "$src" -F '' >/dev/null 2>&1; do
+    read -r -t 2 _; rc=$?
     if [ "$rc" = 0 ]; then cmd_split_return "$src"; return 0; fi
-    [ "$rc" -gt 128 ] || sleep 5
+    [ "$rc" -gt 128 ] || sleep 2
   done
 }
 
