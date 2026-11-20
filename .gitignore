@@ -1,0 +1,28 @@
+# Local plans, notes, and todos. Keep README files versioned.
+*.[mM][dD]
+*.[mM][aA][rR][kK][dD][oO][wW][nN]
+![Rr][Ee][Aa][Dd][Mm][Ee].[mM][dD]
+![Rr][Ee][Aa][Dd][Mm][Ee].[mM][aA][rR][kK][dD][oO][wW][nN]
+
+# Local Go build.
+/bin/st-next
+/st-next
+
+# Local development state and generated fuzz/test artifacts.
+/.dev/
+/isolated-fuzz-client*
+/test-artifacts/
+/test-results/
+/fuzz-artifacts/
+/coverage/
+/coverage.out
+/coverage.html
+/coverage.txt
+/trace.out
+*.test
+*.prof
+*.pprof
+*.sock
+*.sock.lock
+*.log
+.DS_Store

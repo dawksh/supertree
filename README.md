@@ -58,6 +58,36 @@ ST_WINDOWS='agent shell' … choose and order tmux windows
 
 ### From source
 
+To try or develop this checkout locally, use the sandbox launcher:
+
+```sh
+./dev                         # build and open an isolated local workspace
+./dev next inspect --json      # rebuild and inspect local workspaces
+./dev next commands --json     # rebuild and discover commands
+./dev test                    # Go vet, race checks, and the shell suite
+./dev stop                    # close local sessions; keep worktrees and state
+```
+
+This needs Go 1.24+, Git, tmux, and fzf for the sidebar. It creates an ignored
+`.dev/` directory with separate config, state, worktrees, and command wrappers,
+plus a separate tmux socket per checkout. It does not install anything or change
+your dotfiles. Commands keep their caller's working directory, so you can also
+run `/path/to/supertree/dev` from another repository.
+
+The initial layout is shell-only. Edit `.dev/config` to enable your preferred
+agent and editor. Local terminals use a clean Bash shell, with `st` pointing to
+this checkout. Keyboard shortcuts and background jobs use the same local wrappers.
+Shortcut bindings use absolute checkout paths so a changed server PATH cannot
+send them to an installed release. Option-1 returns to the shell from the home
+sidebar; Option-S focuses the sidebar.
+
+State and sessions persist between launches; `./dev stop` closes the local tmux
+server without removing worktrees. `./dev tmux list-sessions` inspects that server.
+Each launch rebuilds the Go client; commands inside the sandbox use the current
+build without rebuilding on every keypress. `./dev build` rebuilds it explicitly.
+
+For a persistent installation from source:
+
 ```sh
 git clone https://github.com/dawksh/supertree ~/projects/supertree
 ln -sf ~/projects/supertree/bin/st ~/.local/bin/st
@@ -107,6 +137,65 @@ The command appears under "more" in `st help` automatically. Remove that file to
 the command. The picker, worktree, and maintenance modules can also be removed
 individually; the shared modules provide the functions used across features.
 Run the shell tests after changing modules.
+
+### Experimental workspace core
+
+The first Go module adds read-only workspace inspection and a discoverable command
+registry. Build it from this checkout with Go 1.24 or newer:
+
+```sh
+go build -o bin/st-next ./cmd/st-next
+bin/st next inspect
+bin/st next inspect --json
+bin/st next commands --json
+```
+
+For a source install, the existing `st` symlink finds the built binary beside
+`bin/st`. The Go client is currently a source-build feature; the release installer
+does not install it yet. Normal Supertree commands do not require Go or this binary.
+
+Inspection reads registered repositories from `$ST_STATE/repos` and includes the
+current Git checkout without registering it. It lists main, linked, detached, and
+missing worktrees, including linked worktrees outside `ST_WORKTREE_ROOT`. The
+`managed` field indicates a main checkout or linked tree under that root; it does
+not adopt a worktree or authorize changes to it. Bare repositories are reported
+with `kind: "bare"`.
+
+JSON results contain `schema_version: 1`, `workspaces`, `sessions`, `tmux_status`,
+and `warnings`. Missing repositories and individual scan failures produce warnings
+so a partial result remains inspectable. `tmux_status` distinguishes `running`,
+`stopped`, `unavailable`, and `error`. Session associations use the session's initial
+working directory, choosing the deepest matching worktree. They do not establish
+agent identity or infer agent activity.
+
+Workspace IDs are currently hashes of canonical checkout paths. They survive
+branch switches and symlink aliases; moving a checkout changes its ID. Durable
+identity and the background daemon will follow in later changes.
+
+The CLI aliases and generic invocation use the same command registry:
+
+```sh
+bin/st next invoke command.list '{}'
+bin/st next invoke workspace.inspect '{}'
+bin/st next inspect --workspace <workspace-id> --json
+bin/st next invoke workspace.inspect '{"workspace_id":"<workspace-id>"}'
+```
+
+`commands --json` exposes command versions, argument and result schemas, effects,
+and recording, repetition, sensitivity, and undo metadata for future macro support.
+`invoke` always returns JSON. Failed JSON requests exit nonzero with a structured
+error on stderr and no result on stdout.
+
+`st next` forwards the shell's resolved `ST_STATE` and `ST_WORKTREE_ROOT` settings.
+Running `bin/st-next` directly reads these environment variables and uses their
+normal home-directory defaults; it does not source shell config. Set
+`ST_NEXT_TMUX_SOCKET` to inspect an explicit tmux socket, otherwise tmux uses its
+normal environment. Discovery does not create state directories, execute project
+hooks, or modify Git or tmux state.
+
+Run `go test ./...` for Go checks. The integration tests use temporary Git
+repositories and an isolated tmux socket. Run `go test -race ./...` and
+`go vet ./...` for the full Go checks; CI runs these on macOS and Linux.
 
 ### Releases
 
