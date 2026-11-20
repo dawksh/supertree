@@ -39,6 +39,7 @@ type SendArgs struct {
 	Message    string   `json:"message"`
 	ContextIDs []string `json:"context_ids,omitempty"`
 	AllowStale bool     `json:"allow_stale,omitempty"`
+	TaskID     string   `json:"task_id,omitempty"`
 }
 type DeliveryTarget struct {
 	DeliveryID string `json:"delivery_id"`
@@ -230,6 +231,9 @@ func (m *Manager) Snapshot(ctx context.Context) ([]workspace.Agent, error) {
 	return result, nil
 }
 func (m *Manager) Send(ctx context.Context, args SendArgs) (workspace.Delivery, error) {
+	return m.send(ctx, args, "")
+}
+func (m *Manager) send(ctx context.Context, args SendArgs, fingerprint string) (workspace.Delivery, error) {
 	m.mu.Lock()
 	unlock := sync.OnceFunc(m.mu.Unlock)
 	defer unlock()
@@ -244,6 +248,9 @@ func (m *Manager) Send(ctx context.Context, args SendArgs) (workspace.Delivery, 
 		args.ContextIDs = []string{}
 	}
 	key, hash := requestKey(ctx), argumentHash(args)
+	if fingerprint != "" {
+		hash = fingerprint
+	}
 	records, err := load[deliveryRecord](ctx, m.store, "delivery")
 	if err != nil {
 		return workspace.Delivery{}, err
@@ -258,7 +265,11 @@ func (m *Manager) Send(ctx context.Context, args SendArgs) (workspace.Delivery, 
 			}
 		}
 	}
-	exported, err := m.collab.Export(ctx, collab.ExportArgs{WorkspaceID: r.Agent.WorkspaceID, TaskID: r.Agent.TaskID, ContextIDs: args.ContextIDs, AllowStale: args.AllowStale})
+	taskID := args.TaskID
+	if taskID == "" {
+		taskID = r.Agent.TaskID
+	}
+	exported, err := m.collab.Export(ctx, collab.ExportArgs{WorkspaceID: r.Agent.WorkspaceID, TaskID: taskID, ContextIDs: args.ContextIDs, AllowStale: args.AllowStale})
 	if err != nil {
 		return workspace.Delivery{}, err
 	}

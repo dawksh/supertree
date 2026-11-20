@@ -92,6 +92,9 @@ For a first manual check:
 4. From the shell, run `st control` to try the new workspace controls in a popup.
    Press `q` to return to your terminal. You can keep using the regular agent,
    editor, shell, tree picker, and splits without opening these controls.
+5. In a paired worktree, run `st share --diff --message 'Review this change'`
+   from the shell. In Neovim, select saved lines and run `:SupertreeAsk` to ask
+   about them. Both use the agent already in this tree's Codex tab.
 
 Inside the sandbox, `st` points to this checkout. Outside it, use `./dev` so
 commands target the local environment. `./dev test` runs automated tests; it does
@@ -491,6 +494,34 @@ existing behavior. Existing installations default to terminal mode until configu
 The native primary agent appears as `primary: true` and its terminal as
 `source: "hosted"`. It is relaunched through the usual worktree/agent-tab flow;
 generic restart is reserved for processes with a recorded launch definition.
+
+#### Share from the editor or shell
+
+Paired-mode Neovim tabs load the bridge automatically. Your mappings and editor
+configuration stay yours. Select saved lines and use `:SupertreeAsk <question>`;
+without a question it prompts for one. `:SupertreePreview` captures a selection
+into a temporary preview without delivery. `:SupertreeContext` captures only, and
+`:SupertreeShareDiff <question>` shares the tracked working-tree diff. Modified
+buffers must be saved explicitly before sharing; cancelling a question sends nothing.
+
+From the usual shell tab:
+
+```sh
+st share --file internal/example.go --start-line 10 --end-line 30 --message 'Why does this fail?'
+st share --diff --message 'Review this change'
+st share --output --message 'Explain this test failure'
+st share --file internal/example.go --preview
+st share --context <reviewed-context-id> --message 'Investigate these lines'
+```
+
+Output sharing captures the current terminal's last 200 lines; `--process <id>`
+selects another terminal explicitly. Preview creates a context ID and sends no
+turn. Reusing that ID sends the reviewed snapshot and rejects it if the saved
+source has changed. The latest open shared goal accompanies delivery. No action
+automatically starts another agent. `--json` returns the receipt; structured
+clients invoke the same `context.share` command with a workspace ID and source.
+Actor/request IDs deduplicate delivery even when capture and sending are combined.
+The editor bridge ships with the modules for source and release installations.
 
 `task`, `context`, `agent`, and `question` accept `help`; `commands --json` describes
 all argument/result schemas. Human and agent clients invoke the same commands.

@@ -625,7 +625,7 @@ if [ "$WITH_NEXT" = 1 ]; then
   esac
 fi
 tar -tzf "$tmpdir/st.tar.gz" | awk '
-  $0 == "st" || $0 == "st-lib/" || $0 ~ /^st-lib\/[A-Za-z0-9_.-]+\.sh$/ { next }
+  $0 == "st" || $0 == "st-lib/" || $0 == "st-lib/editor.lua" || $0 ~ /^st-lib\/[A-Za-z0-9_.-]+\.sh$/ { next }
   { exit 1 }
 ' || die "downloaded st archive has unexpected paths"
 mkdir "$tmpdir/package"
@@ -658,6 +658,7 @@ staged_command=$(mktemp "$PREFIX/.st.install.XXXXXX")
 staged_modules=$(mktemp -d "$PREFIX/.st-lib.install.XXXXXX")
 install -m 0755 "$tmpdir/stamped" "$staged_command"
 cp "$tmpdir/package"/st-lib/*.sh "$staged_modules/"
+if [ -f "$tmpdir/package/st-lib/editor.lua" ]; then cp "$tmpdir/package/st-lib/editor.lua" "$staged_modules/"; fi
 if [ "$WITH_NEXT" = 1 ]; then
   install -m 0755 "$tmpdir/$NEXT_ASSET" "$staged_modules/st-next"
   : > "$staged_modules/.with-next"

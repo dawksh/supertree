@@ -298,7 +298,7 @@ func (m Model) editCollaboration(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 				ids = append(ids, value)
 			}
 		}
-		args = agent.SendArgs{AgentID: m.agentID, Message: m.fields[0], ContextIDs: ids}
+		args = agent.SendArgs{AgentID: m.agentID, Message: m.fields[0], ContextIDs: ids, TaskID: m.goalID()}
 	case "answer-form":
 		if strings.TrimSpace(m.fields[0]) == "" {
 			m.message = "Enter an explicit answer; approvals use accept or decline"

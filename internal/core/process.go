@@ -17,7 +17,7 @@ func registerProcess[A, R any](c *Core, r *command.Registry, name, description s
 	}
 	return command.Register(r, command.Definition{Name: name, Version: 1, Description: description, Effects: effects, Repeatable: len(effects) == 1 && effects[0] == "read", SensitiveArguments: sensitive}, func(ctx context.Context, args A) (R, error) {
 		mutating := !(len(effects) == 1 && effects[0] == "read")
-		long := name == "agent.send" || name == "agent.interrupt" || name == "question.answer"
+		long := name == "agent.send" || name == "agent.interrupt" || name == "question.answer" || name == "context.share"
 		if mutating && !long {
 			c.refresh.Lock()
 			defer c.refresh.Unlock()

@@ -16,6 +16,7 @@ import (
 )
 
 func TestPairingLivesInNormalAgentTabAndResumesExactConversation(t *testing.T) {
+	realNvim, _ := exec.LookPath("nvim")
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux unavailable")
 	}
@@ -57,7 +58,11 @@ func TestPairingLivesInNormalAgentTabAndResumesExactConversation(t *testing.T) {
 	os.WriteFile(filepath.Join(home, ".local", "bin", "tmux"), []byte("#!/bin/sh\nexec "+quote(guard)+" -S \"$ST_NEXT_TMUX_SOCKET\" \"$@\"\n"), 0700)
 	stub := "#!/bin/sh\nif [ \"${1:-}\" != app-server ]; then printf 'LEGACY_READY\\n'; while IFS= read -r line; do [ \"$line\" != /exit ] || exit 0; done; exit 0; fi\nexport SUPERTREE_PROVIDER_HELPER=1\nexport SUPERTREE_PROVIDER_FIXTURE=" + quote(base) + "\nexec " + quote(testExe) + " -test.run '^TestNativeProviderHelper$' -- \"$@\"\n"
 	os.WriteFile(filepath.Join(home, ".local", "bin", "codex"), []byte(stub), 0700)
-	os.WriteFile(filepath.Join(home, ".local", "bin", "nvim"), []byte("#!/bin/sh\nexec sleep 120\n"), 0700)
+	editorStub := "#!/bin/sh\n"
+	if realNvim != "" {
+		editorStub += "case \"$*\" in *--headless*) exec " + quote(realNvim) + " \"$@\";; esac\n"
+	}
+	os.WriteFile(filepath.Join(home, ".local", "bin", "nvim"), []byte(editorStub+"exec sleep 120\n"), 0700)
 	t.Setenv("HOME", home)
 	t.Setenv("PATH", tools+":"+os.Getenv("PATH"))
 	t.Setenv("ST_STATE", filepath.Join(base, "state"))
@@ -145,6 +150,73 @@ func TestPairingLivesInNormalAgentTabAndResumesExactConversation(t *testing.T) {
 	a := wait("idle")
 	if !a.Primary || a.ThreadID != "thread-fixture-exact" {
 		t.Fatalf("not a primary exact thread: %#v", a)
+	}
+	// Everyday sharing targets the primary agent in these same original tabs.
+	file := filepath.Join(repo, "sample.txt")
+	os.WriteFile(file, []byte("not selected\nselected code\n"), 0600)
+	exec.Command("git", "add", "sample.txt").Run()
+	exec.Command("git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "fixture").Run()
+	call("task", "add", "--title", "Human goal added after the agent started")
+	var preview agent.ShareResult
+	json.Unmarshal(call("share", "--file", file, "--start-line", "2", "--end-line", "2", "--preview", "--json"), &preview)
+	if preview.Status != "preview" || preview.Delivery != nil || !strings.Contains(preview.Text, "selected code") || strings.Contains(preview.Text, "not selected") {
+		t.Fatalf("preview changed selected code: %#v", preview)
+	}
+	if _, err := os.Stat(filepath.Join(base, "counter")); !os.IsNotExist(err) {
+		t.Fatal("preview sent a provider turn")
+	}
+	t.Setenv("ST_NEXT_REQUEST_ID", "share-once")
+	var shared, repeated agent.ShareResult
+	shareArgs := []string{"share", "--file", file, "--start-line", "2", "--end-line", "2", "--message", "Explain selected code", "--json"}
+	json.Unmarshal(call(shareArgs...), &shared)
+	wait("idle")
+	json.Unmarshal(call(shareArgs...), &repeated)
+	if shared.Status != "sent" || shared.Delivery == nil || repeated.Delivery == nil || shared.Delivery.ID != repeated.Delivery.ID {
+		t.Fatal("share retry delivered twice or lost its receipt")
+	}
+	actual, _ := os.ReadFile(filepath.Join(base, "delivery"))
+	if string(actual) != shared.Delivery.Text || !strings.Contains(string(actual), "Human goal added") || !strings.Contains(string(actual), "selected code") || strings.Contains(string(actual), "not selected") {
+		t.Fatalf("shared code/goal differs from receipt: %s", actual)
+	}
+	counter, _ := os.ReadFile(filepath.Join(base, "counter"))
+	if string(counter) != "1" {
+		t.Fatal("share retry reached provider again")
+	}
+	t.Setenv("ST_NEXT_REQUEST_ID", "")
+	os.WriteFile(file, []byte("not selected\nhuman edited source\n"), 0600)
+	if out, err := command(binary, "share", "--context", preview.ContextIDs[0], "--message", "use reviewed snapshot", "--json"); err == nil || !strings.Contains(string(out), "stale") {
+		t.Fatalf("stale reviewed context reached provider: %s %v", out, err)
+	}
+	call("share", "--diff", "--message", "Review this tracked change", "--json")
+	wait("idle")
+	actual, _ = os.ReadFile(filepath.Join(base, "delivery"))
+	if !strings.Contains(string(actual), "+human edited source") {
+		t.Fatal("tracked diff did not reach normal agent tab")
+	}
+	shellPane := tmux("display-message", "-p", "-t", "="+session+":shell", "#{pane_id}")
+	tmux("send-keys", "-t", shellPane, "-l", "printf 'SHELL_CONTEXT\\n'")
+	tmux("send-keys", "-t", shellPane, "Enter")
+	// Explicit pane IDs, also used by the shell CLI's --output shortcut.
+	sourceArgs := agent.ShareArgs{WorkspaceID: a.WorkspaceID, PaneID: shellPane, Message: "Explain this output", Source: &agent.ShareSource{Kind: "output"}}
+	encoded, _ := json.Marshal(sourceArgs)
+	call("invoke", "context.share", string(encoded))
+	wait("idle")
+	actual, _ = os.ReadFile(filepath.Join(base, "delivery"))
+	if !strings.Contains(string(actual), "SHELL_CONTEXT") {
+		t.Fatal("existing shell output was not shared")
+	}
+	if realNvim != "" {
+		t.Setenv("PAIR_SOURCE_FILE", file)
+		lua := `lua local done=false; vim.notify=function(msg,level) if level==vim.log.levels.ERROR then error(msg) end; if msg:find('Shared with',1,true) then done=true end end; assert(vim.fn.exists(':SupertreeAsk')==2,'paired editor did not load bridge'); vim.cmd.edit(vim.fn.fnameescape(vim.env.PAIR_SOURCE_FILE)); vim.cmd('2,2SupertreeAsk Explain selected code from Vim'); assert(vim.wait(8000,function() return done end),'editor delivery timed out'); vim.cmd('qa!')`
+		out, err := command(filepath.Join(tools, "st"), "_run", "nvim", "--headless", "-u", "NONE", "-c", lua)
+		if err != nil {
+			t.Fatalf("native editor sharing: %s %v", out, err)
+		}
+		wait("idle")
+		actual, _ = os.ReadFile(filepath.Join(base, "delivery"))
+		if !strings.Contains(string(actual), "Explain selected code from Vim") || !strings.Contains(string(actual), "human edited source") {
+			t.Fatal("Vim selection did not reach normal agent tab")
+		}
 	}
 	if tmux("list-panes", "-a", "-F", "#{pane_id} #{pane_pid}") != before {
 		t.Fatal("pairing created a second terminal or replaced another program")

@@ -128,6 +128,20 @@ func (m *Manager) Task(ctx context.Context, id, ws string) (workspace.Task, erro
 	}
 	return workspace.Task{}, notFound("task")
 }
+
+func (m *Manager) ActiveTask(ctx context.Context, ws string) (workspace.Task, error) {
+	tasks, err := load[workspace.Task](ctx, m.store, "task")
+	if err != nil {
+		return workspace.Task{}, err
+	}
+	var active workspace.Task
+	for _, task := range tasks {
+		if task.WorkspaceID == ws && task.Status == "open" && task.UpdatedAt > active.UpdatedAt {
+			active = task
+		}
+	}
+	return active, nil
+}
 func (m *Manager) CreateTask(ctx context.Context, args TaskArgs) (workspace.Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

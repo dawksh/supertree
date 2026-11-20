@@ -25,6 +25,9 @@ type Agents struct {
 func (c *Core) RegisterCollaboration(r *command.Registry) error {
 	registrations := []func() error{
 		func() error {
+			return registerProcess(c, r, "context.share", "Explicitly capture/share file lines, tracked diff, output, notes or selected context with this worktree's primary agent; preview sends nothing.", []string{"context.write", "agent.send"}, c.agents.Share)
+		},
+		func() error {
 			return registerProcess(c, r, "agent.bind", "Bind a foreground worker to this worktree's existing agent tab; never replace a running CLI.", []string{"agent.bind"}, c.agents.Bind)
 		},
 		func() error {

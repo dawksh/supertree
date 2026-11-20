@@ -46,6 +46,7 @@ output=$(HOME="$TMP/home" PATH="$TMP/bin:$PATH" \
   "$TMP/bin/st" --version)
 [ "$output" = 'st v2.0.0' ]
 [ -f "$TMP/bin/st-lib-v2.0.0/00-core.sh" ]
+cmp -s "$TMP/bin/st-lib-v2.0.0/editor.lua" "$ROOT/bin/st-lib/editor.lua" || fail 'legacy upgrade dropped the editor bridge'
 grep -q 'st_lib_dir=' "$TMP/bin/st"
 
 printf 'ok: legacy single-file upgrade to modular bundle\n'
