@@ -351,6 +351,36 @@ with the same actor/request ID returns the previous launch; changing its argumen
 with that request ID is rejected. A different request ID never implicitly restarts
 an existing named process.
 
+### Go workspace TUI
+
+```sh
+./dev next tui                  # starts the local core if needed
+./dev next tui --workspace <id>
+```
+
+The control client opens in your current terminal. Tab switches between workspaces
+and processes; arrows or `j`/`k` select. `s` starts a shell, `n` opens a named-process
+form, Enter attaches, `x` stops after confirmation, `r` restarts, and `m` joins a
+terminal beside another or detaches it into a separate window. `p` opens the
+command palette; its entries and JSON argument models come from the core registry.
+Use `?` for help and `q` to close the TUI. Closing it leaves the core and terminals
+running. Detach from an attached tmux terminal to return to the control client.
+
+The TUI subscribes to changes, reconnects with a fresh snapshot when required,
+and never repeats a mutation on reconnect. Background process actions preserve
+focus. If the terminal is too small, enlarge it to at least 60 columns × 16 rows.
+After rebuilding core code, restart an already running daemon before opening the
+new client so both use the latest registered commands.
+
+Agent clients can inspect `view.list` (also included in workspace snapshots) to
+see each TUI's workspace/process selection, panel, pending command/input, and
+available command names. `view.select` accepts `view_id`, `workspace_id`, and
+`process_id`, plus an optional `expected_revision`. It changes the visible
+selection without selecting a tmux pane. Selection changes are rejected while
+human input is active. Agents operate the same `process.*` commands directly;
+no simulated keystrokes or screen-coordinate parsing is needed. Connected views
+expire after 30 seconds without a heartbeat; closing a view stops no processes.
+
 ### Releases
 
 Pull requests to `main` run Go and shell tests on Ubuntu and macOS, cross-build

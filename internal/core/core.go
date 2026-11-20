@@ -55,6 +55,7 @@ func Select(snapshot workspace.Snapshot, id string) (workspace.Snapshot, error) 
 			snapshot.Sessions = slices.Clone(snapshot.Sessions)
 			snapshot.Processes = slices.Clone(snapshot.Processes)
 			snapshot.Processes = slices.DeleteFunc(snapshot.Processes, func(p workspace.Process) bool { return p.WorkspaceID != id })
+			snapshot.Views = filterViews(snapshot.Views, id)
 			return selectSessions(snapshot, w), nil
 		}
 	}
@@ -112,6 +113,7 @@ type Core struct {
 	history   []Event
 	clients   map[*subscriber]bool
 	processes *process.Manager
+	views     map[string]viewLease
 }
 
 func Open(ctx context.Context, options workspace.Options) (*Core, error) {
@@ -122,6 +124,7 @@ func Open(ctx context.Context, options workspace.Options) (*Core, error) {
 	var token [16]byte
 	_, _ = rand.Read(token[:])
 	c := &Core{options: options, store: s, clients: make(map[*subscriber]bool),
+		views: make(map[string]viewLease),
 		state: workspace.Snapshot{Epoch: fmt.Sprintf("%x", token)}}
 	c.processes = process.New(s, tmux.Client{Socket: options.TmuxSocket}, func(id string) (workspace.Workspace, error) {
 		snapshot, err := c.Snapshot(id)
@@ -178,6 +181,7 @@ func (c *Core) refreshState(ctx context.Context, directory string, origin Origin
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	next.Views = c.viewSnapshot()
 	next.Epoch, next.Sequence = c.state.Epoch, c.state.Sequence
 	old, comparable := c.state, next
 	old.CapturedAt, comparable.CapturedAt = "", ""

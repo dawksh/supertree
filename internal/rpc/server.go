@@ -73,6 +73,9 @@ func Serve(ctx context.Context, options workspace.Options, socket string, log io
 		err = c.RegisterProcesses(s.r)
 	}
 	if err == nil {
+		err = c.RegisterViews(s.r)
+	}
+	if err == nil {
 		err = command.Register(s.r, command.Definition{Name: "daemon.status", Version: 1,
 			Description: "Inspect daemon identity, protocol capabilities and current sequence.", Effects: []string{"read"}, Repeatable: true},
 			func(context.Context, struct{}) (Status, error) { return s.status(), nil })
