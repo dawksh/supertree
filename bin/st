@@ -30,6 +30,8 @@ fi
 
 # tmux may launch this outside an interactive shell
 PATH="$HOME/.local/bin:$HOME/.opencode/bin:/opt/homebrew/bin:$PATH"
+# The local launcher supplies wrappers for this checkout and its isolated tmux.
+if [ -n "${ST_DEV_ROOT:-}" ]; then PATH="$ST_DEV_ROOT/.dev/bin:$PATH"; fi
 
 # Repair must be available before config and modules are loaded: either may be
 # damaged on an installed machine. Reuse the verified release installer so the
