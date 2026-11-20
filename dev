@@ -74,19 +74,7 @@ HELP
     exec bash "$dev_root/scripts/package-release.sh" "${2:-$dev_dir/releases}";;
   test)
     [ "$#" -eq 1 ] || dev_fail 'usage: ./dev test'
-    unset TMUX TMUX_PANE ST_DEV_ROOT ST_NEXT_TMUX_SOCKET ST_NEXT_SOCKET ST_NEXT_ACTOR ST_NEXT_REQUEST_ID ST_CONFIG ST_CONFDIR
-    unset ST_STATE ST_WORKTREE_ROOT ST_WINDOWS ST_HARNESS ST_HARNESS_COMMAND ST_WITH_NEXT
-    unset ST_HARNESS_RESUME_COMMAND ST_SHELL ST_SIDEBAR
-    cd "$dev_root"
-    command -v go >/dev/null || dev_fail 'Go 1.24 or newer is required'
-    go vet ./...
-    go test -race ./...
-    bash -n dev
-    for dev_file in bin/st bin/st-lib/*.sh install.sh tests/*.sh scripts/*.sh; do
-      bash -n "$dev_file"
-    done
-    for dev_file in tests/*.sh; do bash "$dev_file"; done
-    exit;;
+    exec bash "$dev_root/scripts/test-local.sh";;
 esac
 
 # The path hash separates checkouts; /tmp keeps Unix socket paths short on macOS.

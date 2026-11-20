@@ -30,6 +30,11 @@ fi
 
 # tmux may launch this outside an interactive shell
 PATH="$HOME/.local/bin:$HOME/.opencode/bin:/opt/homebrew/bin:$PATH"
+# Keep the test runner's socket guard ahead of system binaries. Fixture-specific
+# mocks in the disposable HOME still take precedence.
+if [ -n "${SUPERTREE_TEST_SANDBOX:-}" ] && [ -x "$SUPERTREE_TEST_SANDBOX/bin/tmux" ]; then
+  PATH="$HOME/.local/bin:$SUPERTREE_TEST_SANDBOX/bin:$PATH"
+fi
 # The local launcher supplies wrappers for this checkout and its isolated tmux.
 if [ -n "${ST_DEV_ROOT:-}" ]; then PATH="$ST_DEV_ROOT/.dev/bin:$PATH"; fi
 

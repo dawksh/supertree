@@ -298,9 +298,13 @@ requires a fresh snapshot. A live subscriber that falls behind receives a
 Event history is not persisted across daemon restarts. CLI event streams report
 disconnects and require an explicit reconnect.
 
-Run `go test ./...` for Go checks. The integration tests use temporary Git
-repositories and an isolated tmux socket. Run `go test -race ./...` and
-`go vet ./...` for the full Go checks; CI runs these on macOS and Linux.
+Run `./dev test` for Go vet, race checks, and the shell suite. The runner uses a
+temporary HOME and remaps tmux's default, named, and explicit sockets into its
+own disposable directory. Test cleanup addresses only those private sockets.
+For a focused check, use `bash scripts/test-local.sh -- go test -race ./internal/process`;
+`bash scripts/test-local.sh --shell` runs only the shell suite. CI and release
+checks use the same runner. Test commands should never run against your normal
+tmux environment.
 
 ### Named terminal processes
 

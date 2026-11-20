@@ -36,8 +36,8 @@ jobs:
         run: test -z "$(gofmt -l cmd internal)"
       - name: Vet and test
         run: |
-          go vet ./...
-          go test -race ./...
+          bash scripts/test-local.sh -- go vet ./...
+          bash scripts/test-local.sh -- go test -race ./...
       - name: Build experimental client
         run: CGO_ENABLED=0 go build -o bin/st-next ./cmd/st-next
       - name: Check release assets
@@ -62,7 +62,4 @@ jobs:
             bash -n "$file"
           done
       - name: Run tests
-        run: |
-          for file in tests/*.sh; do
-            bash "$file"
-          done
+        run: bash scripts/test-local.sh --shell

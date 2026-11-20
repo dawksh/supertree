@@ -40,6 +40,11 @@ choose_bump() {
 
 check_source() {
   local src=$1 file
+  if [ -f "$src/scripts/test-local.sh" ]; then
+    bash "$src/scripts/test-local.sh" || return 1
+    installer_colours_match "$src"
+    return
+  fi
   for file in "$src/bin/st" "$src"/bin/st-lib/*.sh "$src/install.sh" "$src"/tests/*.sh "$src"/scripts/*.sh; do
     bash -n "$file" || return 1
   done
