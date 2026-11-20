@@ -194,7 +194,7 @@ func (c *Core) refreshState(ctx context.Context, directory string, origin Origin
 	c.mu.Lock()
 	c.observed = slices.Clone(next.Workspaces)
 	c.mu.Unlock()
-	next.Processes, err = c.processes.Snapshot(ctx)
+	next.Processes, err = c.processes.Snapshot(ctx, next.Workspaces...)
 	if err != nil {
 		return err
 	}

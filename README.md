@@ -374,6 +374,14 @@ Exited owned terminals retain their output and exit status until stopped/restart
 ```
 
 Registration explicitly associates an existing terminal with a workspace. Its
+normal agent/editor/shell tabs already appear automatically as `source: "observed"`
+when the daemon discovers a Supertree session. Observing them changes no pane
+options and enables attachment/output only. Stop and move require explicit
+registration; restart requires a known launch definition. IDs track the tmux
+server and pane process, so a reused pane number cannot target an older terminal.
+The controls label these existing terminals as read-only.
+
+For an explicitly registered terminal, the
 original launch definition is unknown, so it cannot be restarted by the core.
 Stopping a registered pane still closes that terminal. Process IDs survive moves;
 reused pane IDs after a tmux restart cannot inherit another process's identity.

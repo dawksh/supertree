@@ -14,6 +14,8 @@ import (
 type Client struct{ Socket string }
 type Pane struct {
 	ID, WindowID, SessionID, ProcessID, Directory, WindowName string
+	PID, ServerPID, TreeDirectory, Role, AgentWindow, Label   string
+	Sidebar                                                   bool
 	Dead                                                      bool
 	ExitCode                                                  int
 }
@@ -39,7 +41,7 @@ func (c Client) Run(ctx context.Context, args ...string) (string, error) {
 }
 
 func (c Client) Panes(ctx context.Context) ([]Pane, error) {
-	data, err := c.Run(ctx, "-N", "list-panes", "-a", "-F", "#{pane_id}\t#{window_id}\t#{session_id}\t#{@st_next_process}\t#{pane_dead}\t#{pane_dead_status}\t#{window_name}\t#{pane_current_path}")
+	data, err := c.Run(ctx, "-N", "list-panes", "-a", "-F", "#{pane_id}\t#{window_id}\t#{session_id}\t#{@st_next_process}\t#{pane_dead}\t#{pane_dead_status}\t#{window_name}\t#{pane_pid}\t#{pid}\t#{@st_role}\t#{@st_agent_window}\t#{@supertree_label}\t#{@st_sidebar}\t#{@st_tree_dir}\t#{pane_current_path}")
 	if err != nil {
 		_, status, _ := Inspect(ctx, c.Socket)
 		if status == "stopped" || status == "unavailable" {
@@ -52,15 +54,15 @@ func (c Client) Panes(ctx context.Context) ([]Pane, error) {
 		if line == "" {
 			continue
 		}
-		fields := strings.SplitN(line, "\t", 8)
-		if len(fields) != 8 || !strings.HasPrefix(fields[0], "%") {
+		fields := strings.SplitN(line, "\t", 15)
+		if len(fields) != 15 || !strings.HasPrefix(fields[0], "%") {
 			return nil, fmt.Errorf("unexpected tmux pane record")
 		}
 		exit := -1
 		if fields[5] != "" {
 			exit, _ = strconv.Atoi(fields[5])
 		}
-		result = append(result, Pane{ID: fields[0], WindowID: fields[1], SessionID: fields[2], ProcessID: fields[3], Dead: fields[4] == "1", ExitCode: exit, WindowName: fields[6], Directory: fields[7]})
+		result = append(result, Pane{ID: fields[0], WindowID: fields[1], SessionID: fields[2], ProcessID: fields[3], Dead: fields[4] == "1", ExitCode: exit, WindowName: fields[6], PID: fields[7], ServerPID: fields[8], Role: fields[9], AgentWindow: fields[10], Label: fields[11], Sidebar: fields[12] == "1", TreeDirectory: fields[13], Directory: fields[14]})
 	}
 	return result, nil
 }

@@ -66,10 +66,11 @@ type Output struct {
 	CapturedAt string `json:"captured_at"`
 }
 type saved struct {
-	Process     workspace.Process `json:"process"`
-	Environment map[string]string `json:"environment"`
-	RequestKey  string            `json:"request_key"`
-	RequestHash string            `json:"request_hash"`
+	Process      workspace.Process `json:"process"`
+	Environment  map[string]string `json:"environment"`
+	RequestKey   string            `json:"request_key"`
+	RequestHash  string            `json:"request_hash"`
+	PaneIdentity string            `json:"pane_identity,omitempty"`
 }
 type Manager struct {
 	mu       sync.Mutex
@@ -294,7 +295,7 @@ func apply(p *workspace.Process, live tmux.Pane) {
 	}
 }
 
-func (m *Manager) Snapshot(ctx context.Context) ([]workspace.Process, error) {
+func (m *Manager) Snapshot(ctx context.Context, workspaces ...workspace.Workspace) ([]workspace.Process, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	items, err := m.load(ctx)
@@ -302,6 +303,10 @@ func (m *Manager) Snapshot(ctx context.Context) ([]workspace.Process, error) {
 		return nil, err
 	}
 	panes, err := m.client.Panes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items, err = m.observe(ctx, items, panes, workspaces)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +320,15 @@ func (m *Manager) Snapshot(ctx context.Context) ([]workspace.Process, error) {
 	for i := range items {
 		item := &items[i]
 		before := item.Process
-		if live, ok := byID[item.Process.ID]; ok {
+		if item.Process.Source == "observed" {
+			item.Process.State = "missing"
+			for _, pane := range panes {
+				if pane.ProcessID == "" && paneIdentity(m.client.Socket, pane) == item.PaneIdentity {
+					apply(&item.Process, pane)
+					break
+				}
+			}
+		} else if live, ok := byID[item.Process.ID]; ok {
 			apply(&item.Process, live)
 		} else if !slices.Contains([]string{"stopped", "failed", "missing"}, item.Process.State) {
 			item.Process.State = "missing"
@@ -326,7 +339,9 @@ func (m *Manager) Snapshot(ctx context.Context) ([]workspace.Process, error) {
 				return nil, err
 			}
 		}
-		result = append(result, item.Process)
+		if item.Process.Source != "observed" || item.Process.State != "missing" {
+			result = append(result, presentation(item.Process))
+		}
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].WorkspaceID == result[j].WorkspaceID {
@@ -357,9 +372,6 @@ func (m *Manager) Register(ctx context.Context, args RegisterArgs) (workspace.Pr
 	if err != nil {
 		return workspace.Process{}, err
 	}
-	if err := unique(items, w.ID, args.Name); err != nil {
-		return workspace.Process{}, err
-	}
 	panes, err := m.client.Panes(ctx)
 	if err != nil {
 		return workspace.Process{}, err
@@ -377,6 +389,18 @@ func (m *Manager) Register(ctx context.Context, args RegisterArgs) (workspace.Pr
 				args.Kind = "terminal"
 			}
 			item := saved{Process: workspace.Process{ID: ID("proc"), WorkspaceID: w.ID, Name: args.Name, Kind: args.Kind, Command: []string{}, EnvironmentKeys: []string{}, Directory: pane.Directory, CreatedAt: now()}}
+			for _, existing := range items {
+				if existing.Process.Source == "observed" && existing.PaneIdentity == paneIdentity(m.client.Socket, pane) {
+					item = existing
+					break
+				}
+			}
+			for _, existing := range items {
+				if existing.Process.ID != item.Process.ID && existing.Process.WorkspaceID == w.ID && existing.Process.Name == args.Name && existing.Process.Source != "observed" {
+					return workspace.Process{}, conflict("process name already exists")
+				}
+			}
+			item.Process.Name, item.Process.Kind, item.Process.Source = args.Name, args.Kind, "registered"
 			apply(&item.Process, pane)
 			if _, err := m.client.Run(ctx, "set-option", "-p", "-t", pane.ID, "@st_next_process", item.Process.ID); err != nil {
 				return item.Process, err
@@ -401,6 +425,9 @@ func (m *Manager) Stop(ctx context.Context, args Target) (workspace.Process, err
 	item, err := find(items, args)
 	if err != nil {
 		return workspace.Process{}, err
+	}
+	if item.Process.Source == "observed" {
+		return item.Process, conflict("existing terminal is read-only; explicitly register it before stopping")
 	}
 	if item.Process.State == "stopped" {
 		return item.Process, nil
@@ -458,7 +485,7 @@ func (m *Manager) Attach(ctx context.Context, args Target) (Attachment, error) {
 	if err != nil {
 		return Attachment{}, err
 	}
-	p, err := m.client.Tagged(ctx, item.Process.PaneID, item.Process.ID)
+	p, err := m.live(ctx, item)
 	if err != nil {
 		return Attachment{}, conflict(err.Error())
 	}
@@ -480,6 +507,9 @@ func (m *Manager) Move(ctx context.Context, args MoveArgs) (workspace.Process, e
 	item, err := find(items, Target{args.ProcessID, args.ExpectedRevision})
 	if err != nil {
 		return workspace.Process{}, err
+	}
+	if item.Process.Source == "observed" {
+		return item.Process, conflict("existing terminal is read-only; explicitly register it before moving")
 	}
 	source, err := m.client.Tagged(ctx, item.Process.PaneID, item.Process.ID)
 	if err != nil {
@@ -533,7 +563,7 @@ func (m *Manager) Output(ctx context.Context, args OutputArgs) (Output, error) {
 	if err != nil {
 		return Output{}, err
 	}
-	if _, err := m.client.Tagged(ctx, item.Process.PaneID, item.Process.ID); err != nil {
+	if _, err := m.live(ctx, item); err != nil {
 		return Output{}, conflict(err.Error())
 	}
 	text, err := m.client.Run(ctx, "capture-pane", "-p", "-J", "-t", item.Process.PaneID, "-S", fmt.Sprint(-args.Lines))

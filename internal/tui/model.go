@@ -350,6 +350,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.invoke("process.start", process.StartArgs{WorkspaceID: m.workspaceID, Name: name, Kind: "shell", Command: []string{"/bin/bash", "--noprofile", "--norc"}})
 		case "x", "r":
 			if p, ok := m.selected(); ok {
+				if p.Source == "observed" {
+					m.message = "Existing terminal is read-only; explicitly register it to enable management"
+					break
+				}
 				m.mode = "confirm"
 				m.pendingName = "process.stop"
 				if msg.String() == "r" {
@@ -364,7 +368,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.invoke("process.attach", process.Target{ProcessID: p.ID})
 			}
 		case "m":
-			if _, ok := m.selected(); ok {
+			if p, ok := m.selected(); ok {
+				if p.Source == "observed" {
+					m.message = "Existing terminal is read-only; explicitly register it to enable management"
+					break
+				}
 				m.mode = "move"
 				m.index = 0
 				m.input = "horizontal"
@@ -645,6 +653,9 @@ func (m Model) View() string {
 			prefix = "› "
 		}
 		text := line(fmt.Sprintf("%s%-18s %-10s %s", prefix, p.Name, p.State, p.Kind), rightWidth-4)
+		if p.Source == "observed" {
+			text = line(fmt.Sprintf("%s%s · %s · existing (read-only)", prefix, p.Name, p.State), rightWidth-4)
+		}
 		if p.ID == m.processID {
 			text = accent.Render(text)
 		}

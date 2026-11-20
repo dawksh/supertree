@@ -16,6 +16,8 @@ type Process struct {
 	State           string   `json:"state"`
 	ExitCode        int      `json:"exit_code"`
 	Owned           bool     `json:"owned"`
+	Source          string   `json:"source"`
+	Actions         []string `json:"actions"`
 	Revision        int64    `json:"revision"`
 	CreatedAt       string   `json:"created_at"`
 	UpdatedAt       string   `json:"updated_at"`
