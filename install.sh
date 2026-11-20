@@ -10,6 +10,7 @@
 #   ST_YES=1            answer yes to every prompt (non-interactive installs)
 #   ST_HARNESS=codex     choose claude, codex, or openrouter without a prompt
 #   ST_WINDOWS='agent shell'  choose and order tmux windows
+#   ST_WITH_NEXT=1      include the experimental Go core (0 to omit; default preserves existing choice)
 # tmux keys are read from ST_KEY_* in the config (see README "Keys")
 set -euo pipefail
 
@@ -381,6 +382,21 @@ verify_asset() { # downloaded file name
     die "$1 from $VERSION does not match its published checksum; nothing was changed"
 }
 
+next_asset() {
+  local platform machine
+  case $(uname -s) in
+    Darwin) platform=darwin;;
+    Linux) platform=linux;;
+    *) die "no workspace core binary for this operating system; use ST_WITH_NEXT=0 for shell-only installation";;
+  esac
+  case $(uname -m) in
+    x86_64|amd64) machine=amd64;;
+    arm64|aarch64) machine=arm64;;
+    *) die "no workspace core binary for this architecture; use ST_WITH_NEXT=0 for shell-only installation";;
+  esac
+  printf 'st-next-%s-%s' "$platform" "$machine"
+}
+
 # ------------------------------------------------------------ dependencies
 
 DEPS="tmux git fzf"
@@ -493,7 +509,14 @@ install_one() { # cmd, pm, logfile
 
 # ------------------------------------------------------------------ main
 
-tmpdir=$(mktemp -d); trap 'rm -rf "$tmpdir"' EXIT
+tmpdir=$(mktemp -d)
+staged_command='' staged_modules=''
+cleanup_install() {
+  rm -rf "$tmpdir"
+  [ -z "$staged_command" ] || rm -f -- "$staged_command"
+  [ -z "$staged_modules" ] || rm -rf -- "$staged_modules"
+}
+trap cleanup_install EXIT
 LOG="$tmpdir/install.log"
 
 title
@@ -565,11 +588,42 @@ else
   step "03" "Install" "Putting supertree in the right places."
 fi
 
+previous_version=''
+[ ! -f "$PREFIX/st" ] ||
+  previous_version=$(sed -n "s/^ST_VERSION='\([A-Za-z0-9._-]*\)'$/\1/p" "$PREFIX/st" | head -1)
+WITH_NEXT=${ST_WITH_NEXT:-auto}
+HAD_NEXT=0
+if { [ -f "$PREFIX/st.install" ] && [ "$(sed -n '3p' "$PREFIX/st.install")" = 1 ]; } ||
+   { [ -n "$previous_version" ] && { [ -f "$PREFIX/st-lib-$previous_version/.with-next" ] || [ -x "$PREFIX/st-lib-$previous_version/st-next" ]; }; }; then
+  HAD_NEXT=1
+fi
+case $WITH_NEXT in
+  auto)
+    WITH_NEXT=$HAD_NEXT;;
+  0|1) ;;
+  *) die "ST_WITH_NEXT must be 0, 1, or auto";;
+esac
+NEXT_ASSET=''
+if [ "$WITH_NEXT" = 1 ]; then NEXT_ASSET=$(next_asset); fi
+
 activity "fetching command + modules" curl -fsSL --connect-timeout 10 --max-time 60 "$BASE/st.tar.gz" -o "$tmpdir/st.tar.gz" || die "could not download st from $BASE"
 activity "fetching tmux bindings" curl -fsSL --connect-timeout 10 --max-time 60 "$BASE/supertree.conf" -o "$tmpdir/supertree.conf" || die "could not download supertree.conf from $BASE"
 activity "fetching checksums" curl -fsSL --connect-timeout 10 --max-time 60 "$BASE/SHA256SUMS" -o "$tmpdir/SHA256SUMS" || die "could not download checksums from $BASE"
 verify_asset st.tar.gz
 verify_asset supertree.conf
+if [ "$WITH_NEXT" = 1 ]; then
+  awk -v name="$NEXT_ASSET" '$2 == name { found=1 } END { exit !found }' "$tmpdir/SHA256SUMS" ||
+    die "$VERSION does not provide $NEXT_ASSET; use ST_WITH_NEXT=0 for shell-only installation"
+  activity "fetching workspace core" curl -fsSL --connect-timeout 10 --max-time 60 "$BASE/$NEXT_ASSET" -o "$tmpdir/$NEXT_ASSET" ||
+    die "could not download $NEXT_ASSET from $BASE"
+  verify_asset "$NEXT_ASSET"
+  chmod 0755 "$tmpdir/$NEXT_ASSET"
+  next_version=$("$tmpdir/$NEXT_ASSET" --version) || die "downloaded workspace core cannot run on this system"
+  case $next_version in
+    "st-next $VERSION ("*")") ;;
+    *) die "workspace core version does not match $VERSION; nothing was changed";;
+  esac
+fi
 tar -tzf "$tmpdir/st.tar.gz" | awk '
   $0 == "st" || $0 == "st-lib/" || $0 ~ /^st-lib\/[A-Za-z0-9_.-]+\.sh$/ { next }
   { exit 1 }
@@ -589,19 +643,25 @@ bash -n "$tmpdir/package/st" || die "downloaded st has invalid shell syntax"
 sed "s|^ST_VERSION='dev'$|ST_VERSION='$VERSION'|" "$tmpdir/package/st" > "$tmpdir/stamped"
 grep -qx "ST_VERSION='$VERSION'" "$tmpdir/stamped" || die "downloaded st has invalid version metadata"
 
+if [ "$WITH_NEXT" = 0 ] && [ "$HAD_NEXT" = 1 ] && [ -x "$PREFIX/st-lib-$previous_version/st-next" ]; then
+  activity "stopping workspace core" "$PREFIX/st" next daemon stop ||
+    die "could not stop the workspace core before removing it; stop it before opting out"
+fi
+
 mkdir -p "$PREFIX" "$CONFDIR"
 if [ "$CONFIG_BROKEN" = 1 ]; then
   broken_backup=$(mktemp "$CONFIG.broken.XXXXXX")
   mv "$CONFIG" "$broken_backup"
   printf 'st: saved damaged config to %s\n' "$broken_backup" >&2
 fi
-previous_version=''
-[ ! -f "$PREFIX/st" ] ||
-  previous_version=$(sed -n "s/^ST_VERSION='\([A-Za-z0-9._-]*\)'$/\1/p" "$PREFIX/st" | head -1)
 staged_command=$(mktemp "$PREFIX/.st.install.XXXXXX")
 staged_modules=$(mktemp -d "$PREFIX/.st-lib.install.XXXXXX")
 install -m 0755 "$tmpdir/stamped" "$staged_command"
 cp "$tmpdir/package"/st-lib/*.sh "$staged_modules/"
+if [ "$WITH_NEXT" = 1 ]; then
+  install -m 0755 "$tmpdir/$NEXT_ASSET" "$staged_modules/st-next"
+  : > "$staged_modules/.with-next"
+fi
 previous_modules=''
 if [ -e "$PREFIX/st-lib-$VERSION" ]; then
   previous_modules=$(mktemp -d "$PREFIX/.st-lib.previous.XXXXXX")
@@ -623,8 +683,11 @@ if [ -n "$previous_version" ] && [ "$previous_version" != "$VERSION" ] &&
   rm -rf -- "$PREFIX/st-lib-$previous_version"
 fi
 # Keep custom install paths for st uninstall.
-printf '%s\n%s\n' "$CONFDIR" "$TMUX_CONF" > "$PREFIX/st.install"
+printf '%s\n%s\n%s\n' "$CONFDIR" "$TMUX_CONF" "$WITH_NEXT" > "$PREFIX/st.install"
 row "command" "${GRN}✔${R}" "$PREFIX/st"
+if [ "$WITH_NEXT" = 1 ]; then
+  row "core" "${GRN}✔${R}" "$PREFIX/st-lib-$VERSION/st-next"
+fi
 
 if [ "${ST_REPAIR:-0}" = 1 ] && [ "$CONFIG_BROKEN" = 0 ]; then
   if ! render_bindings 2>"$tmpdir/render-error"; then
@@ -683,6 +746,10 @@ else
 fi
 printf '      %sst doctor%s          verify the install\n' "$B" "$R"
 printf '      %sst new <branch>%s    start from any git repo\n' "$B" "$R"
+if [ "$WITH_NEXT" = 1 ]; then
+  printf '      %sst next --version%s  inspect the optional workspace core\n' "$B" "$R"
+  printf '      Restart a running core after updating: st next daemon stop; st next daemon start\n'
+fi
 if [ "$HARNESS" = openrouter ]; then
   printf '      %sopencode%s           run /connect and select OpenRouter once\n' "$B" "$R"
 fi

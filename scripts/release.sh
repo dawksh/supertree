@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/package-release.sh"
+
 # Each eligible first-parent commit after the latest published release gets a release.
 # A release:skip commit is folded into the next eligible release.
 # The first run begins at the commit that introduced this workflow, so older
@@ -44,7 +46,14 @@ check_source() {
   for file in "$src"/tests/*.sh; do
     bash "$file" || return 1
   done
-  installer_colours_match "$src"
+  installer_colours_match "$src" || return 1
+  if [ -f "$src/dev" ]; then bash -n "$src/dev" || return 1; fi
+  if [ -f "$src/go.mod" ]; then
+    command -v go >/dev/null || { printf 'Go is required to check this release\n' >&2; return 1; }
+    [ -z "$(gofmt -l "$src/cmd" "$src/internal")" ] || return 1
+    go -C "$src" vet ./... || return 1
+    go -C "$src" test -race ./... || return 1
+  fi
 }
 
 # install.sh runs alone, so it copies colour values from the ui module by hand.
@@ -113,13 +122,7 @@ main() {
     fi
     carried=''
 
-    tar -czf "$assets/st.tar.gz" -C "$src/bin" st st-lib
-    cp "$src/scripts/legacy-upgrade.sh" "$assets/st"
-    cp "$src/install.sh" "$assets/install.sh"
-    cp "$src/tmux/supertree.conf" "$assets/supertree.conf"
-    grep -qx "ST_VERSION='dev'" "$src/bin/st"
-    grep -qx "ST_VERSION='dev'" "$assets/st"
-    (cd "$assets" && sha256sum st st.tar.gz install.sh supertree.conf > SHA256SUMS)
+    package_release "$src" "$assets" "$next" "$sha"
 
     # A failed upload leaves a draft; the next run resumes it with fresh assets.
     state=$(gh release view "$next" --json isDraft --jq '.isDraft' 2>/dev/null || true)
@@ -139,8 +142,7 @@ main() {
         gh release create "$next" --target "$sha" --draft \
           --title "$next" --generate-notes --notes-start-tag "$base"
       fi
-      gh release upload "$next" "$assets/st" "$assets/st.tar.gz" "$assets/install.sh" \
-        "$assets/supertree.conf" "$assets/SHA256SUMS" --clobber
+      gh release upload "$next" "$assets/"* --clobber
       gh release edit "$next" --draft=false --latest
     fi
     base=$next

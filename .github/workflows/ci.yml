@@ -39,7 +39,13 @@ jobs:
           go vet ./...
           go test -race ./...
       - name: Build experimental client
-        run: go build -o bin/st-next ./cmd/st-next
+        run: CGO_ENABLED=0 go build -o bin/st-next ./cmd/st-next
+      - name: Check release assets
+        run: |
+          bash scripts/package-release.sh "$RUNNER_TEMP/st-release" v0.0.0-test
+          (cd "$RUNNER_TEMP/st-release" && shasum -a 256 -c SHA256SUMS)
+          "$RUNNER_TEMP/st-release/st-next-$(go env GOHOSTOS)-$(go env GOHOSTARCH)" --version |
+            grep -Fx "st-next v0.0.0-test ($GITHUB_SHA)"
   test:
     name: Shell tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

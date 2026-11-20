@@ -28,6 +28,7 @@ export ST_DEV_INSTALLED_LOG="$task_tmp/installed-used"
 # Simulate a developer who already has a release installed and inherited config.
 export ST_CONFIG="$task_user/installed-config" ST_STATE="$task_user/installed-state"
 export ST_WORKTREE_ROOT="$task_user/installed-trees" ST_WINDOWS=agent ST_HARNESS=claude
+export ST_NEXT_SOCKET=/tmp/installed-core.sock
 printf 'installed tmux config\n' > "$task_user/.tmux.conf"
 printf 'installed st config\n' > "$task_user/installed-config"
 cat > "$task_user/.local/bin/st" <<'INSTALLED'
@@ -46,7 +47,7 @@ chmod +x "$task_tools/go"
 # own tests; this client reports the environment supplied by the real launcher.
 cat > "$task_checkout/bin/st-next" <<'CLIENT'
 #!/bin/sh
-printf '%s\n' "$ST_STATE" "$ST_CONFIG" "$ST_WORKTREE_ROOT" "$ST_NEXT_TMUX_SOCKET" "$@"
+printf '%s\n' "$ST_STATE" "$ST_CONFIG" "$ST_WORKTREE_ROOT" "$ST_NEXT_TMUX_SOCKET" "${ST_NEXT_SOCKET:-default-core}" "$@"
 CLIENT
 chmod +x "$task_checkout/bin/st-next"
 
@@ -56,6 +57,7 @@ cd "$task_tmp"
 grep -Fx "$task_checkout/.dev/state" "$task_tmp/result" >/dev/null
 grep -Fx "$task_checkout/.dev/config" "$task_tmp/result" >/dev/null
 grep -Fx "$task_checkout/.dev/worktrees" "$task_tmp/result" >/dev/null
+grep -Fx 'default-core' "$task_tmp/result" >/dev/null
 [ "$(wc -l < "$ST_DEV_GO_LOG" | tr -d ' ')" = 1 ]
 [ ! -e "$task_user/installed-state" ]
 [ ! -e "$task_user/installed-trees" ]

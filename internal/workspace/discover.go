@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dawksh/supertree/internal/command"
@@ -24,6 +25,9 @@ type Options struct {
 	WorktreeRoot string
 	Directory    string
 	TmuxSocket   string
+	// Repositories supplies paths remembered by the daemon, without modifying
+	// the legacy repository registry. Discover itself remains read-only.
+	Repositories []string
 }
 
 type Workspace struct {
@@ -41,6 +45,8 @@ type Workspace struct {
 	Locked         bool     `json:"locked"`
 	Prunable       bool     `json:"prunable"`
 	SessionIDs     []string `json:"session_ids"`
+	IdentityKey    string   `json:"-"`
+	RepositoryKey  string   `json:"-"`
 }
 
 type Warning struct {
@@ -58,6 +64,8 @@ type Snapshot struct {
 	Sessions      []tmux.Session `json:"sessions"`
 	TmuxStatus    string         `json:"tmux_status"`
 	Warnings      []Warning      `json:"warnings"`
+	Epoch         string         `json:"epoch,omitempty"`
+	Sequence      int64          `json:"sequence"`
 }
 
 // Discover includes registered repositories and the current checkout. All Git
@@ -76,7 +84,7 @@ func Discover(ctx context.Context, o Options) (Snapshot, error) {
 	}
 	seenRepos := make(map[string]bool)
 	seenPaths := make(map[string]bool)
-	paths := strings.Split(string(data), "\n")
+	paths := append(strings.Split(string(data), "\n"), o.Repositories...)
 	// Current directory discovery is ephemeral: it never updates the registry.
 	paths = append(paths, o.Directory)
 	for i, path := range paths {
@@ -120,6 +128,7 @@ func Discover(ctx context.Context, o Options) (Snapshot, error) {
 			continue
 		}
 		seenRepos[repoPath] = true
+		repoDir := gitDirectory(repoPath, trees[0].bare)
 		for j, tree := range trees {
 			tree.path = canonical(tree.path)
 			seenPaths[tree.path] = true
@@ -149,6 +158,7 @@ func Discover(ctx context.Context, o Options) (Snapshot, error) {
 				Branch: tree.branch, HEAD: tree.head, Kind: kind, State: state,
 				Managed:  kind == "main" || (kind == "worktree" && contains(snapshot.WorktreeRoot, tree.path)),
 				Detached: tree.detached, Locked: tree.locked, Prunable: tree.prunable, SessionIDs: []string{},
+				IdentityKey: fileIdentity(gitDirectory(tree.path, tree.bare)), RepositoryKey: fileIdentity(repoDir),
 			})
 		}
 	}
@@ -180,13 +190,65 @@ func Discover(ctx context.Context, o Options) (Snapshot, error) {
 	return snapshot, nil
 }
 
+// Git's administrative directory survives branch switches and worktree moves.
+// Its filesystem identity also survives a main checkout's rename on the same
+// filesystem. Copies have a distinct identity; no marker is written into Git.
+func gitDirectory(path string, bare bool) string {
+	if bare {
+		return path
+	}
+	dot := filepath.Join(path, ".git")
+	if info, err := os.Stat(dot); err == nil && info.IsDir() {
+		return dot
+	}
+	data, err := os.ReadFile(dot)
+	if err != nil || !strings.HasPrefix(string(data), "gitdir: ") {
+		return ""
+	}
+	dir := strings.TrimSuffix(strings.TrimPrefix(string(data), "gitdir: "), "\n")
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(path, dir)
+	}
+	return dir
+}
+
+func fileIdentity(path string) string {
+	if path == "" {
+		return ""
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("%d:%d", stat.Dev, stat.Ino)
+}
+
 func canonical(path string) string {
+	return CanonicalPath(path)
+}
+
+// CanonicalPath resolves existing ancestors too, so a not-yet-created state
+// directory has the same identity before and after its first daemon launch.
+func CanonicalPath(path string) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return filepath.Clean(path)
 	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		return resolved
+	probe := abs
+	for {
+		if resolved, err := filepath.EvalSymlinks(probe); err == nil {
+			rel, _ := filepath.Rel(probe, abs)
+			return filepath.Join(resolved, rel)
+		}
+		parent := filepath.Dir(probe)
+		if parent == probe {
+			break
+		}
+		probe = parent
 	}
 	return abs
 }
