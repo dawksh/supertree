@@ -6,23 +6,98 @@
 UI_ROWS=0
 [ -t 2 ] && UI_ROWS=1
 UI_A='' UI_OK='' UI_WARN='' UI_ERR='' UI_DIM='' UI_R=''
-UI_IN='' UI_RUN='' UI_REPO='' UI_B=''
+UI_IN='' UI_RUN='' UI_REPO='' UI_B='' UI_DEPTH=''
+UI_FZF=()
+
+# Inside tmux always send full colour: tmux converts it to what each attached terminal
+# can show (checked on 3.6: TERM=xterm gets 16 colours, xterm-256color the full value).
+# Outside tmux, COLORTERM is the convention: https://github.com/termstandard/colors
+ui_depth() {
+  UI_DEPTH=16
+  [ "${ST_THEME:-dark}" != ansi ] || return 0
+  if [ -n "${TMUX:-}" ]; then UI_DEPTH=rgb; return 0; fi
+  case ${COLORTERM:-} in truecolor|24bit) UI_DEPTH=rgb; return 0;; esac
+  case ${TERM:-} in *256color*|*-direct) UI_DEPTH=256;; esac
+}
+
+# Sets <name>_T, the colour for a tmux style; with colour on, also <name> (the escape
+# code) and <name>_C (the bare colour fzf takes: #rrggbb or a palette index).
+# tmux styles always get the exact colour: tmux converts it per attached terminal.
+ui_tone() { # name dark-hex dark-256 light-hex light-256 16-colour-index [bold]
+  local hex=$2 index=$3 code value tmux
+  if [ "${ST_THEME:-dark}" = light ]; then hex=$4 index=$5; fi
+  tmux="#$hex"
+  [ "${ST_THEME:-dark}" != ansi ] || tmux=colour$6
+  if [ -n "${NO_COLOR:-}" ] || [ "$tmux" = colour-1 ]; then tmux=default; fi
+  printf -v "$1_T" '%s' "$tmux"
+  [ -n "$UI_DEPTH" ] || return 0
+  case $UI_DEPTH in
+    rgb) value="#$hex"
+         printf -v code '38;2;%d;%d;%d' "0x${hex:0:2}" "0x${hex:2:2}" "0x${hex:4:2}";;
+    256) value=$index code="38;5;$index";;
+    *) value=$6
+       case $6 in -1) code=39;; [0-7]) code=3$6;; *) code=$((82 + $6));; esac;;
+  esac
+  printf -v "$1" '\033[%s%sm' "${7:+1;}" "$code"
+  printf -v "$1_C" '%s' "$value"
+}
+
+# Exact colours, so a terminal's own theme can't repaint them. The 16-colour indexes are
+# the fallback and ST_THEME=ansi. Dim is lighter than the design's: rows are also drawn
+# on the user's own background, and must stay readable on mid-dark ones.
+ui_tones() {
+  ui_tone UI_A      5ccfe6 80  0b6680 24  6
+  ui_tone UI_IN     ffb454 215 9a4a08 94  3 bold
+  ui_tone UI_WARN   ffb454 215 9a4a08 94  3
+  ui_tone UI_RUN    73b8ff 75  1d4ed8 26  4
+  ui_tone UI_OK     9fdc7c 150 126c34 22  2
+  ui_tone UI_ERR    ff7a7a 210 b91c1c 124 1
+  ui_tone UI_DIM    8b94a6 246 566170 59  8
+  ui_tone UI_REPO   d2a6ff 183 7e22ce 92  5
+  ui_tone UI_TEXT   d4d8e0 253 1f2733 235 -1
+  ui_tone UI_PANEL  0f131b 233 f6f7f9 231 -1
+  ui_tone UI_SEL    1c2433 235 e3e8f0 254 -1
+  ui_tone UI_BAR    151a24 234 e9ecf1 255 -1
+  ui_tone UI_TAB    232b3a 236 d5dbe5 253 -1
+  ui_tone UI_BORDER 3a4458 238 9aa4b2 248 8
+}
+ui_tones
+# For popups opened over a session st did not style; tree windows set the same as options.
+UI_POPUP=(-b rounded -s "fg=$UI_TEXT_T,bg=$UI_PANEL_T" -S "fg=$UI_BORDER_T,bg=$UI_PANEL_T")
 
 # Also called directly for text fzf renders with --ansi, which has no terminal of its own.
 ui_colour_on() {
   [ -z "${NO_COLOR:-}" ] || return 0
-  UI_A=$'\033[36m' UI_OK=$'\033[32m' UI_WARN=$'\033[33m'
-  UI_ERR=$'\033[31m' UI_DIM=$'\033[90m' UI_R=$'\033[0m'
-  UI_IN=$'\033[33m' UI_RUN=$'\033[32m' UI_REPO=$'\033[35m' UI_B=$'\033[1m'
+  ui_depth
+  ui_tones
+  UI_R=$'\033[0m' UI_B=$'\033[1m'
+  ui_fzf_colours
+}
+
+# Colour names limited to those fzf 0.45 knows; an unknown one makes fzf exit.
+# https://github.com/junegunn/fzf/blob/master/CHANGELOG.md
+ui_fzf_colours() {
+  local spec="hl:$UI_A_C,hl+:$UI_A_C,prompt:$UI_A_C:bold,pointer:$UI_A_C,marker:$UI_A_C,spinner:$UI_A_C"
+  spec="$spec,info:$UI_DIM_C,header:$UI_DIM_C,border:$UI_BORDER_C,separator:$UI_BORDER_C"
+  # With 16 colours the terminal theme owns the background, so fzf keeps its own surfaces.
+  [ "$UI_DEPTH" = 16 ] ||
+    spec="$spec,fg:$UI_TEXT_C,fg+:$UI_TEXT_C,query:$UI_TEXT_C,label:$UI_TEXT_C:bold,bg:$UI_PANEL_C,gutter:$UI_PANEL_C,bg+:$UI_SEL_C"
+  UI_FZF=(--color="$spec")
+}
+
+# The user's own fzf defaults are left out: their colours and layout would replace these.
+ui_fzf() {
+  FZF_DEFAULT_OPTS='' FZF_DEFAULT_OPTS_FILE='' fzf --pointer="$G_HERE" ${UI_FZF[@]+"${UI_FZF[@]}"} "$@"
 }
 if [ -t 1 ] || [ -t 2 ]; then ui_colour_on; fi
 
 G_OK='✓' G_ERR='✗' G_WARN='!' G_INFO='›' G_ASK='?'
 # Agent states match the sidebar and tabs. done is a hollow circle, not a tick:
 # it only means the agent exited, maybe after a crash.
-G_IN='◐' G_RUN='●' G_DONE='○' G_OFF='·' G_MAIN='⌂' G_DIRTY='±' G_AHEAD='↑'
+G_IN='◆' G_RUN='●' G_DONE='○' G_OFF='·' G_MAIN='⌂' G_DIRTY='±' G_AHEAD='↑'
+G_HERE='▌' G_MORE='…'
 if [ -n "${ST_ASCII:-}" ]; then
-  G_OK='+' G_ERR='x' G_INFO='>'
+  G_OK='+' G_ERR='x' G_INFO='>' G_HERE='|' G_MORE='~'
   G_IN='!' G_RUN='*' G_DONE='o' G_OFF='.' G_MAIN='@' G_DIRTY='~' G_AHEAD='^'
 fi
 
@@ -103,6 +178,16 @@ ui_keys() {
     shift 2
   done
   printf '\n' >&2
+}
+
+# The same hints as text for an fzf header, which draws the rest of the line dim.
+ui_hints() {
+  local out=''
+  while [ $# -ge 2 ]; do
+    out="$out${out:+  }$UI_A$1$UI_R${2:+ $2}"
+    shift 2
+  done
+  printf '%s' "$out"
 }
 
 # One key press; Enter reads as an empty string.

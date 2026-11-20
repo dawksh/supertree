@@ -166,6 +166,10 @@ doctor_checks() {
   printf '  --    harness       %s (%s)\n' "$(harness_label)" "$ST_HARNESS"
   printf '  --    windows       %s\n' "$(printf '%s\n' "$windows" | while read -r type; do window_name "$type"; printf ' '; done | sed 's/ $//')"
   printf '  --    config        %s\n' "$ST_CONFIG"
+  ui_depth
+  [ -z "${NO_COLOR:-}" ] || UI_DEPTH=off
+  printf '  --    colours       %s theme, %s, %s glyphs\n' "${ST_THEME:-dark}" "$UI_DEPTH" \
+    "$([ -n "${ST_ASCII:-}" ] && printf ascii || printf unicode)"
   return $ok
 }
 
@@ -256,9 +260,9 @@ config_rows() {
 config_pick_harness() {
   local pick
   pick=$(printf '%s\n' claude codex openrouter |
-    awk -v cur="$ST_HARNESS" '{ print ($0 == cur ? "● " : "  ") $0 }' |
-    fzf --height=100% --reverse --border=rounded --border-label=' Agent ' --prompt='Agent › ' \
-        --pointer='▌' --header='⏎ choose  esc back' --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || return 0
+    awk -v cur="$ST_HARNESS" -v mark="$G_RUN" '{ print ($0 == cur ? mark " " : "  ") $0 }' |
+    ui_fzf --height=100% --reverse --border=rounded --border-label=' Agent ' --prompt='Agent › ' \
+        --header="$(ui_hints ⏎ choose esc back)" --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || return 0
   pick=${pick#??}
   [ "$pick" != "$ST_HARNESS" ] || return 0
   config_set ST_HARNESS "$pick"
@@ -274,9 +278,9 @@ config_pick_windows() {
     pick=$(for type in $types; do
       n=$(printf '%s\n' $list | grep -nxF -- "$type" | cut -d: -f1)
       printf '%s  %s%s\t%s\n' "${n:- }" "$type" "$([ "$type" != agent ] || printf ' (%s)' "$(harness_label)")" "$type"
-    done | fzf --delimiter=$'\t' --with-nth=1 --height=100% --reverse --border=rounded \
-        --border-label=' Windows ' --prompt='Window › ' --pointer='▌' \
-        --header='⏎ add at the end / remove  esc save' --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || break
+    done | ui_fzf --delimiter=$'\t' --with-nth=1 --height=100% --reverse --border=rounded \
+        --border-label=' Windows ' --prompt='Window › ' \
+        --header="$(ui_hints ⏎ 'add at the end / remove' esc save)" --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || break
     type=${pick##*$'\t'}
     if printf '%s\n' $list | grep -qxF -- "$type"; then
       list=$(printf '%s\n' $list | grep -vxF -- "$type" | tr '\n' ' ')
@@ -304,9 +308,9 @@ cmd_config() {
   ui_colour_on
   if declare -F fzf_gutter_init >/dev/null; then fzf_gutter_init; fi
   while :; do
-    pick=$(config_rows | fzf --ansi --delimiter=$'\t' --with-nth=1 --height=100% --reverse --no-sort \
+    pick=$(config_rows | ui_fzf --ansi --delimiter=$'\t' --with-nth=1 --height=100% --reverse --no-sort \
       --border=rounded --border-label=' Settings ' --border-label-pos=3 --prompt='Setting › ' \
-      --pointer='▌' --header="⏎ change  esc done   $(ui_path "$ST_CONFIG")" --header-first \
+      --header="$(ui_hints ⏎ change esc done)   $(ui_path "$ST_CONFIG")" --header-first \
       --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || break
     case ${pick##*$'\t'} in
       agent) config_pick_harness;;
@@ -434,3 +438,16 @@ st_register_command 'config' cmd_config 'change agent, windows, status line and 
 cmd_binding_audit() { audit_bindings "$(installed_fragment)" "${1:-doctor}"; }
 st_register_command '_binding-audit' cmd_binding_audit
 st_register_command 'version' cmd_version 'show the installed version'
+
+# Every colour role as this terminal draws it, for comparing machines.
+cmd_palette() {
+  local role tone glyphs=unicode
+  [ -z "${ST_ASCII:-}" ] || glyphs=ascii
+  ui_colour_on
+  printf '  theme %s · colour %s · glyphs %s\n\n' "${ST_THEME:-dark}" "${UI_DEPTH:-off}" "$glyphs"
+  for role in A:accent IN:input RUN:running OK:ok WARN:warn ERR:error DIM:dim REPO:repo; do
+    tone="UI_${role%%:*}"
+    printf '  %s%s %s%s\n' "${!tone}" "$G_RUN" "${role#*:}" "$UI_R"
+  done
+}
+st_register_command '_palette' cmd_palette ''

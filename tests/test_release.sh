@@ -28,7 +28,7 @@ assert_equal "$(choose_bump $'release:minor\nrelease:major')" major
 src=$(mktemp -d)
 trap 'rm -rf "$src"' EXIT
 mkdir -p "$src/bin/st-lib" "$src/tests" "$src/scripts"
-for file in bin/st bin/st-lib/00-core.sh install.sh scripts/release.sh tests/test_ok.sh; do
+for file in bin/st bin/st-lib/00-core.sh bin/st-lib/05-ui.sh install.sh scripts/release.sh tests/test_ok.sh; do
   printf 'true\n' > "$src/$file"
 done
 check_source "$src" || { printf 'rejected a passing source tree\n' >&2; exit 1; }

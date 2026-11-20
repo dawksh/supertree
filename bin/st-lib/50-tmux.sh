@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # supertree tmux module
 
-ST_LAYOUT_VERSION=7
+# The theme is part of it so open sessions restyle after ST_THEME changes.
+ST_LAYOUT_VERSION=9${ST_THEME:+-$ST_THEME}
 
 layout_signature() {
   printf '%s|%s|%s' "$ST_HARNESS" "$ST_WINDOWS" "${ST_SHELL:-${SHELL:-/bin/zsh}}"
@@ -183,23 +184,26 @@ create_window() {
 
 # Tab look is set per session and window so other tmux sessions keep the user's status bar.
 style_session() {
-  local width=$(( ${ST_SIDEBAR_WIDTH:-24} + 1 )) label_width left_half right_half left
+  local width=$(( ${ST_SIDEBAR_WIDTH:-24} + 1 )) label_width left_half right_half left label
   label_width=$((width - 4))
   left_half=$(((label_width - 1) / 2))
   right_half=$((label_width - 1 - left_half))
   # Keep the tab strip aligned with the configured sidebar width. A long name
   # keeps both ends so its repo and branch suffix stay identifiable.
-  printf -v left ' #{?@supertree_home,#{p%d:@supertree_label},#{?@st_state_glyph,#{@st_state_glyph},%s} #{p%d:#{?#{==:#{@supertree_label},#{=%d:@supertree_label}},#{@supertree_label},#{=%d:@supertree_label}…#{=-%d:@supertree_label}}}} ' \
-    "$((width - 2))" "${G_OFF:-·}" "$label_width" "$label_width" "$left_half" "$right_half"
+  label="#{?#{==:#{@supertree_label},#{=$label_width:@supertree_label}},#{@supertree_label},#{=$left_half:@supertree_label}$G_MORE#{=-$right_half:@supertree_label}}"
+  # Repo in its colour, branch bold. A name cut before its slash stays plain.
+  label="#{s|^([^/$G_MORE]*/)|#[fg=$UI_REPO_T]\\1#[fg=$UI_TEXT_T]#[bold]|:$label}"
+  left=" #{?@supertree_home,#{p$((width - 2)):@supertree_label},#{?@st_state_glyph,#{@st_state_glyph},${G_OFF:-·}} #{p$label_width:$label}#[default]} "
   tmux set-option -t "=$1:" default-shell "$(tree_shell)" &&
   tmux set-option -t "=$1:" status-position top &&
   tmux set-option -t "=$1:" status-justify left &&
-  tmux set-option -t "=$1:" status-style 'fg=default,bg=default' &&
+  tmux set-option -t "=$1:" status-style "fg=$UI_TEXT_T,bg=$UI_BAR_T" &&
+  tmux set-option -t "=$1:" message-style "fg=$UI_TEXT_T,bg=$UI_TAB_T" &&
   tmux set-option -t "=$1:" status-left-length "$width" &&
   tmux set-option -t "=$1:" status-left "$left" &&
   tmux set-option -t "=$1:" status-right-length 80 &&
   # @st_need_text (global, opt-in) and @st_state_glyph (per tree) come from the sidebar refresher.
-  tmux set-option -t "=$1:" status-right '#{?@st_need_text,#[fg=yellow]#{@st_need_text}#[default]  ,}' &&
+  tmux set-option -t "=$1:" status-right "#{?@st_need_text,#[fg=$UI_PANEL_T]#[bg=$UI_IN_T]#[bold] #{@st_need_text} #[default] ,}" &&
   tmux set-option -t "=$1:" status on &&
   # When a tree's last program exits, switch to the most recent session instead of
   # leaving tmux. Session-scoped, so the global setting is untouched.
@@ -210,11 +214,11 @@ style_tab() {
   local target=$1 slot=$2 label
   # @st_tab_state comes from the sidebar refresher (running/input); without it, fall back to the pane state.
   label='#{?@st_slot,#{@st_slot}. ,}#W'
-  label="$label"'#{?@st_tab_state,#{?#{==:#{@st_tab_state},input}, ◐,#{?#{==:#{@st_tab_state},running}, ●,}},#{?#{==:#{@st_agent_state},running}, ●,}}'
+  label="$label#{?@st_tab_state,#{?#{==:#{@st_tab_state},input}, #[fg=$UI_IN_T]$G_IN,#{?#{==:#{@st_tab_state},running}, #[fg=$UI_RUN_T]$G_RUN,}},#{?#{==:#{@st_agent_state},running}, #[fg=$UI_RUN_T]$G_RUN,}}"
   tmux set-option -w -t "$target" @st_slot "$slot" &&
   tmux set-option -w -t "$target" window-status-separator '  ' &&
-  tmux set-option -w -t "$target" window-status-format "#[dim] $label #[default]" &&
-  tmux set-option -w -t "$target" window-status-current-format "#[bold,underscore] $label #[default]" &&
+  tmux set-option -w -t "$target" window-status-format "#[fg=$UI_DIM_T] $label #[default]" &&
+  tmux set-option -w -t "$target" window-status-current-format "#[fg=$UI_A_T]#[bg=$UI_TAB_T]#[bold] $label #[default]" &&
   tmux set-option -w -t "$target" window-status-current-style default &&
   style_panes "$target"
 }
@@ -224,8 +228,11 @@ style_tab() {
 style_panes() {
   local target=$1
   tmux set-option -w -t "$target" pane-border-status off
-  tmux set-option -w -t "$target" pane-border-style 'fg=default,bg=default,dim'
-  tmux set-option -w -t "$target" pane-active-border-style 'fg=default,bg=default'
+  tmux set-option -w -t "$target" pane-border-style "fg=$UI_BORDER_T,bg=default"
+  tmux set-option -w -t "$target" pane-active-border-style "fg=$UI_DIM_T,bg=default"
+  tmux set-option -w -t "$target" popup-style "fg=$UI_TEXT_T,bg=$UI_PANEL_T"
+  tmux set-option -w -t "$target" popup-border-style "fg=$UI_BORDER_T,bg=$UI_PANEL_T"
+  tmux set-option -w -t "$target" popup-border-lines rounded
   tmux set-option -w -t "$target" window-style 'bg=default'
   tmux set-option -w -t "$target" window-active-style 'bg=default'
   tmux set-option -w -t "$target" pane-scrollbars off 2>/dev/null || true
@@ -254,7 +261,7 @@ cmd_split() {
   if [ -n "$(split_trees "$sess")" ] && command -v fzf >/dev/null 2>&1; then
     tty=$(tmux display-message -p -t "$pane" '#{client_tty}')
     if [ -n "$tty" ]; then
-      tmux display-popup -c "$tty" -E -w 64 -h 16 -T ' Split ' \
+      tmux display-popup -c "$tty" -E -w 64 -h 16 -T ' Split ' "${UI_POPUP[@]}" \
         "$(printf '%q _split-pick %q %q' "$self" "$pane" "$split_flag")"
       return 0
     fi
@@ -317,8 +324,8 @@ EOF
 }
 
 split_fzf() { # prompt
-  fzf --delimiter=$'\t' --with-nth=1 --reverse --no-sort --height=100% \
-    --prompt="$1 › " --pointer='▌' --header='⏎ pick  esc' --header-first --bind='esc:abort'
+  ui_fzf --delimiter=$'\t' --with-nth=1 --reverse --no-sort --height=100% \
+    --prompt="$1 › " --header="$(ui_hints ⏎ pick esc '')" --header-first --bind='esc:abort'
 }
 
 cmd_split_pick() {

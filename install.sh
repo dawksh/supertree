@@ -51,12 +51,32 @@ BASE="$RELEASE_ROOT/releases/download/$VERSION"
 
 # ----------------------------------------------------------------- output
 
+# This file runs alone from curl, so it carries a copy of the colours in
+# bin/st-lib/05-ui.sh. scripts/release.sh rejects a release where a `tone` line differs.
+B=""; D=""; R=""; GRN=""; RED=""; YLW=""; CYN=""
+tone() { # name dark-hex dark-256 light-hex light-256 16-colour-index
+  local hex=$2 index=$3 code
+  if [ "${ST_THEME:-dark}" = light ]; then hex=$4 index=$5; fi
+  case $DEPTH in
+    rgb) printf -v code '38;2;%d;%d;%d' "0x${hex:0:2}" "0x${hex:2:2}" "0x${hex:4:2}";;
+    256) code="38;5;$index";;
+    *) code=3$6; [ "$6" -lt 8 ] || code=$((82 + $6));;
+  esac
+  printf -v "$1" '\033[%sm' "$code"
+}
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
-  B=$(printf '\033[1m'); D=$(printf '\033[2m'); R=$(printf '\033[0m')
-  GRN=$(printf '\033[32m'); RED=$(printf '\033[31m'); YLW=$(printf '\033[33m')
-  CYN=$(printf '\033[36m')
-else
-  B=""; D=""; R=""; GRN=""; RED=""; YLW=""; CYN=""
+  DEPTH=16
+  if [ "${ST_THEME:-dark}" != ansi ]; then
+    case ${TERM:-} in *256color*|*-direct) DEPTH=256;; esac
+    case ${COLORTERM:-} in truecolor|24bit) DEPTH=rgb;; esac
+    [ -z "${TMUX:-}" ] || DEPTH=rgb
+  fi
+  B=$'\033[1m'; R=$'\033[0m'
+  tone CYN 5ccfe6 80  0b6680 24  6
+  tone GRN 9fdc7c 150 126c34 22  2
+  tone YLW ffb454 215 9a4a08 94  3
+  tone RED ff7a7a 210 b91c1c 124 1
+  tone D   8b94a6 246 566170 59  8
 fi
 
 WIDTH=56

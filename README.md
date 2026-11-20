@@ -18,7 +18,7 @@ same conversation.
  webauth                │
    · main               │  claude
  › ● feat-otp           │
-   ◐ crypto-mon         │
+   ◆ crypto-mon         │
  fe                     │
    ○ old-branch         │
 ```
@@ -356,14 +356,14 @@ rows. Split panes get a quiet divider; a single program uses the full area.
 
 Tree sessions show their windows as tabs at the top (`1. codex ●`, `2. nvim`,
 `3. shell`). The active tab is underlined, and the current repository and branch
-appear on the left after the agent's state (`●` running, `◐` waiting for you,
+appear on the left after the agent's state (`●` running, `◆` waiting for you,
 `○` exited). Other tmux sessions keep your own status line.
 
 When an agent in another tree starts waiting for you, tmux shows a short notice
-(`◐ webauth/feat-otp needs you · M-w`) to every terminal looking at a different
+(`◆ webauth/feat-otp needs you · M-w`) to every terminal looking at a different
 tree. Messages from the window keys (`M-e`, `M-1` … `M-9`, `M-Tab`) also appear
 on tmux's message line. Set `ST_STATUS_RIGHT=1` in the config to add a running
-count on the right of every tree's status line (`◐ 2 need you · M-w`). Set
+count on the right of every tree's status line (`◆ 2 need you · M-w`). Set
 `ST_NOTIFY=1` to also send a local desktop notice when an agent starts waiting
 for you (via `osascript` on macOS or `notify-send` on Linux). Both settings are
 available in `st config`.
@@ -384,7 +384,7 @@ repository:
 webauth
   · main          closed
   ● feat-otp      agent running (bold: the tree you are in)
-  ◐ crypto-mon    agent waiting for input
+  ◆ crypto-mon    agent waiting for input
 
 fe
   ○ old-branch    agent exited
@@ -394,7 +394,7 @@ Branches retain their full names. Long names are clipped at the sidebar edge;
 the top bar and picker show the full repository and branch.
 
 Double-click a tree to switch to it (a single click moves the highlight). The
-agent's tab mirrors its state: `●` running, `◐` waiting for your input.
+agent's tab mirrors its state: `●` running, `◆` waiting for your input.
 
 `M-j` / `M-k` step through open trees without touching the sidebar. Every switch
 lands in the tab's program pane, never in the sidebar. In the sidebar, Enter
@@ -612,6 +612,13 @@ worktree root with `ST_WORKTREE_ROOT`, the state dir with `ST_STATE`.
 
 In a terminal, messages are styled rows (`✓ removed …`, `! branch …`, `✗ …` with a
 `try` hint). Set `NO_COLOR=1` to drop colour, or `ST_ASCII=1` for ASCII glyphs.
+Some terminals can be set to draw symbols like `●` and `◆` two columns wide, which
+shifts rows and tabs out of line; `ST_ASCII=1` fixes that.
+Colours are exact values, so they look the same in every terminal. Set
+`ST_THEME=light` in the config for a light background, or `ST_THEME=ansi` to use
+your terminal theme's own colours. `st _palette` prints every colour as your
+terminal draws it. The pickers and the sidebar use the same colours and ignore
+`FZF_DEFAULT_OPTS`, so your own fzf theme does not change them.
 When output is piped or redirected, `st` prints the plain `:: msg` and `st: msg`
 lines it always has, so scripts keep working.
 

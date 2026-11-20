@@ -43,6 +43,17 @@ check_source() {
   for file in "$src"/tests/*.sh; do
     bash "$file" || return 1
   done
+  installer_colours_match "$src"
+}
+
+# install.sh runs alone, so it copies colour values from the ui module by hand.
+installer_colours_match() {
+  awk '
+    FNR == NR { if ($1 == "ui_tone") known[$3 " " $4 " " $5 " " $6 " " $7] = 1; next }
+    $1 == "tone" && NF >= 7 && !(($3 " " $4 " " $5 " " $6 " " $7) in known) {
+      print "install.sh colour differs from 05-ui.sh: " $0 > "/dev/stderr"; bad = 1
+    }
+    END { exit bad }' "$1/bin/st-lib/05-ui.sh" "$1/install.sh"
 }
 
 main() {

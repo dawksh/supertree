@@ -126,20 +126,24 @@ sidebar_rows() {
     tmp=$(mktemp "$ST_SIDEBAR_DIR/.rows.XXXXXX")
     sidebar_snapshot > "$tmp" && mv "$tmp" "$cache"
   fi
-  awk -F '\t' -v cur="$sess" -v g_run="$G_RUN" -v g_in="$G_IN" -v g_done="$G_DONE" -v g_off="$G_OFF" '
+  ui_colour_on
+  awk -F '\t' -v cur="$sess" -v g_run="$G_RUN" -v g_in="$G_IN" -v g_done="$G_DONE" -v g_off="$G_OFF" \
+    -v here="$UI_A$G_HERE$UI_R" -v c_run="$UI_RUN" -v c_in="$UI_IN" -v c_dim="$UI_DIM" \
+    -v c_repo="$UI_REPO" -v bold="$UI_B" -v r="$UI_R" '
     !($1 in seen) { seen[$1] = 1; order[++n] = $1 }
     {
-      if ($3 == "running") glyph = "\033[32m" g_run "\033[0m"
-      else if ($3 == "input") glyph = "\033[33m" g_in "\033[0m"
+      if ($3 == "running") glyph = c_run g_run r
+      else if ($3 == "input") glyph = c_in g_in r
       else if ($3 == "done") glyph = g_done
-      else glyph = "\033[2m" g_off "\033[0m"
+      else glyph = c_dim g_off r
       name = $2
-      if ($5 == cur) name = "\033[1m" name "\033[0m"
-      rows[$1] = rows[$1] " " glyph " " name "\t" $5 "\t" $4 "\t" ($5 == cur) "\n"
+      mark = " "
+      if ($5 == cur) { name = bold name r; mark = here }
+      rows[$1] = rows[$1] mark glyph " " name "\t" $5 "\t" $4 "\t" ($5 == cur) "\n"
     }
     END {
       for (i = 1; i <= n; i++) {
-        printf "\033[2m%s\033[0m\t#%s\t\n%s", order[i], order[i], rows[order[i]]
+        printf "%s%s%s\t#%s\t\n%s", c_repo, order[i], r, order[i], rows[order[i]]
       }
     }' "$cache"
 }
@@ -193,8 +197,8 @@ sidebar_tab_states() {
     win=$(tmux show-options -qv -t "=$sess:" @st_agent_window 2>/dev/null) || win=''
     tmux set-option -wq -t "=$sess:${win:-$default_name}" @st_tab_state "$status" 2>/dev/null || true
     case $status in
-      input) glyph="#[fg=yellow]$G_IN#[default]";;
-      running) glyph="#[fg=green]$G_RUN#[default]";;
+      input) glyph="#[fg=$UI_IN_T]#[bold]$G_IN#[default]";;
+      running) glyph="#[fg=$UI_RUN_T]$G_RUN#[default]";;
       *) glyph=$G_DONE;;
     esac
     tmux set-option -q -t "=$sess:" @st_state_glyph "$glyph" 2>/dev/null || true
@@ -337,10 +341,10 @@ cmd_sidebar() {
     rows=$(sidebar_rows)
     start=$(printf '%s\n' "$rows" | awk -F '\t' '$4 == 1 { print NR; exit }')
     printf '%s\n' "$rows" |
-      fzf --ansi --no-input --no-sort --reverse --info=hidden --no-scrollbar \
+      ui_fzf --ansi --no-input --no-sort --reverse --info=hidden --no-scrollbar \
           --delimiter=$'\t' --with-nth=1 --track --id-nth=2 \
-          ${listen[@]+"${listen[@]}"} --pointer='›' --gutter=' ' --ellipsis='…' \
-          --header='n new · d remove' \
+          ${listen[@]+"${listen[@]}"} --pointer='›' --gutter=' ' --ellipsis="$G_MORE" \
+          --header="$(ui_hints n new d remove)" \
           --bind="load:pos(${start:-1})+unbind(load)" \
           --bind='j:down,k:up,g:first,G:last' \
           --bind="n:execute-silent:$self _sidebar-open +new" \
@@ -375,7 +379,7 @@ cmd_sidebar_rm() {
   local sess=${1:-} dir=${2:-} tty
   case $sess in ''|'#'*|+new) return 0;; esac
   tty=$(tmux display-message -p -t "$TMUX_PANE" '#{client_tty}')
-  tmux display-popup -c "$tty" -E -w 64 -h 14 -T ' Remove tree ' "$(st_self)" _sidebar-rm-run "$dir"
+  tmux display-popup -c "$tty" -E -w 64 -h 14 -T ' Remove tree ' "${UI_POPUP[@]}" "$(st_self)" _sidebar-rm-run "$dir"
 }
 
 cmd_sidebar_rm_run() {
