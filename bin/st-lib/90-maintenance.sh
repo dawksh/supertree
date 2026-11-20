@@ -366,6 +366,15 @@ cmd_uninstall() {
   [ -f "$tmux_conf" ] && printf '  tmux     %s (Supertree source line)\n' "$tmux_conf" >&2
   ui_ask 'proceed?' n || die "aborted"
 
+  # The database must not be removed while a core still owns it. Source
+  # uninstalls remove only the link; their binary remains in the checkout.
+  local next_binary=$st_lib_dir/st-next
+  [ "$ST_VERSION" != dev ] || next_binary=$st_bin_dir/st-next
+  if [ -x "$next_binary" ] && [ -d "$ST_STATE/next" ]; then
+    ( export ST_STATE ST_WORKTREE_ROOT; "$next_binary" daemon stop ) ||
+      die "could not stop the workspace core; stop it before uninstalling"
+  fi
+
   sessions=$(known_sessions)
   if home_is_open; then sessions=$(printf '%s\n%s' "$sessions" "$ST_HOME_SESSION"); fi
   [ -z "${TMUX:-}" ] || current_sess=$(current_session)

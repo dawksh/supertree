@@ -710,18 +710,35 @@ select_window_type() {
   window_enabled "$type" "$windows" || { ui_toast "$type window is not enabled in ST_WINDOWS"; return 0; }
   pane=${TMUX_PANE:-}
   sess=$(current_session)
+  # Home has one shell tab even if trees use agent/editor tabs. Selecting its
+  # shell must also move keyboard focus out of the sidebar.
+  if [ "$sess" = "$ST_HOME_SESSION" ] && home_is_open; then
+    [ "$type" = shell ] || { ui_toast "home has only a shell window"; return 0; }
+    tmux select-window -t "=$sess:shell"
+    if declare -F focus_content >/dev/null; then focus_content "$sess"; fi
+    return 0
+  fi
   is_tree_session "$sess" || { ui_toast "not a supertree session"; return 0; }
   session_environment "$sess"
   name=$(window_name "$type")
-  tmux select-window -t "=$sess:$name" 2>/dev/null && return 0
+  if tmux select-window -t "=$sess:$name" 2>/dev/null; then
+    if declare -F focus_content >/dev/null; then focus_content "$sess"; fi
+    return 0
+  fi
   dir=$(tmux display-message -p -t "${pane:-$sess}" '#{pane_current_path}')
   create_window "$sess" "$dir" "$type" 0
   tmux select-window -t "=$sess:$name"
+  if declare -F focus_content >/dev/null; then focus_content "$sess"; fi
 }
 
 cmd_window() {
   local slot=${1:-} windows type='' line i=0
   case $slot in ''|*[!0-9]*|0) die "usage: st window <positive slot>";; esac
+  if [ "$(current_session)" = "$ST_HOME_SESSION" ] && home_is_open; then
+    [ "$slot" = 1 ] || { ui_toast "home has only one window"; return 0; }
+    select_window_type shell shell
+    return
+  fi
   windows=$(configured_windows)
   while IFS= read -r line; do
     i=$((i + 1))

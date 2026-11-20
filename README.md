@@ -54,9 +54,58 @@ ST_NO_TMUX_CONF=1 …     do not touch ~/.tmux.conf
 ST_YES=1 …              answer yes to every prompt (CI, dotfile bootstraps)
 ST_HARNESS=codex …       choose claude, codex, or openrouter non-interactively
 ST_WINDOWS='agent shell' … choose and order tmux windows
+ST_WITH_NEXT=1 …        include the experimental Go core (default: shell-only)
 ```
 
+To include the workspace core without installing Go:
+
+```sh
+curl -fsSL https://github.com/dawksh/supertree/releases/latest/download/install.sh | ST_WITH_NEXT=1 bash
+```
+
+Prebuilt core binaries support macOS and Linux on Intel/AMD 64-bit and ARM64.
+Updates and repairs preserve your choice. `ST_WITH_NEXT=1 st repair` adds or restores
+the core for the installed release; `ST_WITH_NEXT=0 st repair` stops and removes it
+while keeping its workspace database. Shell-only installation works on other
+platforms and with releases that predate the Go assets.
+
 ### From source
+
+To try or develop this checkout locally, use the sandbox launcher:
+
+```sh
+./dev                         # build and open an isolated local workspace
+./dev next inspect --json      # rebuild and inspect local workspaces
+./dev next commands --json     # rebuild and discover commands
+./dev next daemon start        # start the isolated persistent workspace core
+./dev next events --json       # watch workspace changes (Ctrl-C to disconnect)
+./dev test                    # Go vet, race checks, and the shell suite
+./dev package                 # build release assets in .dev/releases; no publishing
+./dev stop                    # close local sessions; keep worktrees and state
+```
+
+This needs Go 1.24+, Git, tmux, and fzf for the sidebar. It creates an ignored
+`.dev/` directory with separate config, state, worktrees, and command wrappers,
+plus a separate tmux socket per checkout. It does not install anything or change
+your dotfiles. Commands keep their caller's working directory, so you can also
+run `/path/to/supertree/dev` from another repository.
+
+The initial layout is shell-only. Edit `.dev/config` to enable your preferred
+agent and editor. Local terminals use a clean Bash shell, with `st` pointing to
+this checkout. Keyboard shortcuts and background jobs use the same local wrappers.
+Shortcut bindings use absolute checkout paths so a changed server PATH cannot
+send them to an installed release. Option-1 returns to the shell from the home
+sidebar; Option-S focuses the sidebar.
+
+State and sessions persist between launches; `./dev stop` closes the local core
+and tmux server without removing worktrees. `./dev tmux list-sessions` inspects that server.
+Each launch rebuilds the Go client; commands inside the sandbox use the current
+build without rebuilding on every keypress. `./dev build` rebuilds it explicitly.
+An already running daemon keeps its loaded code: run `./dev next daemon stop`
+then `./dev next daemon start` after changing core code. Stopping only the daemon
+leaves your local terminals running.
+
+For a persistent installation from source:
 
 ```sh
 git clone https://github.com/dawksh/supertree ~/projects/supertree
@@ -108,13 +157,176 @@ the command. The picker, worktree, and maintenance modules can also be removed
 individually; the shared modules provide the functions used across features.
 Run the shell tests after changing modules.
 
+### Experimental workspace core
+
+The Go core provides workspace inspection, a discoverable command registry, and
+an opt-in local daemon with durable identity and change subscriptions. Build it
+from this checkout with Go 1.24 or newer:
+
+```sh
+go build -o bin/st-next ./cmd/st-next
+bin/st next inspect
+bin/st next inspect --json
+bin/st next commands --json
+```
+
+For a source install, the existing `st` symlink finds the built binary beside
+`bin/st`. Release installs opt in with `ST_WITH_NEXT=1` and place the verified
+prebuilt binary inside `st-lib-<version>`, alongside its matching shell modules.
+Normal Supertree commands do not require Go or this binary. `st next --version`
+reports the core binary's release version and source commit.
+
+Inspection reads registered repositories from `$ST_STATE/repos` and includes the
+current Git checkout without registering it. It lists main, linked, detached, and
+missing worktrees, including linked worktrees outside `ST_WORKTREE_ROOT`. The
+`managed` field indicates a main checkout or linked tree under that root; it does
+not adopt a worktree or authorize changes to it. Bare repositories are reported
+with `kind: "bare"`.
+
+JSON results contain `schema_version: 1`, `workspaces`, `sessions`, `tmux_status`,
+and `warnings`. Missing repositories and individual scan failures produce warnings
+so a partial result remains inspectable. `tmux_status` distinguishes `running`,
+`stopped`, `unavailable`, and `error`. Session associations use the session's initial
+working directory, choosing the deepest matching worktree. They do not establish
+agent identity or infer agent activity.
+
+Without a daemon, inspection remains read-only and IDs are hashes of canonical
+checkout paths. They survive branch switches and symlink aliases. With a daemon,
+SQLite preserves the initially imported IDs and tracks Git administrative-directory
+identity across restarts and moves on the same filesystem, including `git worktree
+move`. Copies or recreated Git administrative directories receive separate
+identities. Cross-filesystem moves have no automatic identity transfer yet.
+Offline inspection after a move uses its new path hash; use the daemon for durable IDs.
+
+The CLI aliases and generic invocation use the same command registry:
+
+```sh
+bin/st next invoke command.list '{}'
+bin/st next invoke workspace.inspect '{}'
+bin/st next inspect --workspace <workspace-id> --json
+bin/st next invoke workspace.inspect '{"workspace_id":"<workspace-id>"}'
+```
+
+`commands --json` exposes command versions, argument and result schemas, effects,
+and recording, repetition, sensitivity, and undo metadata for future macro support.
+`invoke` always returns JSON. Failed JSON requests exit nonzero with a structured
+error on stderr and no result on stdout.
+
+`st next` forwards the shell's resolved `ST_STATE` and `ST_WORKTREE_ROOT` settings.
+Running `bin/st-next` directly reads these environment variables and uses their
+normal home-directory defaults; it does not source shell config. Set
+`ST_NEXT_TMUX_SOCKET` to inspect an explicit tmux socket, otherwise tmux uses its
+normal environment. Direct discovery does not create state directories, execute
+project hooks, or modify Git or tmux state. The daemon writes only its own metadata.
+
+#### Persistent local core
+
+```sh
+./dev next daemon start
+./dev next daemon status --json
+./dev next inspect --json
+./dev next commands --json
+./dev next events --json
+# In another terminal: change a branch or create a worktree using normal tools.
+./dev next daemon stop          # leaves tmux and terminal programs running
+```
+
+`daemon start` detaches and waits until ready; starting it again returns the same
+daemon. `daemon serve` runs in the foreground for debugging. The daemon stores
+identities in `$ST_STATE/next/state.db` and logs in `$ST_STATE/next/daemon.log`.
+It remembers repositories discovered by clients without rewriting `$ST_STATE/repos`.
+Unavailable repositories and missing workspaces remain visible. A process-held
+state lock prevents competing daemons, and a new daemon can reclaim a crashed
+daemon's stale socket. Database schema versions newer than this binary are rejected.
+
+CLI commands automatically use the daemon when its socket exists. Otherwise,
+`inspect`, `commands`, and the original read commands use direct discovery.
+`st next --offline inspect --json` explicitly bypasses a daemon. An existing but
+unreachable socket produces an error; it does not silently switch identity models.
+`ST_NEXT_SOCKET` selects an absolute socket path and requires an online daemon.
+The dev launcher clears this override to keep the sandbox separate.
+
+The default socket is `/tmp/supertree-next-<uid>/<state-path-hash>.sock`, inside an
+owner-only directory. `daemon status --json` reports the exact path and capabilities.
+Clients sharing `ST_STATE` share one daemon; conflicting worktree-root or explicit
+tmux-socket settings are rejected. CLI requests include their current directory,
+so a second client can discover another checkout in the same core.
+
+#### Socket clients and change events
+
+The socket accepts newline-delimited JSON-RPC 2.0 requests, including batches of
+ordinary requests. Method names are the same commands exposed by `commands --json`:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"workspace.inspect","params":{},"meta":{"directory":"/absolute/checkout","actor":"agent:review","request_id":"review-42"}}
+```
+
+Responses retain the request ID. JSON-RPC errors include the structured command
+error in `error.data`. Actor labels provide attribution, not authentication.
+The CLI defaults to actor `human`; set `ST_NEXT_ACTOR` and `ST_NEXT_REQUEST_ID`
+for scripts and agent clients. Frames are limited to 1 MiB, writes time out after
+five seconds, and ordinary idle connections close after one minute.
+
+`event.subscribe` uses a dedicated connection and requires a request ID:
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"event.subscribe","params":{}}
+```
+
+Its acknowledgement contains `epoch`, `sequence`, `resnapshot_required`, and a
+workspace snapshot. Subsequent notifications use method `event` with sequenced
+`workspace.changed` events in `params`. Events invalidate workspace state; inspect
+again to obtain current content. The daemon polls Git and tmux once a second,
+also refreshing before inspection and subscriptions. These are observed changes,
+not an audit of every intermediate external action.
+
+`events --json` prints the acknowledgement followed by event params as JSON lines.
+Canceling it closes only that subscription. Reconnect explicitly with a saved cursor:
+
+```sh
+./dev next events --epoch <previous-epoch> --after <last-sequence> --json
+./dev next events --workspace <workspace-id> --json
+```
+
+The daemon retains the latest 256 events in memory. With a valid cursor, consume
+the replay after your saved sequence before advancing to live events; the
+acknowledgement's sequence is the current high-water mark. If `resnapshot_required`
+is true, replace your state with the supplied snapshot and use its sequence.
+A restart, expired cursor, or replay larger than the 32-event subscriber queue
+requires a fresh snapshot. A live subscriber that falls behind receives a
+`resnapshot_required` notification and disconnects; reconnect without a cursor.
+Event history is not persisted across daemon restarts. CLI event streams report
+disconnects and require an explicit reconnect.
+
+Run `go test ./...` for Go checks. The integration tests use temporary Git
+repositories and an isolated tmux socket. Run `go test -race ./...` and
+`go vet ./...` for the full Go checks; CI runs these on macOS and Linux.
+
 ### Releases
 
-Pull requests to `main` run the shell test suite on Ubuntu and macOS. A merge
-to `main` triggers the release workflow, which tests the merged commit and
+Pull requests to `main` run Go and shell tests on Ubuntu and macOS, cross-build
+the release matrix, and verify the native binary and asset checksums. A merge
+to `main` triggers the release workflow, which checks each released commit with
+the shell suite, Go vet, and Go race tests before building its assets. It
 publishes `install.sh`, `st.tar.gz`, a legacy upgrade entrypoint named `st`,
-`supertree.conf`, and `SHA256SUMS` as a GitHub
-Release. `st update` then sees the new release automatically.
+`supertree.conf`, four standalone core binaries, and `SHA256SUMS` as a GitHub
+Release. The core asset names are `st-next-darwin-amd64`, `st-next-darwin-arm64`,
+`st-next-linux-amd64`, and `st-next-linux-arm64`. All binaries are built with
+CGO disabled and include the release version and commit. The shell archive
+contains no platform binaries and remains compatible with older upgraders.
+Historical commits predating core packaging produce shell assets only.
+`st update` sees the new release automatically.
+
+Build the same assets locally without tagging or uploading:
+
+```sh
+./dev package                         # working tree; version dev; .dev/releases
+bash scripts/package-release.sh /tmp/st-release v0.0.0-test
+(cd /tmp/st-release && shasum -a 256 -c SHA256SUMS)
+```
+
+These commands require Go and overwrite generated assets in the selected output
+directory. Release publication builds from the exact archived Git commit.
 
 Each merged pull request gets a patch version by default. Add the
 `release:minor` or `release:major` label before merging to request a larger
@@ -126,7 +338,8 @@ running. The first automated release includes changes since the last manual
 release.
 
 In GitHub repository settings, require pull requests and the `Shell tests
-(ubuntu-latest)` and `Shell tests (macos-latest)` checks for `main`. Disable
+(ubuntu-latest)`, `Shell tests (macos-latest)`, `Go tests (ubuntu-latest)`, and
+`Go tests (macos-latest)` checks for `main`. Disable
 direct pushes and rebase merging to preserve one release per merged pull
 request. Create the optional `release:minor` and `release:major` labels in the
 repository. The release workflow uses the repository's `GITHUB_TOKEN`; no
@@ -141,7 +354,11 @@ st update
 `st update` checks GitHub for the latest release and installs it immediately when
 a newer version is available. It verifies the release installer, then uses it to
 refresh the command, modules, and tmux bindings together while keeping your
-chosen harness and window layout. Release assets are checked before the current
+chosen harness, window layout, and optional core choice. Core downloads are
+verified before replacement and stay paired with their shell release. A running
+daemon keeps its loaded code; after upgrading the core, run `st next daemon stop`
+then `st next daemon start` to load the new version without closing terminal programs.
+Release assets are checked before the current
 executable is replaced. The update reports its network steps immediately and
 times out if a release request stalls. Run `st --version` to see the installed version.
 
