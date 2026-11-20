@@ -125,6 +125,7 @@ ST_HARNESS=${ST_HARNESS:-claude}
 ST_HARNESS_COMMAND=${ST_HARNESS_COMMAND:-}
 ST_HARNESS_RESUME_COMMAND=${ST_HARNESS_RESUME_COMMAND:-}
 ST_WINDOWS=${ST_WINDOWS-'agent vim shell'}
+ST_AGENT_MODE=${ST_AGENT_MODE:-terminal}
 
 # Keep NO_COLOR for st's own UI. session_environment and shell_command remove it
 # from tmux panes so agents still use the terminal's colors.

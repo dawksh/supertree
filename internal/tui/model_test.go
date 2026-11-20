@@ -32,6 +32,28 @@ func key(m Model, key tea.KeyMsg) (Model, tea.Cmd) {
 }
 func runeKey(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
 
+func TestPairingSelectsNormalAgentAndDoesNotLaunchASecondOne(t *testing.T) {
+	m, calls := fixture(t)
+	m.state.Agents = []workspace.Agent{{ID: "experiment", WorkspaceID: "ws_one"}, {ID: "primary", WorkspaceID: "ws_one", Primary: true, Name: "codex"}}
+	m.normalizeCollaboration()
+	if m.agentID != "primary" {
+		t.Fatal("pairing did not default to the normal agent tab")
+	}
+	m, cmd := key(m, runeKey("a"))
+	if cmd != nil {
+		cmd()
+	}
+	if m.agentID != "primary" || m.panel != "collaboration" || len(*calls) != 1 || (*calls)[0] != "view.present" {
+		t.Fatalf("pairing spawned another agent: %v", *calls)
+	}
+	m, calls = fixture(t)
+	m.state.Processes[0].Kind, m.state.Processes[0].Source = "agent", "observed"
+	m, cmd = key(m, runeKey("a"))
+	if cmd != nil || len(*calls) != 0 || !strings.Contains(m.message, "existing agent tab") {
+		t.Fatal("ordinary CLI was implicitly replaced or duplicated")
+	}
+}
+
 func TestStopRequiresExplicitConfirmationAndPreservesTarget(t *testing.T) {
 	m, calls := fixture(t)
 	m, _ = key(m, runeKey("x"))

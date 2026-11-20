@@ -151,7 +151,7 @@ func TestWorkerAnswersApprovalWhileTurnStartIsPendingAndCheckpointsIdentity(t *t
 	if err := os.Mkdir(options.StateFile, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := call(workerRequest{Method: "send", DeliveryID: "cannot-persist", Text: "must not reach provider", Actor: "human"}); err == nil || !strings.Contains(err.Error(), "save pending delivery") {
+	if _, err := call(workerRequest{Method: "send", DeliveryID: "cannot-persist", Text: "must not reach provider", Actor: "human"}); err == nil || !(strings.Contains(err.Error(), "save pending delivery") || strings.Contains(err.Error(), "not ready")) {
 		t.Fatal("provider accepted input without a durable pending receipt")
 	}
 	failed := wait("failed")

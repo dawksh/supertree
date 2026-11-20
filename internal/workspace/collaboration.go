@@ -54,6 +54,7 @@ type AgentMessage struct {
 }
 
 type Agent struct {
+	Primary      bool           `json:"primary"`
 	ID           string         `json:"id"`
 	WorkspaceID  string         `json:"workspace_id"`
 	TaskID       string         `json:"task_id"`

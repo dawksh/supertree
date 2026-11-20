@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"github.com/dawksh/supertree/internal/agent"
 	"github.com/dawksh/supertree/internal/collab"
 	"github.com/dawksh/supertree/internal/command"
 	"github.com/dawksh/supertree/internal/workspace"
@@ -23,6 +24,17 @@ type Agents struct {
 
 func (c *Core) RegisterCollaboration(r *command.Registry) error {
 	registrations := []func() error{
+		func() error {
+			return registerProcess(c, r, "agent.bind", "Bind a foreground worker to this worktree's existing agent tab; never replace a running CLI.", []string{"agent.bind"}, c.agents.Bind)
+		},
+		func() error {
+			return registerProcess(c, r, "agent.primary", "Inspect the native agent hosted in the normal agent tab.", []string{"read"}, func(ctx context.Context, args agent.PrimaryArgs) (workspace.Agent, error) {
+				if err := c.Refresh(ctx, "", command.Caller(ctx)); err != nil {
+					return workspace.Agent{}, err
+				}
+				return c.agents.Primary(ctx, args)
+			})
+		},
 		func() error {
 			return registerProcess(c, r, "task.create", "Create a persistent shared goal without sending it to an agent.", []string{"task.write"}, c.collaboration.CreateTask)
 		},

@@ -373,16 +373,15 @@ Exited owned terminals retain their output and exit status until stopped/restart
 ./dev next process register --name editor --workspace <id> --pane %3
 ```
 
-Registration explicitly associates an existing terminal with a workspace. Its
-normal agent/editor/shell tabs already appear automatically as `source: "observed"`
+Normal agent/editor/shell tabs appear automatically as `source: "observed"`
 when the daemon discovers a Supertree session. Observing them changes no pane
 options and enables attachment/output only. Stop and move require explicit
 registration; restart requires a known launch definition. IDs track the tmux
 server and pane process, so a reused pane number cannot target an older terminal.
 The controls label these existing terminals as read-only.
 
-For an explicitly registered terminal, the
-original launch definition is unknown, so it cannot be restarted by the core.
+Registration explicitly enables management of an existing terminal. Its original
+launch definition is unknown, so it cannot be restarted by the core.
 Stopping a registered pane still closes that terminal. Process IDs survive moves;
 reused pane IDs after a tmux restart cannot inherit another process's identity.
 The core listens to tmux control-mode changes and also reconciles once a second.
@@ -434,7 +433,8 @@ commands. Macros, registers, bookmarks, and the Lua extension runtime come later
 From a local worktree's shell, run `st control`. It opens controls for that checkout;
 `q` returns to your editor and terminals. Direct `./dev next tui` remains available.
 
-Press `c` for the pairing panel. `t` creates a shared goal; `a` starts native Codex.
+Press `c` for the pairing panel. `t` creates a shared goal; `a` selects this
+worktree's paired agent. An ordinary CLI tab shows migration instructions.
 `f` captures saved file lines, `d` captures the tracked Git diff, `o` captures the
 selected process's output, and `N` adds a note. Use arrows to select a context item
 and Space to mark it. `i` opens a message with the marked context IDs, which you
@@ -451,6 +451,9 @@ The same workflow is available through structured commands:
 
 ```sh
 ./dev next daemon start
+./dev pair status             # native agent in the usual Codex tab
+./dev pair send --message 'Investigate this failure'
+./dev pair interrupt
 ./dev next task add --title 'Investigate the failing test' --notes 'Keep the interface stable'
 ./dev next context add --file internal/example.go --start-line 10 --end-line 30
 ./dev next context add --kind diff
@@ -463,6 +466,31 @@ The same workflow is available through structured commands:
 ./dev next invoke delivery.list '{}'
 ./dev next invoke delivery.inspect '{"delivery_id":"<delivery-id>"}'
 ```
+
+#### Pairing in the usual agent tab
+
+Dev sandboxes use `ST_AGENT_MODE=paired` with Codex. Opening a new worktree starts
+native pairing in its normal Codex tab beside the unchanged Neovim and shell tabs.
+Type messages there as usual. `/interrupt` stops a turn; `/quit` returns to its
+shell. `st pair status`, `st pair send --message '...'`, and `st pair interrupt`
+target this worktree's agent without copying IDs or opening another agent.
+The control popup answers approvals and questions while the other tabs stay usable.
+
+Already running CLI sessions stay running. To migrate one, exit it normally and,
+from the shell in that same agent tab, run:
+
+```sh
+st pair run --thread <exact-Codex-thread-id>
+```
+
+Omit `--thread` for a new conversation. Once paired, reopening the tree resumes
+its checkpointed exact conversation and keeps its stable agent identity. The
+core never scrapes a terminal or uses an implicit last conversation for migration.
+`ST_AGENT_MODE=terminal` retains ordinary CLI launch; other harnesses keep their
+existing behavior. Existing installations default to terminal mode until configured.
+The native primary agent appears as `primary: true` and its terminal as
+`source: "hosted"`. It is relaunched through the usual worktree/agent-tab flow;
+generic restart is reserved for processes with a recorded launch definition.
 
 `task`, `context`, `agent`, and `question` accept `help`; `commands --json` describes
 all argument/result schemas. Human and agent clients invoke the same commands.

@@ -55,6 +55,7 @@ const usage = `st next — experimental workspace core
   st next process <list|start|register|stop|restart|attach|move|output> [args]
   st next tui [--workspace <id>]
   st next <task|context|agent|question> <action> [args]
+  st next pair <run|status|send|interrupt> [args]
 
 Start the daemon explicitly for durable IDs and shared state. Without a daemon,
 inspect/commands/invoke use read-only discovery. Prefix with --offline to force it.
@@ -100,6 +101,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "_agent" {
 		if err := agentWorkerCommand(ctx, args[1:]); err != nil {
+			return fail(err)
+		}
+		return 0
+	}
+	if args[0] == "pair" {
+		if offline {
+			return fail(&command.Error{Code: "invalid_arguments", Message: "pairing requires the local core"})
+		}
+		if err := pairCommand(ctx, args[1:], stdout); err != nil {
 			return fail(err)
 		}
 		return 0

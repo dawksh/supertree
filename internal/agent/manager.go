@@ -207,6 +207,7 @@ func (m *Manager) Snapshot(ctx context.Context) ([]workspace.Agent, error) {
 		if err == nil && reply.Agent.ID == r.Agent.ID && reply.Agent.WorkspaceID == r.Agent.WorkspaceID {
 			next = reply.Agent
 			next.Name, next.ProcessID, next.TaskID = r.Agent.Name, r.Agent.ProcessID, r.Agent.TaskID
+			next.Primary = r.Agent.Primary
 			next.Revision = r.Agent.Revision
 		} else if r.Agent.State != "failed" && r.Agent.State != "stopped" {
 			started, _ := time.Parse(time.RFC3339Nano, r.StartedAt)

@@ -287,6 +287,11 @@ cmd_harness() {
   main=$(main_worktree .) || true
   # Return instead of die so cmd_run still drops the pane into a shell.
   [ -n "$main" ] || { info "not inside a git repository"; return 1; }
+  if [ "${ST_AGENT_MODE:-terminal}" = paired ] && [ "$ST_HARNESS" = codex ]; then
+    bin=$(next_binary) || return
+    "$bin" pair run
+    return
+  fi
   repo=$(repo_key "$main")
   branch=$(tree_branch .)
   slug=$(branch_key "${branch:-(detached)}")

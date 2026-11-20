@@ -70,8 +70,12 @@ func (m *Model) normalizeCollaboration() {
 		m.agentID = ""
 		for _, a := range m.state.Agents {
 			if a.WorkspaceID == m.workspaceID {
-				m.agentID = a.ID
-				break
+				if m.agentID == "" || a.Primary {
+					m.agentID = a.ID
+				}
+				if a.Primary {
+					break
+				}
 			}
 		}
 	}
@@ -123,6 +127,22 @@ func (m Model) collaborationKey(key tea.KeyMsg) (Model, tea.Cmd, bool) {
 		m.message = "Select a process with output first"
 		return m, nil, true
 	case "a":
+		for _, a := range m.state.Agents {
+			if a.WorkspaceID == m.workspaceID && a.Primary {
+				m.agentID, m.panel, m.message = a.ID, "collaboration", "Using this worktree's paired agent"
+				return m, m.present(), true
+			}
+		}
+		if a, ok := m.native(); ok {
+			m.panel, m.message = "collaboration", "Using "+a.Name
+			return m, m.present(), true
+		}
+		for _, p := range m.processes() {
+			if p.Kind == "agent" {
+				m.message = "Use st pair run in the existing agent tab after exiting its CLI; --thread resumes its exact conversation"
+				return m, nil, true
+			}
+		}
 		name := "codex"
 		for i := 2; slices.ContainsFunc(m.processes(), func(p workspace.Process) bool { return p.Name == name }); i++ {
 			name = fmt.Sprintf("codex %d", i)

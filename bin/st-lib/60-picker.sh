@@ -372,7 +372,7 @@ cmd_open() {
   if [ -n "$here" ]; then
     # A live tree already records its checkout path on each window. Reuse it
     # without discovering every repository; home may share the same cwd.
-    live=$(tmux list-windows -a -F '#{session_name}'$'\t''#{@st_tree_dir}' 2>/dev/null |
+    live=$({ tmux list-windows -a -F '#{session_name}'$'\t''#{@st_tree_dir}' 2>/dev/null || true; } |
       awk -F '\t' -v p="$here" -v home="$ST_HOME_SESSION" '$1 != home && $2 == p { print $1; exit }')
     if [ -n "$live" ]; then
       build_session "$live" "$here"

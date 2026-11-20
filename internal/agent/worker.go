@@ -259,6 +259,10 @@ func RunWorker(ctx context.Context, options WorkerOptions, input io.Reader, outp
 			scanner.Buffer(make([]byte, 4096), 256<<10)
 			for scanner.Scan() {
 				line := scanner.Text()
+				if line == "/quit" {
+					cancel()
+					return
+				}
 				req := workerRequest{Method: "send", Text: line, Actor: "human:terminal", DeliveryID: process.ID("delivery")}
 				if line == "/interrupt" {
 					req.Method = "interrupt"

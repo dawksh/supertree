@@ -47,3 +47,5 @@ cmd_control() {
 
 st_register_command next cmd_next 'use the experimental workspace core' 'next <inspect|commands|invoke|daemon|events> [args]'
 st_register_command control cmd_control 'open optional workspace controls; q returns to work' 'control [--workspace <id>]'
+cmd_pair() { cmd_next pair "$@"; }
+st_register_command pair cmd_pair 'pair with the agent in this worktree tab' 'pair <run|status|send|interrupt> [args]'

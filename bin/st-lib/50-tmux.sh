@@ -5,7 +5,7 @@
 ST_LAYOUT_VERSION=10${ST_THEME:+-$ST_THEME}
 
 layout_signature() {
-  printf '%s|%s|%s' "$ST_HARNESS" "$ST_WINDOWS" "${ST_SHELL:-${SHELL:-/bin/zsh}}"
+  printf '%s|%s|%s|%s' "$ST_HARNESS" "$ST_WINDOWS" "${ST_SHELL:-${SHELL:-/bin/zsh}}" "${ST_AGENT_MODE:-terminal}"
 }
 
 tree_shell() {
@@ -22,7 +22,7 @@ shell_command() {
 # command that created the session. Pin the resolved choices on this session.
 session_environment() {
   local target="=$1" signature
-  signature="$HOME|$(tree_shell)|$ST_CONFIG|$ST_STATE|$ST_WORKTREE_ROOT|$ST_HARNESS|$ST_WINDOWS|$ST_HARNESS_COMMAND|$ST_HARNESS_RESUME_COMMAND|${ST_SHELL:-}|color"
+  signature="$HOME|$(tree_shell)|$ST_CONFIG|$ST_STATE|$ST_WORKTREE_ROOT|$ST_HARNESS|$ST_WINDOWS|$ST_HARNESS_COMMAND|$ST_HARNESS_RESUME_COMMAND|${ST_SHELL:-}|color|${ST_AGENT_MODE:-terminal}"
   [ "$(tmux show-options -qv -t "$target:" @st_environment 2>/dev/null)" != "$signature" ] || return 0
   tmux set-environment -t "$target" HOME "$HOME"
   tmux set-environment -t "$target" SHELL "$(tree_shell)"
@@ -31,6 +31,7 @@ session_environment() {
   tmux set-environment -t "$target" ST_WORKTREE_ROOT "$ST_WORKTREE_ROOT"
   tmux set-environment -t "$target" ST_HARNESS "$ST_HARNESS"
   tmux set-environment -t "$target" ST_WINDOWS "$ST_WINDOWS"
+  tmux set-environment -t "$target" ST_AGENT_MODE "${ST_AGENT_MODE:-terminal}"
   tmux set-environment -t "$target" ST_HARNESS_COMMAND "$ST_HARNESS_COMMAND"
   tmux set-environment -t "$target" ST_HARNESS_RESUME_COMMAND "$ST_HARNESS_RESUME_COMMAND"
   tmux set-environment -t "$target" ST_SHELL "${ST_SHELL:-}"
