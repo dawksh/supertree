@@ -62,7 +62,7 @@ func tuiCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	for _, d := range commands.Commands {
 		available[d.Name] = true
 	}
-	if !available["view.open"] || !available["agent.send"] || !available["context.capture"] {
+	if !available["view.open"] || !available["agent.send"] || !available["context.capture"] || !available["agent.bind"] || !available["context.share"] {
 		return &command.Error{Code: "upgrade_required", Message: "restart the core to load the TUI and collaboration commands: st next daemon stop; st next daemon start (terminal programs keep running)"}
 	}
 	if *id == "" {

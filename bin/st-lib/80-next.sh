@@ -16,7 +16,7 @@ cmd_next() {
   local binary
   binary=$(next_binary) || return
   # Forward resolved legacy configuration without having Go source shell code.
-  export ST_STATE ST_WORKTREE_ROOT
+  export ST_STATE ST_WORKTREE_ROOT ST_THEME ST_ASCII
   exec "$binary" "$@"
 }
 
@@ -28,8 +28,8 @@ cmd_control() {
   # and closes back to the terminal which opened it.
   # A long-lived server can carry stale routing/configuration. Clear those
   # values before applying the invoking terminal's resolved environment.
-  launch='env -u ST_STATE -u ST_WORKTREE_ROOT -u ST_CONFIG -u ST_CONFDIR -u ST_DEV_ROOT -u ST_NEXT_SOCKET -u ST_NEXT_TMUX_SOCKET -u CODEX_HOME'
-  for key in HOME PATH ST_STATE ST_WORKTREE_ROOT ST_CONFIG ST_CONFDIR ST_DEV_ROOT ST_NEXT_SOCKET ST_NEXT_TMUX_SOCKET CODEX_HOME; do
+  launch='env -u ST_STATE -u ST_WORKTREE_ROOT -u ST_CONFIG -u ST_CONFDIR -u ST_DEV_ROOT -u ST_NEXT_SOCKET -u ST_NEXT_TMUX_SOCKET -u CODEX_HOME -u ST_THEME -u ST_ASCII -u NO_COLOR'
+  for key in HOME PATH ST_STATE ST_WORKTREE_ROOT ST_CONFIG ST_CONFDIR ST_DEV_ROOT ST_NEXT_SOCKET ST_NEXT_TMUX_SOCKET CODEX_HOME ST_THEME ST_ASCII NO_COLOR; do
     if [ "${!key+x}" = x ]; then
       printf -v word '%q' "$key=${!key}"
       launch="$launch $word"

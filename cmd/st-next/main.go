@@ -18,7 +18,9 @@ import (
 	"github.com/dawksh/supertree/internal/command"
 	"github.com/dawksh/supertree/internal/core"
 	"github.com/dawksh/supertree/internal/rpc"
+	"github.com/dawksh/supertree/internal/uitheme"
 	"github.com/dawksh/supertree/internal/workspace"
+	"golang.org/x/term"
 )
 
 type inspectArgs = core.InspectArgs
@@ -96,7 +98,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 				Error         *command.Error `json:"error"`
 			}{command.SchemaVersion, coded})
 		} else {
-			fmt.Fprintf(stderr, "st next: %s\n", coded.Message)
+			if file, ok := stderr.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+				theme := uitheme.New()
+				fmt.Fprintln(stderr, theme.Row("error", "failed", coded.Message))
+				fmt.Fprintln(stderr, theme.Row("info", "try", "st pair status · st control · st help"))
+			} else {
+				fmt.Fprintf(stderr, "st next: %s\n", coded.Message)
+			}
 		}
 		return 1
 	}

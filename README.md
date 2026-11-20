@@ -1126,6 +1126,13 @@ background. Terminals limited to 16 colours use their own palette. Set
 your terminal theme's own colours. `st _palette` prints every colour as your
 terminal draws it. The pickers and the sidebar use the same colours and ignore
 `FZF_DEFAULT_OPTS`, so your own fzf theme does not change them.
+The Go controls and sharing messages use these same eight roles: cyan actions,
+amber input/warnings, blue running, green verified success, red errors, muted
+secondary text, and magenta repositories. Waiting questions receive bold
+emphasis; a completed agent turn does not imply that the shared goal succeeded.
+Existing tab/split/sidebar shortcuts remain unchanged. The local launcher forwards
+theme and ASCII preferences into the controls, including popup launches. Terminal
+fonts stay under your terminal's configuration.
 When output is piped or redirected, `st` prints the plain `:: msg` and `st: msg`
 lines it always has, so scripts keep working.
 

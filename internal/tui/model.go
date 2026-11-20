@@ -18,6 +18,7 @@ import (
 	"github.com/dawksh/supertree/internal/command"
 	"github.com/dawksh/supertree/internal/core"
 	"github.com/dawksh/supertree/internal/process"
+	"github.com/dawksh/supertree/internal/uitheme"
 	"github.com/dawksh/supertree/internal/workspace"
 )
 
@@ -54,6 +55,7 @@ type tickMsg time.Time
 type attachMsg struct{ Err error }
 
 type Model struct {
+	theme                               uitheme.Theme
 	options                             Options
 	state                               workspace.Snapshot
 	commands                            []command.Definition
@@ -75,7 +77,7 @@ type Model struct {
 }
 
 func New(options Options) Model {
-	return Model{options: options, workspaceID: options.WorkspaceID, panel: "processes", mode: "browse", width: 100, height: 30, loading: true}
+	return Model{theme: uitheme.New(), options: options, workspaceID: options.WorkspaceID, panel: "processes", mode: "browse", width: 100, height: 30, loading: true}
 }
 func (m Model) Init() tea.Cmd { return tea.Batch(m.load(), tick()) }
 func tick() tea.Cmd           { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
@@ -603,9 +605,6 @@ func editText(text string, key tea.KeyMsg) string {
 	return text
 }
 
-var accent = lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true)
-var muted = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-
 func clean(s string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) && r != '\n' && r != '\t' {
@@ -625,41 +624,64 @@ func (m Model) View() string {
 	if m.connected {
 		status = "connected"
 	}
-	header := accent.Render(" SUPERTREE ") + muted.Render("  workspace controls   "+status)
-	if m.view.ID != "" {
-		header += "  " + muted.Render(m.view.ID[:min(len(m.view.ID), 13)])
+	header := m.theme.Accent.Render(" supertree ") + m.theme.Muted.Render("  workspace controls   "+status)
+	need, running := map[string]bool{}, map[string]bool{}
+	for _, a := range m.state.Agents {
+		if a.State == "waiting" {
+			need[a.WorkspaceID] = true
+		}
+		if a.State == "running" {
+			running[a.WorkspaceID] = true
+		}
+	}
+	for _, q := range m.state.Questions {
+		if q.Status == "open" {
+			need[q.WorkspaceID] = true
+		}
+	}
+	if len(need) > 0 {
+		header += "   " + m.theme.Status("waiting", -1) + fmt.Sprintf(" · %d need you", len(need))
+	}
+	if len(running) > 0 {
+		header += "   " + m.theme.Status("running", -1) + fmt.Sprintf(" · %d", len(running))
 	}
 	leftWidth := max(20, m.width/4)
 	rightWidth := m.width - leftWidth - 5
-	left := []string{accent.Render("WORKSPACES")}
+	left := []string{m.theme.Accent.Render("Trees"), ""}
 	for _, w := range m.state.Workspaces {
 		prefix := "  "
 		if w.ID == m.workspaceID {
-			prefix = "› "
+			prefix = m.theme.Accent.Render(m.theme.Pointer) + " "
 		}
-		text := line(prefix+w.Label, leftWidth-4)
-		if w.ID == m.workspaceID {
-			text = accent.Render(text)
+		repo, branch, _ := strings.Cut(clean(w.Label), "/")
+		text := prefix + m.theme.Label(repo, branch, leftWidth-4-ansi.StringWidth(prefix))
+		if w.Kind == "main" {
+			text = ansi.Truncate(text, leftWidth-6, m.theme.Ellipsis) + m.theme.Muted.Render(" "+m.theme.Main)
 		}
 		left = append(left, text)
 	}
 	if len(m.state.Workspaces) == 0 {
 		left = append(left, "No checkout discovered.", "Run from a Git repo.")
 	}
-	right := []string{accent.Render("NAMED PROCESSES")}
+	right := []string{m.theme.Accent.Render("Terminals"), ""}
 	for _, p := range m.processes() {
 		prefix := "  "
 		if p.ID == m.processID {
-			prefix = "› "
+			prefix = m.theme.Accent.Render(m.theme.Pointer) + " "
 		}
-		text := line(fmt.Sprintf("%s%-18s %-10s %s", prefix, p.Name, p.State, p.Kind), rightWidth-4)
+		badge := m.theme.Status(p.State, p.ExitCode)
+		for _, a := range m.state.Agents {
+			if a.ProcessID == p.ID {
+				badge = m.theme.Status(a.State, -1)
+				break
+			}
+		}
+		name := lipgloss.NewStyle().Width(20).Render(m.theme.Middle(clean(p.Name), 20))
+		text := prefix + name + " " + badge + " " + m.theme.Muted.Render(clean(p.Kind))
 		if p.Source == "observed" {
-			text = line(fmt.Sprintf("%s%s · %s · existing (read-only)", prefix, p.Name, p.State), rightWidth-4)
+			text += " " + m.theme.Muted.Render("existing (read-only)")
 		}
-		if p.ID == m.processID {
-			text = accent.Render(text)
-		}
-		right = append(right, text)
+		right = append(right, ansi.Truncate(text, rightWidth-4, m.theme.Ellipsis))
 	}
 	if len(m.processes()) == 0 {
 		right = append(right, "No named processes yet.")
@@ -670,9 +692,9 @@ func (m Model) View() string {
 		}
 		right = append(right, "s opens a shell · n starts a program")
 	}
-	right = append(right, "", muted.Render("TERMINAL OUTPUT"))
+	right = append(right, "", m.theme.Muted.Render("TERMINAL OUTPUT"))
 	if p, ok := m.selected(); ok {
-		right = append(right, line(p.ID+"  "+p.Directory, rightWidth-4))
+		right = append(right, m.theme.Muted.Render(m.theme.Middle(p.Directory, rightWidth-4)))
 	}
 	preview := strings.Split(clean(m.preview), "\n")
 	limit := max(2, m.height-len(right)-8)
@@ -685,20 +707,14 @@ func (m Model) View() string {
 	if m.panel == "collaboration" {
 		right = m.collaborationView(rightWidth - 4)
 	}
-	leftBorder, rightBorder := lipgloss.Color("238"), lipgloss.Color("238")
-	if m.panel == "workspaces" {
-		leftBorder = "86"
-	} else {
-		rightBorder = "86"
-	}
 	boxHeight := m.height - 7
-	body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(leftBorder).Width(leftWidth-2).Height(boxHeight).MaxHeight(boxHeight+2).Render(strings.Join(left, "\n")), " ", lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(rightBorder).Width(rightWidth).Height(boxHeight).MaxHeight(boxHeight+2).Render(strings.Join(right, "\n")))
+	body := lipgloss.JoinHorizontal(lipgloss.Top, m.theme.Frame(m.panel == "workspaces").Width(leftWidth-2).Height(boxHeight).MaxHeight(boxHeight+2).Render(strings.Join(left, "\n")), " ", m.theme.Frame(m.panel != "workspaces").Width(rightWidth).Height(boxHeight).MaxHeight(boxHeight+2).Render(strings.Join(right, "\n")))
 	if m.mode != "browse" {
 		body = m.overlay(rightWidth+leftWidth-1, boxHeight+2)
 	}
-	footer := muted.Render(line("q close · c pairing · p commands · Tab switch · ↑↓/jk navigate · Enter attach · s shell · n new · x stop · r restart · m move · ? help", m.width))
+	footer := m.theme.Muted.Render(line("q close · c pairing · p commands · Tab switch · ↑↓/jk navigate · Enter attach · s shell · n new · x stop · r restart · m move · ? help", m.width))
 	if m.panel == "collaboration" {
-		footer = muted.Render(line("c processes · ↑↓ select · Space mark context · Enter inspect/answer · t goal · a agent · f file · d diff · i send · I interrupt · p palette · q quit", m.width))
+		footer = m.theme.Muted.Render(line("q close · c terminals · ↑↓ select · Space mark · Enter open · i share · I interrupt · t goal · p commands", m.width))
 	}
 	return strings.Join([]string{header, body, line(m.message, m.width), footer}, "\n")
 }
@@ -715,7 +731,7 @@ func (m Model) overlay(width, height int) string {
 		}
 		lines := strings.Split(clean(formatted.String()), "\n")
 		offset := clamp(m.index, 0, max(0, len(lines)-height+5))
-		rows = append(rows, accent.Render("COMMAND RESULT"), "↑↓ scroll · Esc returns", "")
+		rows = append(rows, m.theme.Accent.Render("COMMAND RESULT"), "↑↓ scroll · Esc returns", "")
 		for _, text := range lines[offset:] {
 			if len(rows) >= height-2 {
 				break
@@ -723,35 +739,35 @@ func (m Model) overlay(width, height int) string {
 			rows = append(rows, line(text, width-6))
 		}
 	case "form":
-		rows = append(rows, accent.Render("START NAMED PROCESS"), "Shell commands run through /bin/sh -lc. Tab changes field; Enter launches from Kind.", "")
+		rows = append(rows, m.theme.Accent.Render("START NAMED PROCESS"), "Shell commands run through /bin/sh -lc. Tab changes field; Enter launches from Kind.", "")
 		for i, label := range []string{"Name", "Shell command", "Kind"} {
 			prefix := "  "
 			if i == m.field {
-				prefix = "› "
+				prefix = m.theme.Prompt + " "
 			}
 			rows = append(rows, line(prefix+label+": "+m.fields[i], width-6))
 		}
 	case "palette":
-		rows = append(rows, accent.Render("COMMAND PALETTE"), "Search: "+line(m.query, width-12), "")
+		rows = append(rows, m.theme.Accent.Render("COMMAND PALETTE"), "Search: "+line(m.query, width-12), "")
 		for i, d := range m.filteredCommands() {
 			if i > height-7 {
 				break
 			}
 			prefix := "  "
 			if i == m.paletteIndex {
-				prefix = "› "
+				prefix = m.theme.Prompt + " "
 			}
 			rows = append(rows, line(prefix+d.Name+"  "+d.Description, width-6))
 		}
 	case "arguments":
-		rows = append(rows, accent.Render(m.pendingName), "Edit JSON arguments. Enter validates; Esc cancels. Ctrl-U clears.", "", line(m.input, width-6))
+		rows = append(rows, m.theme.Accent.Render(m.pendingName), "Edit JSON arguments. Enter validates; Esc cancels. Ctrl-U clears.", "", line(m.input, width-6))
 	case "confirm":
 		data, _ := json.Marshal(m.pendingArgs)
-		rows = append(rows, accent.Render("CONFIRM "+m.pendingName), "", line(string(data), width-6), "", "Enter runs this command · Esc cancels")
+		rows = append(rows, m.theme.Input.Render("? "+m.pendingName), "", line(string(data), width-6), "", m.theme.Warning.Render("Enter confirms · Esc cancels (default)"))
 	case "working":
-		rows = append(rows, accent.Render("RUNNING "+m.pendingName), "Commands run once. Reconnection never repeats a mutation.")
+		rows = append(rows, m.theme.Accent.Render("RUNNING "+m.pendingName), "Commands run once. Reconnection never repeats a mutation.")
 	case "move":
-		rows = append(rows, accent.Render("MOVE PROCESS"), "Tab changes direction: "+m.input, "Enter applies · Esc cancels", "")
+		rows = append(rows, m.theme.Accent.Render("MOVE PROCESS"), "Tab changes direction: "+m.input, "Enter applies · Esc cancels", "")
 		names := []string{"Separate window"}
 		for _, p := range m.processes() {
 			if p.ID != m.processID {
@@ -761,12 +777,12 @@ func (m Model) overlay(width, height int) string {
 		for i, name := range names {
 			prefix := "  "
 			if i == m.index {
-				prefix = "› "
+				prefix = m.theme.Prompt + " "
 			}
 			rows = append(rows, prefix+name)
 		}
 	case "help":
-		rows = append(rows, accent.Render("WORK TOGETHER"), "s shell · n named program · Enter attach · x stop · m move", "c opens pairing · t shared goal · u marks goal done", "a starts native Codex · i sends message + marked context · I interrupts", "f captures saved file lines · d tracked diff · o process output · N note", "Space marks context · r recaptures · Enter answers a pending question", "p invokes discovered commands · agents inspect/select semantic views", "Closing the control client leaves the core and terminals running.", "", "Esc returns · q/Ctrl-C quits from the main view")
+		rows = append(rows, m.theme.Accent.Render("Work together"), "s shell · n named program · Enter attach · x stop · m move", "c opens pairing · t shared goal · u marks goal done", "a selects this tree's agent · i shares marked context · I interrupts", "f saved file lines · d tracked diff · o process output · N note", "Space marks context · r recaptures · Enter answers a question", "st share --file path --message '...' works from the usual shell", "SupertreeAsk shares a saved selection from the usual Vim tab", "p commands · agents use the same semantic actions", "", "Esc returns · q closes controls; terminals keep running")
 	}
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("86")).Width(width).Height(height - 2).MaxHeight(height).Render(strings.Join(rows, "\n"))
+	return m.theme.Frame(true).Width(width).Height(height - 2).MaxHeight(height).Render(strings.Join(rows, "\n"))
 }

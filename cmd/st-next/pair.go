@@ -99,7 +99,7 @@ func pairCommand(ctx context.Context, args []string, stdout io.Writer) error {
 			data, err = call("agent.bind", bind)
 		}
 		if err != nil {
-			return err
+			return coreFeatureError(err)
 		}
 		var binding agent.Binding
 		if err := json.Unmarshal(data, &binding); err != nil {
@@ -142,4 +142,12 @@ func pairCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(result)
+}
+
+func coreFeatureError(err error) error {
+	var coded *command.Error
+	if errors.As(err, &coded) && coded.Code == "unknown_command" {
+		return &command.Error{Code: "upgrade_required", Message: "restart the local core to load pairing/sharing: st next daemon stop; st next daemon start (terminal programs keep running)"}
+	}
+	return err
 }

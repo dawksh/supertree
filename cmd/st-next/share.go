@@ -13,6 +13,7 @@ import (
 	"github.com/dawksh/supertree/internal/agent"
 	"github.com/dawksh/supertree/internal/command"
 	"github.com/dawksh/supertree/internal/rpc"
+	"github.com/dawksh/supertree/internal/uitheme"
 )
 
 const shareUsage = `Share with the paired agent in this worktree:
@@ -106,7 +107,7 @@ func shareCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	params, _ := json.Marshal(share)
 	data, err := rpc.Call(ctx, daemonSocket(options), "context.share", params, clientMeta(options))
 	if err != nil {
-		return err
+		return coreFeatureError(err)
 	}
 	if asJSON {
 		var result any
@@ -122,7 +123,7 @@ func shareCommand(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 	if result.Status == "preview" {
-		_, err := fmt.Fprintf(stdout, "%s\n\nCaptured context: %s\n", result.Text, strings.Join(result.ContextIDs, ", "))
+		_, err := fmt.Fprintf(stdout, "%s\n\n%s\n", uitheme.Clean(result.Text), uitheme.New().Row("info", "captured", strings.Join(result.ContextIDs, ", ")))
 		return err
 	}
 	if result.Delivery == nil {
@@ -131,6 +132,6 @@ func shareCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	if result.Status != "sent" {
 		return &command.Error{Code: "delivery_unconfirmed", Message: fmt.Sprintf("delivery %s is %s; inspect its receipt before retrying", result.Delivery.ID, result.Status)}
 	}
-	_, err = fmt.Fprintf(stdout, "Shared with this worktree's paired agent · %s\n", result.Delivery.ID)
+	_, err = fmt.Fprintln(stdout, uitheme.New().Row("ok", "shared", "with this worktree's agent · "+result.Delivery.ID))
 	return err
 }

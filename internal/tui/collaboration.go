@@ -5,6 +5,7 @@ import (
 	"fmt"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/dawksh/supertree/internal/agent"
 	"github.com/dawksh/supertree/internal/collab"
 	"github.com/dawksh/supertree/internal/process"
@@ -12,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type collaborationRow struct{ Kind, ID, Label string }
@@ -312,11 +314,11 @@ func (m Model) editCollaboration(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, m.invoke(m.pendingName, args)
 }
 func (m Model) collaborationView(width int) []string {
-	rows := []string{accent.Render("HUMAN + AGENT")}
+	rows := []string{m.theme.Accent.Render("Pairing")}
 	if goal, ok := m.goal(); ok {
 		rows = append(rows, line("Goal: "+goal.Title, width), line(goal.Notes, width))
 	} else {
-		rows = append(rows, muted.Render("t creates a shared goal"))
+		rows = append(rows, m.theme.Muted.Render("t creates a shared goal"))
 	}
 	items := m.collaborationItems()
 	limit := max(3, (m.height-12)/2)
@@ -325,18 +327,27 @@ func (m Model) collaborationView(width int) []string {
 	for i := offset; i < last; i++ {
 		prefix := "  "
 		if i == m.collabIndex {
-			prefix = "› "
+			prefix = m.theme.Pointer + " "
 		}
 		text := line(prefix+items[i].Label, width)
-		if i == m.collabIndex {
-			text = accent.Render(text)
+		if items[i].Kind == "question" {
+			text = m.theme.Input.Render(text)
+		} else if items[i].Kind == "agent" {
+			for _, a := range m.state.Agents {
+				if a.ID == items[i].ID {
+					text = ansi.Truncate(m.theme.Accent.Render(prefix)+clean(a.Name)+"  "+m.theme.Status(a.State, -1), width, m.theme.Ellipsis)
+					break
+				}
+			}
+		} else if i == m.collabIndex {
+			text = m.theme.Accent.Render(text)
 		}
 		rows = append(rows, text)
 	}
 	if len(items) == 0 {
-		rows = append(rows, "a starts Codex · f captures a file · N adds a note")
+		rows = append(rows, "a selects the agent · f captures code · N adds a note")
 	}
-	rows = append(rows, "", muted.Render(fmt.Sprintf("%d context item(s) marked · i sends explicitly", len(m.contextIDs))))
+	rows = append(rows, "", m.theme.Muted.Render(fmt.Sprintf("%d context item(s) marked · i sends explicitly", len(m.contextIDs))))
 	preview := ""
 	if row, ok := m.collabSelected(); ok {
 		switch row.Kind {
@@ -355,7 +366,18 @@ func (m Model) collaborationView(width int) []string {
 		case "context":
 			for _, item := range m.state.Contexts {
 				if item.ID == row.ID {
-					rows = append(rows, line(item.ID+" · "+item.CapturedAt, width))
+					captureTime := item.CapturedAt
+					if parsed, err := time.Parse(time.RFC3339Nano, item.CapturedAt); err == nil {
+						captureTime = parsed.Local().Format("15:04:05")
+					}
+					freshness := "snapshot"
+					if item.Kind == "file" || item.Kind == "diff" {
+						freshness = "fresh"
+						if item.Stale {
+							freshness = "STALE"
+						}
+					}
+					rows = append(rows, line(freshness+" · captured "+captureTime, width))
 					preview = item.Text
 				}
 			}
@@ -405,14 +427,21 @@ func (m Model) collaborationOverlay(width, height int) string {
 			}
 		}
 	}
-	rows := []string{accent.Render(title), line(description, width-6), ""}
+	// Keep the actual question/command visible while leaving room to answer.
+	descriptionLines := strings.Split(lipgloss.NewStyle().Width(max(1, width-6)).Render(clean(description)), "\n")
+	budget := max(2, height-len(labels)-7)
+	if len(descriptionLines) > budget {
+		descriptionLines = append(descriptionLines[:budget-1], m.theme.Muted.Render("… full details: st next question list --json"))
+	}
+	rows := append([]string{m.theme.Accent.Render(title)}, descriptionLines...)
+	rows = append(rows, "")
 	for i, label := range labels {
 		prefix := "  "
 		if i == m.field {
-			prefix = "› "
+			prefix = m.theme.Prompt + " "
 		}
 		rows = append(rows, line(prefix+label+": "+m.fields[i], width-6))
 	}
 	rows = append(rows, "", "Enter submits from the last field · Esc cancels")
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("86")).Width(width).Height(height - 2).MaxHeight(height).Render(strings.Join(rows, "\n"))
+	return m.theme.Frame(true).Width(width).Height(height - 2).MaxHeight(height).Render(strings.Join(rows, "\n"))
 }
