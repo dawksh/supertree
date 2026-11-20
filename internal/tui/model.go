@@ -617,7 +617,7 @@ func (m Model) View() string {
 	if m.connected {
 		status = "connected"
 	}
-	header := accent.Render(" SUPERTREE ") + muted.Render("  workspace / processes   "+status)
+	header := accent.Render(" SUPERTREE ") + muted.Render("  workspace controls   "+status)
 	if m.view.ID != "" {
 		header += "  " + muted.Render(m.view.ID[:min(len(m.view.ID), 13)])
 	}
@@ -651,7 +651,13 @@ func (m Model) View() string {
 		right = append(right, text)
 	}
 	if len(m.processes()) == 0 {
-		right = append(right, "No named processes yet.", "s opens a shell · n starts a program")
+		right = append(right, "No named processes yet.")
+		for _, w := range m.state.Workspaces {
+			if w.ID == m.workspaceID && len(w.SessionIDs) > 0 {
+				right = append(right, "Your existing tabs keep running.", "q returns to work · c opens pairing")
+			}
+		}
+		right = append(right, "s opens a shell · n starts a program")
 	}
 	right = append(right, "", muted.Render("TERMINAL OUTPUT"))
 	if p, ok := m.selected(); ok {
@@ -679,7 +685,7 @@ func (m Model) View() string {
 	if m.mode != "browse" {
 		body = m.overlay(rightWidth+leftWidth-1, boxHeight+2)
 	}
-	footer := muted.Render(line("Tab switch · ↑↓/jk navigate · Enter attach · s shell · n new · x stop · r restart · m move · p palette · ? help · q quit", m.width))
+	footer := muted.Render(line("q close · c pairing · p commands · Tab switch · ↑↓/jk navigate · Enter attach · s shell · n new · x stop · r restart · m move · ? help", m.width))
 	if m.panel == "collaboration" {
 		footer = muted.Render(line("c processes · ↑↓ select · Space mark context · Enter inspect/answer · t goal · a agent · f file · d diff · i send · I interrupt · p palette · q quit", m.width))
 	}

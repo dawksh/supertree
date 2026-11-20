@@ -65,5 +65,12 @@ func tuiCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	if !available["view.open"] || !available["agent.send"] || !available["context.capture"] {
 		return &command.Error{Code: "upgrade_required", Message: "restart the core to load the TUI and collaboration commands: st next daemon stop; st next daemon start (terminal programs keep running)"}
 	}
+	if *id == "" {
+		// Controls opened from an editor/shell belong to that checkout. Outside
+		// a known checkout, retain the normal workspace chooser fallback.
+		if current, err := currentWorkspace(ctx, options); err == nil {
+			*id = current
+		}
+	}
 	return tui.Run(ctx, tui.Options{Invoke: invoke, Attach: attachTerminal, WorkspaceID: *id}, socket, meta, os.Stdin, stdout)
 }

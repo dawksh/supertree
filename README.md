@@ -71,15 +71,40 @@ platforms and with releases that predate the Go assets.
 
 ### From source
 
-To try or develop this checkout locally, use the sandbox launcher:
+Try this checkout through the usual worktree, agent, Neovim, and shell workflow.
+The Go controls are an optional addition to that workspace.
 
 ```sh
-./dev                         # build and open an isolated local workspace
+./dev open                    # build and open this checkout's local workspace
+./dev                         # reopen the last local worktree
+./dev new <branch>             # create a worktree through the usual flow
+./dev test                    # automated checks, in a disposable test environment
+```
+
+For a first manual check:
+
+1. Run `./dev open` from this checkout. Use Option-1 for the agent, Option-2
+   for Neovim, and Option-3 for the shell. Option-S focuses the tree sidebar.
+2. Edit in Neovim and run a command in the shell. The existing Option-v split
+   command lets you bring terminals beside each other.
+3. From the local shell, run `st new local-harness-test` to try a new worktree.
+   Use Option-w to switch trees. Each keeps its own programs.
+4. From the shell, run `st control` to try the new workspace controls in a popup.
+   Press `q` to return to your terminal. You can keep using the regular agent,
+   editor, shell, tree picker, and splits without opening these controls.
+
+Inside the sandbox, `st` points to this checkout. Outside it, use `./dev` so
+commands target the local environment. `./dev test` runs automated tests; it does
+not open your manual workspace.
+
+Additional development commands:
+
+```sh
+./dev control                 # optional controls; popup when inside local tmux
 ./dev next inspect --json      # rebuild and inspect local workspaces
 ./dev next commands --json     # rebuild and discover commands
 ./dev next daemon start        # start the isolated persistent workspace core
 ./dev next events --json       # watch workspace changes (Ctrl-C to disconnect)
-./dev test                    # Go vet, race checks, and the shell suite
 ./dev package                 # build release assets in .dev/releases; no publishing
 ./dev stop                    # close local sessions; keep worktrees and state
 ```
@@ -90,9 +115,12 @@ plus a separate tmux socket per checkout. It does not install anything or change
 your dotfiles. Commands keep their caller's working directory, so you can also
 run `/path/to/supertree/dev` from another repository.
 
-The initial layout is shell-only. Edit `.dev/config` to enable your preferred
-agent and editor. Local terminals use a clean Bash shell, with `st` pointing to
-this checkout. Keyboard shortcuts and background jobs use the same local wrappers.
+Fresh sandboxes use `ST_WINDOWS='agent vim shell'`. Edit `.dev/config` to choose
+your agent or customize the existing layout. Older sandboxes retain their config;
+if yours says `ST_WINDOWS=shell`, change it to `ST_WINDOWS='agent vim shell'` and
+reopen the tree. Missing tabs are added without restarting existing programs.
+Local terminals use a clean Bash shell, with `st` pointing to this checkout.
+Keyboard shortcuts and background jobs use the same local wrappers.
 Shortcut bindings use absolute checkout paths so a changed server PATH cannot
 send them to an installed release. Option-1 returns to the shell from the home
 sidebar; Option-S focuses the sidebar.
@@ -158,6 +186,10 @@ individually; the shared modules provide the functions used across features.
 Run the shell tests after changing modules.
 
 ### Experimental workspace core
+
+The worktree workspace remains the main interface. `st control` opens the Go
+controls as a popup from its shell; closing them returns to that workspace.
+`st next tui` also runs the controls directly for development or standalone use.
 
 The Go core provides workspace inspection, a discoverable command registry, and
 an opt-in local daemon with durable identity and change subscriptions. Build it
@@ -391,9 +423,8 @@ The Go baseline now includes named processes, the control TUI, and one native
 agent integration. Git worktree creation/removal still uses the existing shell
 commands. Macros, registers, bookmarks, and the Lua extension runtime come later.
 
-```sh
-./dev next tui
-```
+From a local worktree's shell, run `st control`. It opens controls for that checkout;
+`q` returns to your editor and terminals. Direct `./dev next tui` remains available.
 
 Press `c` for the pairing panel. `t` creates a shared goal; `a` starts native Codex.
 `f` captures saved file lines, `d` captures the tracked Git diff, `o` captures the

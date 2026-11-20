@@ -59,6 +59,7 @@ grep -Fx "$task_checkout/.dev/config" "$task_tmp/result" >/dev/null
 grep -Fx "$task_checkout/.dev/worktrees" "$task_tmp/result" >/dev/null
 grep -Fx 'default-core' "$task_tmp/result" >/dev/null
 [ "$(wc -l < "$ST_DEV_GO_LOG" | tr -d ' ')" = 1 ]
+grep -Fx "ST_WINDOWS='agent vim shell'" "$task_checkout/.dev/config" >/dev/null
 [ ! -e "$task_user/installed-state" ]
 [ ! -e "$task_user/installed-trees" ]
 [ -z "$(find "$task_checkout/.dev" -type l -print)" ]
@@ -137,6 +138,28 @@ grep -Fx 'ST_SIDEBAR=0' "$task_checkout/.dev/config" >/dev/null
 grep -Fx 'installed tmux config' "$task_user/.tmux.conf" >/dev/null
 grep -Fx 'installed st config' "$task_user/installed-config" >/dev/null
 
+# The manual entrypoint must open the familiar agent/editor/shell workspace.
+# Fixtures stand in for interactive programs; never start a real provider here.
+for task_program in codex nvim; do
+  printf '#!/bin/sh\nexec /bin/sleep 60\n' > "$task_user/.local/bin/$task_program"
+  chmod +x "$task_user/.local/bin/$task_program"
+done
+git -C "$task_checkout" init -q -b main
+git -C "$task_checkout" -c user.name=Test -c user.email=test@example.com commit -q --allow-empty -m initial
+cd "$task_checkout"
+"$task_checkout/dev" open </dev/null >"$task_tmp/open.log" 2>&1 || true
+task_tree=$("$task_checkout/dev" tmux list-sessions -F '#{session_name}' | sed '/^supertree$/d' | head -1)
+[ -n "$task_tree" ] || { cat "$task_tmp/open.log" >&2; exit 1; }
+"$task_checkout/dev" tmux list-windows -t "=$task_tree" -F '#{window_name}' > "$task_tmp/windows"
+for task_window in codex nvim shell; do grep -Fx "$task_window" "$task_tmp/windows" >/dev/null; done
+# A new layout setting adds a window when reopening; existing programs survive.
+task_before=$("$task_checkout/dev" tmux list-panes -s -t "=$task_tree" -F '#{pane_id} #{pane_pid}')
+printf "ST_WINDOWS='agent vim shell extra'\nST_TAB_extra='sleep 60'\n" >> "$task_checkout/.dev/config"
+"$task_checkout/dev" open </dev/null >/dev/null 2>&1 || true
+"$task_checkout/dev" tmux list-windows -t "=$task_tree" -F '#{window_name}' | grep -Fx extra >/dev/null
+task_after=$("$task_checkout/dev" tmux list-panes -s -t "=$task_tree" -F '#{pane_id} #{pane_pid}')
+while IFS= read -r task_pane; do grep -Fx "$task_pane" <<< "$task_after" >/dev/null; done <<< "$task_before"
+
 "$task_checkout/dev" stop >/dev/null
 if "$task_checkout/dev" tmux -N has-session 2>/dev/null; then
   printf 'FAIL: dev stop left the local session running\n' >&2
@@ -145,4 +168,4 @@ fi
 [ -f "$task_checkout/.dev/config" ]
 [ -d "$task_checkout/.dev/state" ]
 
-printf 'ok: dev builds, isolated tmux, live key dispatch, checkout wrappers, config reuse, caller directory, and stop\n'
+printf 'ok: dev builds, familiar workspace, additive layout updates, isolated tmux, live keys, wrappers, config reuse, caller directory, and stop\n'

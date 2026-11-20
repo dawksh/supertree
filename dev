@@ -50,7 +50,10 @@ case ${1:-} in
     cat <<'HELP'
 Usage: ./dev [st arguments]
 
-  ./dev                          build and open the local tmux workspace
+  ./dev                          rebuild and reopen the last local worktree
+  ./dev open                     open this checkout with agent, Vim and shell
+  ./dev new <branch>             create a worktree using the usual flow
+  ./dev control                  optional workspace controls (popup inside tmux)
   ./dev next inspect --json       build and inspect the sandbox
   ./dev next commands --json      build and discover commands
   ./dev next daemon start         start the isolated persistent core
@@ -61,8 +64,12 @@ Usage: ./dev [st arguments]
   ./dev tmux <arguments>          control the sandbox's tmux server
   ./dev stop                     stop sandbox sessions; keep state and worktrees
 
+Start with ./dev open. Option-1/2/3 select agent/Vim/shell; Option-w switches
+worktrees and Option-v opens the usual split picker. Inside a local shell,
+st uses this checkout. Run st control to try the new controls; q returns to work.
+
 Config, state and worktrees live in .dev/ in this checkout. Edit .dev/config
-to change the shell-only default layout. No installation or symlinks needed.
+to customize the usual agent/Vim/shell layout. No installation or symlinks needed.
 HELP
     exit 0;;
   build)
@@ -118,7 +125,7 @@ else
   if [ ! -e "$dev_dir/config" ]; then
     {
       printf '# Local development config; sourced as shell by st.\n'
-      printf 'ST_WINDOWS=shell\nST_HARNESS=codex\nST_SIDEBAR=1\nST_NOTIFY=0\n'
+      printf "ST_WINDOWS='agent vim shell'\nST_HARNESS=codex\nST_SIDEBAR=1\nST_NOTIFY=0\n"
       printf 'ST_SHELL=%q\n' "$dev_bin/dev-shell"
     } > "$dev_dir/config"
   fi
