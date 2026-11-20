@@ -41,13 +41,13 @@ if [ -n "$real_tmux" ]; then
   tmux set-option -t '=repo/main:' @supertree_label 'repo/main'
   tmux set-option -t '=repo/main:' @st_state_glyph "$G_IN"
   left=$(tmux show-options -v -t '=repo/main:' status-left)
-  rendered=$(tmux display-message -p -t '=repo/main:' -F "$left")
+  rendered=$(tmux display-message -p -t '=repo/main:' -F "$left" | sed 's/#\[[^]]*\]//g')
   case $rendered in *"$G_IN repo/main"*) ;; *) fail 'status-left omitted tree and state';; esac
   [ "$(tmux show-options -v -t '=repo/main:' status-left-length)" = 25 ] ||
     fail 'status-left no longer aligns with default sidebar width'
 
   tmux set-option -t '=repo/main:' @supertree_label 'webauth/a-very-long-feature-branch-name'
-  rendered=$(tmux display-message -p -t '=repo/main:' -F "$left")
+  rendered=$(tmux display-message -p -t '=repo/main:' -F "$left" | sed 's/#\[[^]]*\]//g')
   case $rendered in *'webauth/a-…ranch-name'*) ;; *) fail 'long tree label did not keep both ends';; esac
 
   ST_SIDEBAR_WIDTH=30 style_session 'repo/main'

@@ -122,3 +122,33 @@ Places where the design disagrees with the code or carries a risk.
 - **Installer:** runs standalone from `curl`, can't load the UI module. Copy the same tokens in and keep them in sync by hand, or check it in the release script.
 - **README:** updated in each stage's PR for the commands and keys that stage changes.
 - **Tests:** no new tests unless asked. Existing tests run with non-terminal output, so stage 1's plain fallback keeps them passing. Run the full suite after each stage.
+
+---
+
+## Stage 9 — Colour system (done, PR #40)
+
+Fixes "looks different on every machine" and low contrast. Colour roles were ANSI palette
+slots that each terminal theme repainted; they are now exact values.
+
+- **Tokens:** one table in `bin/st-lib/05-ui.sh`. Each role has an exact colour, a
+  256-colour fallback and a 16-colour fallback, for a dark and a light set.
+  `ST_THEME=dark|light|ansi`. `st _palette` prints what a terminal picked.
+- **Depth:** inside tmux always the exact colour (tmux converts per attached terminal);
+  outside, `COLORTERM`, then a `256color` `TERM`, else 16 colours.
+- **Surfaces:** every fzf picker goes through `ui_fzf`; tree sessions set the status bar,
+  tabs, pane borders, message line and popups from the tokens. Pickers ignore
+  `FZF_DEFAULT_OPTS`.
+- **Installer:** copies the token values; `check_source` in `scripts/release.sh` rejects a
+  release where they differ.
+- **Glyphs:** `● ○ ◆ ± ↑ · ▌ …` are "ambiguous width" in Unicode: a terminal set to draw
+  those two columns wide shifts rows and tabs. `ST_ASCII=1` now covers every glyph that
+  sits in a fixed column (status, pointer, tab state, truncation mark).
+
+**Open:**
+
+- Sidebar current-tree row has an accent bar, not the design's full-width background:
+  fzf can only colour the text of a row, and padding it to the pane width depends on
+  fzf's column layout, which differs between versions.
+- The "needs you" toast glyph is not coloured: it also shows in sessions st does not
+  style, where tmux's default message bar is yellow and an amber glyph would vanish.
+- Light theme colours are not from the design canvas.

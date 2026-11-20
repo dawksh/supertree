@@ -168,7 +168,8 @@ doctor_checks() {
   printf '  --    config        %s\n' "$ST_CONFIG"
   ui_depth
   [ -z "${NO_COLOR:-}" ] || UI_DEPTH=off
-  printf '  --    colours       %s theme, %s\n' "${ST_THEME:-dark}" "$UI_DEPTH"
+  printf '  --    colours       %s theme, %s, %s glyphs\n' "${ST_THEME:-dark}" "$UI_DEPTH" \
+    "$([ -n "${ST_ASCII:-}" ] && printf ascii || printf unicode)"
   return $ok
 }
 
@@ -259,9 +260,9 @@ config_rows() {
 config_pick_harness() {
   local pick
   pick=$(printf '%s\n' claude codex openrouter |
-    awk -v cur="$ST_HARNESS" '{ print ($0 == cur ? "● " : "  ") $0 }' |
+    awk -v cur="$ST_HARNESS" -v mark="$G_RUN" '{ print ($0 == cur ? mark " " : "  ") $0 }' |
     ui_fzf --height=100% --reverse --border=rounded --border-label=' Agent ' --prompt='Agent › ' \
-        --pointer='▌' --header="$(ui_hints ⏎ choose esc back)" --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || return 0
+        --header="$(ui_hints ⏎ choose esc back)" --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || return 0
   pick=${pick#??}
   [ "$pick" != "$ST_HARNESS" ] || return 0
   config_set ST_HARNESS "$pick"
@@ -278,7 +279,7 @@ config_pick_windows() {
       n=$(printf '%s\n' $list | grep -nxF -- "$type" | cut -d: -f1)
       printf '%s  %s%s\t%s\n' "${n:- }" "$type" "$([ "$type" != agent ] || printf ' (%s)' "$(harness_label)")" "$type"
     done | ui_fzf --delimiter=$'\t' --with-nth=1 --height=100% --reverse --border=rounded \
-        --border-label=' Windows ' --prompt='Window › ' --pointer='▌' \
+        --border-label=' Windows ' --prompt='Window › ' \
         --header="$(ui_hints ⏎ 'add at the end / remove' esc save)" --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || break
     type=${pick##*$'\t'}
     if printf '%s\n' $list | grep -qxF -- "$type"; then
@@ -309,7 +310,7 @@ cmd_config() {
   while :; do
     pick=$(config_rows | ui_fzf --ansi --delimiter=$'\t' --with-nth=1 --height=100% --reverse --no-sort \
       --border=rounded --border-label=' Settings ' --border-label-pos=3 --prompt='Setting › ' \
-      --pointer='▌' --header="$(ui_hints ⏎ change esc done)   $(ui_path "$ST_CONFIG")" --header-first \
+      --header="$(ui_hints ⏎ change esc done)   $(ui_path "$ST_CONFIG")" --header-first \
       --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || break
     case ${pick##*$'\t'} in
       agent) config_pick_harness;;

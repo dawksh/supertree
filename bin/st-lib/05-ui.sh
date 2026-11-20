@@ -62,6 +62,8 @@ ui_tones() {
   ui_tone UI_BORDER 3a4458 238 9aa4b2 248 8
 }
 ui_tones
+# For popups opened over a session st did not style; tree windows set the same as options.
+UI_POPUP=(-b rounded -s "fg=$UI_TEXT_T,bg=$UI_PANEL_T" -S "fg=$UI_BORDER_T,bg=$UI_PANEL_T")
 
 # Also called directly for text fzf renders with --ansi, which has no terminal of its own.
 ui_colour_on() {
@@ -85,17 +87,17 @@ ui_fzf_colours() {
 
 # The user's own fzf defaults are left out: their colours and layout would replace these.
 ui_fzf() {
-  FZF_DEFAULT_OPTS='' FZF_DEFAULT_OPTS_FILE='' fzf ${UI_FZF[@]+"${UI_FZF[@]}"} "$@"
+  FZF_DEFAULT_OPTS='' FZF_DEFAULT_OPTS_FILE='' fzf --pointer="$G_HERE" ${UI_FZF[@]+"${UI_FZF[@]}"} "$@"
 }
 if [ -t 1 ] || [ -t 2 ]; then ui_colour_on; fi
 
 G_OK='✓' G_ERR='✗' G_WARN='!' G_INFO='›' G_ASK='?'
 # Agent states match the sidebar and tabs. done is a hollow circle, not a tick:
 # it only means the agent exited, maybe after a crash.
-G_IN='◐' G_RUN='●' G_DONE='○' G_OFF='·' G_MAIN='⌂' G_DIRTY='±' G_AHEAD='↑'
-G_HERE='▌'
+G_IN='◆' G_RUN='●' G_DONE='○' G_OFF='·' G_MAIN='⌂' G_DIRTY='±' G_AHEAD='↑'
+G_HERE='▌' G_MORE='…'
 if [ -n "${ST_ASCII:-}" ]; then
-  G_OK='+' G_ERR='x' G_INFO='>' G_HERE='|'
+  G_OK='+' G_ERR='x' G_INFO='>' G_HERE='|' G_MORE='~'
   G_IN='!' G_RUN='*' G_DONE='o' G_OFF='.' G_MAIN='@' G_DIRTY='~' G_AHEAD='^'
 fi
 

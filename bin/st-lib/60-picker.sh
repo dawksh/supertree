@@ -127,7 +127,7 @@ pick_tree() {
   local -a opts=(
     --ansi --delimiter=$'\t' --with-nth=1 --height=100% --reverse --no-sort --sync
     --border=rounded --border-label="$label" --border-label-pos=3
-    --prompt='Find tree › ' --pointer='▌' --info=inline-right
+    --prompt='Find tree › ' --info=inline-right
     --header="$(ui_hints ⏎ open ^n new ^d delete ^r repos ^/ preview esc '')" --header-first
     --preview="$self _preview {3} {2}" --preview-window='right,45%,border-left,<40(hidden)'
     --expect=ctrl-n,ctrl-r
@@ -204,7 +204,7 @@ pick_repo() {
     printf '%s%s%s  %s%s%s\t%s\n' "$UI_REPO$UI_B" "$(basename "$root")" "$UI_R" "$UI_DIM" "$(ui_path "$root")" "$UI_R" "$root"
   done | ui_fzf --ansi --delimiter=$'\t' --with-nth=1 --height=100% --reverse \
       --border=rounded --border-label=' New tree · repo ' --border-label-pos=3 \
-      --prompt='Repo › ' --pointer='▌' --header="$(ui_hints ⏎ next esc '')" --header-first \
+      --prompt='Repo › ' --header="$(ui_hints ⏎ next esc '')" --header-first \
       --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"} | cut -f2
 }
 
@@ -219,7 +219,7 @@ pick_branch() {
     header=$(ui_hints ⏎ create tab "base: ${base:-default}" ^b "bare: $([ "$bare" = 1 ] && printf on || printf off)" esc '')
     out=$(cat "$rows" | ui_fzf --ansi --delimiter=$'\t' --with-nth=1 --height=100% --reverse --no-sort \
       --border=rounded --border-label=" New tree · $(basename "$main") " --border-label-pos=3 \
-      --prompt='Branch › ' --pointer='▌' --header="$header" --header-first \
+      --prompt='Branch › ' --header="$header" --header-first \
       --print-query --expect=tab,ctrl-b --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"} \
       "--bind=change:reload($self _branch_rows $(printf '%q' "$rows") {q})") || { rm -f "$rows"; return 0; }
     query=$(printf '%s\n' "$out" | sed -n 1p)
@@ -230,7 +230,7 @@ pick_branch() {
     case $key in
       ctrl-b) bare=$((1 - bare)); continue;;
       tab) base=$(cut -f3 "$rows" | ui_fzf --height=100% --reverse --border=rounded \
-             --border-label=' Base branch ' --prompt='Base › ' --pointer='▌' \
+             --border-label=' Base branch ' --prompt='Base › ' \
              --bind='esc:abort' ${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"}) || true
            continue;;
     esac
@@ -316,7 +316,7 @@ cmd_go() {
     [ -n "$popup_client" ] || die "no tmux client for tree picker"
     local self
     self=$(st_executable)
-    tmux display-popup -c "$popup_client" -d "$PWD" -EE -w 72% -h 60% \
+    tmux display-popup -c "$popup_client" -d "$PWD" -EE -w 72% -h 60% "${UI_POPUP[@]}" \
       "$(printf '%q go --picker' "$self")"
     return
   fi
@@ -470,7 +470,7 @@ cmd_roots() {
 
   if [ -n "$popup_client" ]; then
     self=$(st_executable)
-    tmux display-popup -c "$popup_client" -d "$PWD" -EE -w 72% -h 60% "$(printf '%q roots' "$self")"
+    tmux display-popup -c "$popup_client" -d "$PWD" -EE -w 72% -h 60% "${UI_POPUP[@]}" "$(printf '%q roots' "$self")"
     return
   fi
 

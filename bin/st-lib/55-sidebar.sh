@@ -343,7 +343,7 @@ cmd_sidebar() {
     printf '%s\n' "$rows" |
       ui_fzf --ansi --no-input --no-sort --reverse --info=hidden --no-scrollbar \
           --delimiter=$'\t' --with-nth=1 --track --id-nth=2 \
-          ${listen[@]+"${listen[@]}"} --pointer='›' --gutter=' ' --ellipsis='…' \
+          ${listen[@]+"${listen[@]}"} --pointer='›' --gutter=' ' --ellipsis="$G_MORE" \
           --header="$(ui_hints n new d remove)" \
           --bind="load:pos(${start:-1})+unbind(load)" \
           --bind='j:down,k:up,g:first,G:last' \
@@ -379,7 +379,7 @@ cmd_sidebar_rm() {
   local sess=${1:-} dir=${2:-} tty
   case $sess in ''|'#'*|+new) return 0;; esac
   tty=$(tmux display-message -p -t "$TMUX_PANE" '#{client_tty}')
-  tmux display-popup -c "$tty" -E -w 64 -h 14 -T ' Remove tree ' "$(st_self)" _sidebar-rm-run "$dir"
+  tmux display-popup -c "$tty" -E -w 64 -h 14 -T ' Remove tree ' "${UI_POPUP[@]}" "$(st_self)" _sidebar-rm-run "$dir"
 }
 
 cmd_sidebar_rm_run() {
