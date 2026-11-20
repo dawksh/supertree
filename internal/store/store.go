@@ -53,7 +53,7 @@ func Open(stateDir string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db}
 	var version int
-	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err == nil && version > 1 {
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err == nil && version > 2 {
 		err = fmt.Errorf("unsupported workspace database version: %d", version)
 	}
 	if err == nil {
@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS identities (
 CREATE UNIQUE INDEX IF NOT EXISTS identity_anchor ON identities(kind, anchor) WHERE anchor != '';
 CREATE INDEX IF NOT EXISTS identity_path ON identities(kind, path);
 CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, data TEXT NOT NULL);
-PRAGMA user_version = 1;`)
+CREATE TABLE IF NOT EXISTS documents (kind TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(kind,id));
+PRAGMA user_version = 2;`)
 	}
 	if err != nil {
 		db.Close()

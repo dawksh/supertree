@@ -52,6 +52,7 @@ const usage = `st next — experimental workspace core
   st next invoke <command> [<JSON object>]
   st next daemon <start|serve|status|stop> [--json]
   st next events [--workspace <id>] [--epoch <epoch> --after <sequence>] [--json]
+  st next process <list|start|register|stop|restart|attach|move|output> [args]
 
 Start the daemon explicitly for durable IDs and shared state. Without a daemon,
 inspect/commands/invoke use read-only discovery. Prefix with --offline to force it.
@@ -100,6 +101,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return fail(&command.Error{Code: "invalid_arguments", Message: "daemon and events require an online connection"})
 		}
 		if err := runtimeCommand(ctx, args, stdout, jsonOutput); err != nil {
+			return fail(err)
+		}
+		return 0
+	}
+	if args[0] == "process" {
+		if offline {
+			return fail(&command.Error{Code: "invalid_arguments", Message: "process commands require a daemon"})
+		}
+		if err := processCommand(ctx, args[1:], stdout); err != nil {
 			return fail(err)
 		}
 		return 0

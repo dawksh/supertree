@@ -167,8 +167,8 @@ func TestDetachedDaemonLifecycleAndCrashRecovery(t *testing.T) {
 		t.Fatal("online CLI alias differs from generic socket invocation")
 	}
 	var list commandList
-	if err := json.Unmarshal(call("commands", "--json"), &list); err != nil || len(list.Commands) != 5 {
-		t.Fatalf("online command discovery: %#v %v", list, err)
+	if err := json.Unmarshal(call("commands", "--json"), &list); err != nil || len(list.Commands) < 13 {
+		t.Fatalf("online command discovery: %d commands, %v", len(list.Commands), err)
 	}
 	var offline workspace.Snapshot
 	if err := json.Unmarshal(call("--offline", "inspect", "--json"), &offline); err != nil || offline.Epoch != "" {

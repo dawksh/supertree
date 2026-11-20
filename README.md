@@ -302,6 +302,55 @@ Run `go test ./...` for Go checks. The integration tests use temporary Git
 repositories and an isolated tmux socket. Run `go test -race ./...` and
 `go vet ./...` for the full Go checks; CI runs these on macOS and Linux.
 
+### Named terminal processes
+
+Start the local core, then launch named programs in the current checkout:
+
+```sh
+./dev next daemon start
+./dev next process start --name shell --kind shell -- /bin/bash --noprofile --norc
+./dev next process start --name tests --kind tests -- go test ./...
+./dev next process list
+./dev next process attach <process-id>
+./dev next process output <process-id> --lines 200
+./dev next process stop <process-id>
+./dev next process restart <process-id>
+```
+
+`start` uses an executable plus argument array; shell syntax runs only when you
+explicitly launch a shell with `-c`. Use `--workspace <id>` to target another
+checkout, `--cwd <relative-directory>` for a subdirectory, and repeated
+`--env KEY=VALUE` flags for overrides. Environment values are stored in the private
+launch definition; inspection exposes their names. Avoid putting secrets in argv.
+Names are unique within a workspace; restart an existing definition explicitly.
+
+Each process has a durable ID and a tagged tmux pane. Starts and moves happen in
+the background. `attach` changes focus only as an explicit terminal action;
+`attach --json` or `invoke process.attach` returns coordinates without focusing.
+Exiting the core or UI leaves programs running. Restarting the daemon reconciles
+existing tagged panes and never automatically relaunches missing programs.
+Exited owned terminals retain their output and exit status until stopped/restarted.
+
+```sh
+./dev next process move --process <id> --target <other-id> --direction vertical
+./dev next process move --process <id>   # detach into its own window
+./dev next process register --name editor --workspace <id> --pane %3
+```
+
+Registration explicitly associates an existing terminal with a workspace. Its
+original launch definition is unknown, so it cannot be restarted by the core.
+Stopping a registered pane still closes that terminal. Process IDs survive moves;
+reused pane IDs after a tmux restart cannot inherit another process's identity.
+The core listens to tmux control-mode changes and also reconciles once a second.
+
+All actions are discoverable through `commands --json` and available via
+`invoke process.start`, `process.list`, `process.register`, `process.stop`,
+`process.restart`, `process.move`, `process.attach`, and `process.output`.
+Mutation arguments accept revision checks where advertised. Repeating a start
+with the same actor/request ID returns the previous launch; changing its arguments
+with that request ID is rejected. A different request ID never implicitly restarts
+an existing named process.
+
 ### Releases
 
 Pull requests to `main` run Go and shell tests on Ubuntu and macOS, cross-build

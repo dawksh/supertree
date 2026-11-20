@@ -70,6 +70,9 @@ func Serve(ctx context.Context, options workspace.Options, socket string, log io
 		return c.Snapshot(args.WorkspaceID)
 	})
 	if err == nil {
+		err = c.RegisterProcesses(s.r)
+	}
+	if err == nil {
 		err = command.Register(s.r, command.Definition{Name: "daemon.status", Version: 1,
 			Description: "Inspect daemon identity, protocol capabilities and current sequence.", Effects: []string{"read"}, Repeatable: true},
 			func(context.Context, struct{}) (Status, error) { return s.status(), nil })
@@ -156,6 +159,7 @@ func (s *server) execute(ctx context.Context, req Request) (Response, bool) {
 			(req.Meta.TmuxSocket != "" && req.Meta.TmuxSocket != s.options.TmuxSocket)) {
 		return failure(req.ID, &command.Error{Code: "configuration_mismatch", Message: "daemon uses different workspace or tmux settings; stop it or select a separate ST_STATE"}), false
 	}
+	ctx = command.WithOrigin(ctx, command.Origin{Actor: req.Meta.Actor, RequestID: req.Meta.RequestID})
 	result, err := s.r.Invoke(context.WithValue(ctx, metaKey{}, req.Meta), req.Method, req.Params)
 	if err != nil {
 		return failure(req.ID, err), false

@@ -128,6 +128,13 @@ func validate(value any, s map[string]any) error {
 		}
 		properties, restricted := s["properties"].(map[string]any)
 		if !restricted {
+			if values, ok := s["additionalProperties"].(map[string]any); ok {
+				for key, item := range object {
+					if err := validate(item, values); err != nil {
+						return fmt.Errorf("%s: %w", key, err)
+					}
+				}
+			}
 			return nil
 		}
 		for _, name := range s["required"].([]string) {
@@ -186,6 +193,9 @@ func schema(t reflect.Type) (map[string]any, error) {
 		items, err := schema(t.Elem())
 		return map[string]any{"type": "array", "items": items}, err
 	case reflect.Map:
+		if t.Key().Kind() == reflect.String && t.Elem().Kind() == reflect.String {
+			return map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}, nil
+		}
 		// Command definitions expose JSON Schema documents as arbitrary objects.
 		if t.Key().Kind() == reflect.String && t.Elem().Kind() == reflect.Interface {
 			return map[string]any{"type": "object"}, nil

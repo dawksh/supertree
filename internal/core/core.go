@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/dawksh/supertree/internal/command"
+	"github.com/dawksh/supertree/internal/process"
 	"github.com/dawksh/supertree/internal/store"
+	"github.com/dawksh/supertree/internal/tmux"
 	"github.com/dawksh/supertree/internal/workspace"
 )
 
@@ -51,6 +53,8 @@ func Select(snapshot workspace.Snapshot, id string) (workspace.Snapshot, error) 
 		if w.ID == id {
 			snapshot.Workspaces = []workspace.Workspace{w}
 			snapshot.Sessions = slices.Clone(snapshot.Sessions)
+			snapshot.Processes = slices.Clone(snapshot.Processes)
+			snapshot.Processes = slices.DeleteFunc(snapshot.Processes, func(p workspace.Process) bool { return p.WorkspaceID != id })
 			return selectSessions(snapshot, w), nil
 		}
 	}
@@ -68,10 +72,7 @@ func selectSessions(snapshot workspace.Snapshot, w workspace.Workspace) workspac
 	return snapshot
 }
 
-type Origin struct {
-	Actor     string `json:"actor"`
-	RequestID string `json:"request_id,omitempty"`
-}
+type Origin = command.Origin
 
 type Event struct {
 	SchemaVersion int      `json:"schema_version"`
@@ -103,13 +104,14 @@ type subscriber struct {
 }
 
 type Core struct {
-	options workspace.Options
-	store   *store.Store
-	refresh sync.Mutex
-	mu      sync.Mutex
-	state   workspace.Snapshot
-	history []Event
-	clients map[*subscriber]bool
+	options   workspace.Options
+	store     *store.Store
+	refresh   sync.Mutex
+	mu        sync.Mutex
+	state     workspace.Snapshot
+	history   []Event
+	clients   map[*subscriber]bool
+	processes *process.Manager
 }
 
 func Open(ctx context.Context, options workspace.Options) (*Core, error) {
@@ -121,6 +123,16 @@ func Open(ctx context.Context, options workspace.Options) (*Core, error) {
 	_, _ = rand.Read(token[:])
 	c := &Core{options: options, store: s, clients: make(map[*subscriber]bool),
 		state: workspace.Snapshot{Epoch: fmt.Sprintf("%x", token)}}
+	c.processes = process.New(s, tmux.Client{Socket: options.TmuxSocket}, func(id string) (workspace.Workspace, error) {
+		snapshot, err := c.Snapshot(id)
+		if err != nil {
+			return workspace.Workspace{}, err
+		}
+		if len(snapshot.Workspaces) != 1 {
+			return workspace.Workspace{}, &command.Error{Code: "invalid_arguments", Message: "workspace ID is required"}
+		}
+		return snapshot.Workspaces[0], nil
+	})
 	if err := c.Refresh(ctx, options.Directory, Origin{Actor: "system"}); err != nil {
 		s.Close()
 		return nil, err
@@ -135,6 +147,10 @@ func (c *Core) Close() error { return c.store.Close() }
 func (c *Core) Refresh(ctx context.Context, directory string, origin Origin) error {
 	c.refresh.Lock()
 	defer c.refresh.Unlock()
+	return c.refreshState(ctx, directory, origin)
+}
+
+func (c *Core) refreshState(ctx context.Context, directory string, origin Origin) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -150,6 +166,10 @@ func (c *Core) Refresh(ctx context.Context, directory string, origin Origin) err
 		return err
 	}
 	if err := c.store.Reconcile(ctx, &next); err != nil {
+		return err
+	}
+	next.Processes, err = c.processes.Snapshot(ctx)
+	if err != nil {
 		return err
 	}
 	// Administrative identity keys are persistence details, never client state.
@@ -204,6 +224,23 @@ func changedWorkspaces(old, next workspace.Snapshot) []string {
 	}
 	for id := range previous {
 		ids = append(ids, id)
+	}
+	beforeProcesses := map[string]workspace.Process{}
+	for _, p := range old.Processes {
+		beforeProcesses[p.ID] = p
+	}
+	for _, p := range next.Processes {
+		if before, ok := beforeProcesses[p.ID]; !ok || !reflect.DeepEqual(before, p) {
+			if !slices.Contains(ids, p.WorkspaceID) {
+				ids = append(ids, p.WorkspaceID)
+			}
+		}
+		delete(beforeProcesses, p.ID)
+	}
+	for _, p := range beforeProcesses {
+		if !slices.Contains(ids, p.WorkspaceID) {
+			ids = append(ids, p.WorkspaceID)
+		}
 	}
 	slices.Sort(ids)
 	return ids
@@ -260,16 +297,47 @@ func (c *Core) Subscribe(cursor Cursor) (Subscription, <-chan Event, func(), err
 }
 
 func (c *Core) Poll(ctx context.Context, interval time.Duration, report func(error)) {
+	kick := make(chan struct{}, 1)
+	watchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var watch sync.WaitGroup
+	watch.Add(1)
+	go func() { defer watch.Done(); c.watchTmux(watchCtx, kick) }()
+	defer watch.Wait()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			cancel()
 			return
 		case <-ticker.C:
-			if err := c.Refresh(ctx, "", Origin{Actor: "system"}); err != nil && ctx.Err() == nil {
-				report(err)
-			}
+		case <-kick:
+		}
+		if err := c.Refresh(ctx, "", Origin{Actor: "system"}); err != nil && ctx.Err() == nil {
+			report(err)
+		}
+	}
+}
+
+func (c *Core) watchTmux(ctx context.Context, kick chan<- struct{}) {
+	client := tmux.Client{Socket: c.options.TmuxSocket}
+	for ctx.Err() == nil {
+		snapshot, _ := c.Snapshot("")
+		if len(snapshot.Sessions) > 0 {
+			_ = client.Watch(ctx, snapshot.Sessions[0].ID, func() {
+				select {
+				case kick <- struct{}{}:
+				default:
+				}
+			})
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
 		}
 	}
 }

@@ -66,6 +66,7 @@ type Snapshot struct {
 	Warnings      []Warning      `json:"warnings"`
 	Epoch         string         `json:"epoch,omitempty"`
 	Sequence      int64          `json:"sequence"`
+	Processes     []Process      `json:"processes"`
 }
 
 // Discover includes registered repositories and the current checkout. All Git
@@ -74,7 +75,7 @@ type Snapshot struct {
 func Discover(ctx context.Context, o Options) (Snapshot, error) {
 	snapshot := Snapshot{SchemaVersion: command.SchemaVersion, CapturedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		StateDir: canonical(o.StateDir), WorktreeRoot: canonical(o.WorktreeRoot),
-		Workspaces: []Workspace{}, Sessions: []tmux.Session{}, Warnings: []Warning{}}
+		Workspaces: []Workspace{}, Sessions: []tmux.Session{}, Warnings: []Warning{}, Processes: []Process{}}
 	if _, err := exec.LookPath("git"); err != nil {
 		return snapshot, &command.Error{Code: "dependency_missing", Message: "workspace discovery requires git on PATH"}
 	}
