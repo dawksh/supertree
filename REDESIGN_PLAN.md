@@ -144,7 +144,7 @@ slots that each terminal theme repainted; they are now exact values.
   those two columns wide shifts rows and tabs. `ST_ASCII=1` now covers every glyph that
   sits in a fixed column (status, pointer, tab state, truncation mark).
 
-- **Boxes:** with a sidebar, each tab is framed: thin empty panes (`@st_pad`) left, between
+- **Boxes:** each tab is framed, sidebar or not: thin empty panes (`@st_pad`) left, between
   sidebar and programs, right and bottom give tmux a neighbour for every border line.
   They also carry `@st_sidebar`, so existing "program pane" filters skip them. `ST_FRAME=0`
   turns it off. tmux joins the top and bottom rules across the gaps.

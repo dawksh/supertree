@@ -422,13 +422,13 @@ ST_SIDEBAR_WIDTH=24    # columns
 ST_FRAME=0             # no boxes: panes run to the screen edge
 ```
 
-With a sidebar, each tab is drawn as two boxes: the sidebar and the program
-panes, with a gap between them and around the edge. tmux has no padding
+Each tab is drawn as boxes: the program panes, and the sidebar when it is
+shown, with a gap between them and around the edge. tmux has no padding
 setting, so the gaps are thin empty panes (one column, or one row at the
 bottom) that give tmux a neighbour to draw each border line against. They cost
 about 6 columns and 2 rows. `M-h`/`M-l`, `M-x` and splits skip them; a mouse
-click can still land on one, and `M-l` moves on. Hiding the sidebar with `M-B`
-also removes the boxes.
+click can still land on one, and `M-l` moves on. With the sidebar hidden the
+program panes keep their box.
 
 The sidebar needs `curl` and an fzf recent enough for `--listen`, `--id-nth`
 and `--gutter`. Sessions opened before upgrading get their tabs and sidebar the

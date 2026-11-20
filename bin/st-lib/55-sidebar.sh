@@ -17,24 +17,23 @@ window_sidebar() {
 }
 
 # tmux has no padding. Thin empty panes stand in for it: with a neighbour on every side,
-# tmux draws a border line right round the sidebar and the program panes.
+# tmux draws a border line right round the program panes, and the sidebar when shown.
 # They carry @st_sidebar too, so everything that skips the sidebar skips them.
 frame_window() {
   local window=$1 side pane
   [ "$ST_FRAME" != 0 ] || return 0
   side=$(window_sidebar "$window")
-  [ -n "$side" ] || return 0
   if ! tmux list-panes -t "$window" -F '#{@st_pad}' 2>/dev/null | grep -q .; then
     # '' makes a pane with no program in it (tmux(1), split-window).
     for pane in $(tmux split-window -fhb -d -l 1 -t "$window" -P -F '#{pane_id}' '' \; \
-        split-window -h -d -l 1 -t "$side" -P -F '#{pane_id}' '' \; \
-        split-window -fh -d -l 1 -t "$window" -P -F '#{pane_id}' ''); do
+        split-window -fh -d -l 1 -t "$window" -P -F '#{pane_id}' '') \
+        $([ -z "$side" ] || tmux split-window -h -d -l 1 -t "$side" -P -F '#{pane_id}' ''); do
       tmux set-option -p -t "$pane" @st_sidebar 1 \; set-option -p -t "$pane" @st_pad x
     done
     # Last and full width, so the bottom line runs under the sidebar too.
     pane=$(tmux split-window -fv -d -l 1 -t "$window" -P -F '#{pane_id}' '') &&
       tmux set-option -p -t "$pane" @st_sidebar 1 \; set-option -p -t "$pane" @st_pad y
-    tmux resize-pane -t "$side" -x "$ST_SIDEBAR_WIDTH" 2>/dev/null || true
+    [ -z "$side" ] || tmux resize-pane -t "$side" -x "$ST_SIDEBAR_WIDTH" 2>/dev/null || true
   fi
   tmux set-option -w -t "$window" pane-border-status top \; set-option -w -t "$window" pane-border-format ''
 }
@@ -56,7 +55,6 @@ program_pane() { # window or pane
 
 add_sidebar() {
   local window=$1 dir=$2 pane lock holder
-  sidebar_enabled || return 0
   # M-B, the new-window hook and the refresher can all add at once; one per window at a time.
   lock="$ST_SIDEBAR_DIR/.add-${window#@}"
   mkdir -p "$ST_SIDEBAR_DIR"
@@ -66,7 +64,7 @@ add_sidebar() {
     rm -rf "$lock"; mkdir "$lock" 2>/dev/null || return 0
   fi
   printf '%s\n' "$$" > "$lock/pid"
-  if [ -z "$(window_sidebar "$window")" ]; then
+  if sidebar_enabled && [ -z "$(window_sidebar "$window")" ]; then
     unframe_window "$window"
     pane=$(tmux split-window -f -hb -d -l "$ST_SIDEBAR_WIDTH" -t "$window" -c "$dir" \
       -P -F '#{pane_id}' "$(st_self)" _sidebar) &&
@@ -514,6 +512,9 @@ cmd_sidebar_toggle() {
   done
   tmux list-panes -a -F '#{pane_id} #{@st_sidebar}' | awk '$2 == 1 { print $1 }' | while read -r pane; do
     tmux kill-pane -t "$pane"
+  done
+  tmux list-windows -a -F '#{window_id}'$'\t''#{@st_tree_dir}' | while IFS=$'\t' read -r win dir; do
+    [ -z "$dir" ] || frame_window "$win"
   done
 }
 
