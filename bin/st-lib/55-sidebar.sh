@@ -3,6 +3,7 @@
 
 ST_SIDEBAR=${ST_SIDEBAR:-1}
 ST_SIDEBAR_WIDTH=${ST_SIDEBAR_WIDTH:-24}
+ST_FRAME=${ST_FRAME:-1}
 ST_SIDEBAR_DIR="$ST_STATE/sidebar"
 
 sidebar_enabled() {
@@ -11,8 +12,46 @@ sidebar_enabled() {
 }
 
 window_sidebar() {
-  tmux list-panes ${1:+-t "$1"} -F '#{pane_id} #{@st_sidebar}' 2>/dev/null |
-    awk '$2 == 1 { print $1; exit }'
+  tmux list-panes ${1:+-t "$1"} -F '#{pane_id} #{@st_sidebar} #{@st_pad}' 2>/dev/null |
+    awk '$2 == 1 && $3 == "" { print $1; exit }'
+}
+
+# tmux has no padding. Thin empty panes stand in for it: with a neighbour on every side,
+# tmux draws a border line right round the sidebar and the program panes.
+# They carry @st_sidebar too, so everything that skips the sidebar skips them.
+frame_window() {
+  local window=$1 side pane
+  [ "$ST_FRAME" != 0 ] || return 0
+  side=$(window_sidebar "$window")
+  [ -n "$side" ] || return 0
+  if ! tmux list-panes -t "$window" -F '#{@st_pad}' 2>/dev/null | grep -q .; then
+    # '' makes a pane with no program in it (tmux(1), split-window).
+    for pane in $(tmux split-window -fhb -d -l 1 -t "$window" -P -F '#{pane_id}' '' \; \
+        split-window -h -d -l 1 -t "$side" -P -F '#{pane_id}' '' \; \
+        split-window -fh -d -l 1 -t "$window" -P -F '#{pane_id}' ''); do
+      tmux set-option -p -t "$pane" @st_sidebar 1 \; set-option -p -t "$pane" @st_pad x
+    done
+    # Last and full width, so the bottom line runs under the sidebar too.
+    pane=$(tmux split-window -fv -d -l 1 -t "$window" -P -F '#{pane_id}' '') &&
+      tmux set-option -p -t "$pane" @st_sidebar 1 \; set-option -p -t "$pane" @st_pad y
+    tmux resize-pane -t "$side" -x "$ST_SIDEBAR_WIDTH" 2>/dev/null || true
+  fi
+  tmux set-option -w -t "$window" pane-border-status top \; set-option -w -t "$window" pane-border-format ''
+}
+
+unframe_window() {
+  local pane
+  for pane in $(tmux list-panes -t "$1" -F '#{pane_id} #{@st_pad}' 2>/dev/null | awk '$2 != "" { print $1 }'); do
+    tmux kill-pane -t "$pane" 2>/dev/null || true
+  done
+  tmux set-option -w -t "$1" pane-border-status off 2>/dev/null || true
+}
+
+# The program pane used last, else the first: select-pane -R from the sidebar
+# would land on the gap beside it.
+program_pane() { # window or pane
+  tmux list-panes -t "$1" -f '#{!=:#{@st_sidebar},1}' -F '#{pane_last} #{pane_id}' 2>/dev/null |
+    awk '$1 == 1 { print $2; found = 1; exit } NR == 1 { first = $2 } END { if (!found && first != "") print first }'
 }
 
 add_sidebar() {
@@ -28,10 +67,12 @@ add_sidebar() {
   fi
   printf '%s\n' "$$" > "$lock/pid"
   if [ -z "$(window_sidebar "$window")" ]; then
+    unframe_window "$window"
     pane=$(tmux split-window -f -hb -d -l "$ST_SIDEBAR_WIDTH" -t "$window" -c "$dir" \
       -P -F '#{pane_id}' "$(st_self)" _sidebar) &&
       tmux set-option -p -t "$pane" @st_sidebar 1 \; set-option -p -t "$pane" @st_sidebar_code "$(st_code_id)"
   fi
+  frame_window "$window"
   rm -rf "$lock"
 }
 
@@ -47,8 +88,8 @@ st_code_id() {
 sidebar_respawn_stale() {
   local code=$1 self pane
   self=$(st_self)
-  tmux list-panes -a -F '#{pane_id}|#{@st_sidebar}|#{@st_sidebar_code}' 2>/dev/null |
-    awk -F'|' -v c="$code" '$2 == 1 && $3 != c { print $1 }' |
+  tmux list-panes -a -F '#{pane_id}|#{@st_sidebar}|#{@st_sidebar_code}|#{@st_pad}' 2>/dev/null |
+    awk -F'|' -v c="$code" '$2 == 1 && $3 != c && $4 == "" { print $1 }' |
     while read -r pane; do
       tmux set-option -p -t "$pane" @st_sidebar_code "$code" 2>/dev/null &&
         tmux respawn-pane -k -t "$pane" "$self" _sidebar 2>/dev/null || true
@@ -63,9 +104,13 @@ sidebar_panes_exist() {
 sidebar_fit() {
   local scope=(-a)
   [ -z "${1:-}" ] || scope=(-s -t "=$1")
-  tmux list-panes "${scope[@]}" -F '#{pane_id} #{@st_sidebar} #{pane_width}' 2>/dev/null |
-    awk -v w="$ST_SIDEBAR_WIDTH" '$2 == 1 && $3 != w { print $1 }' |
-    while read -r pane; do tmux resize-pane -t "$pane" -x "$ST_SIDEBAR_WIDTH" 2>/dev/null || true; done
+  # Left to right, as tmux lists them: each pane hands its spare columns to the next one.
+  tmux list-panes "${scope[@]}" -F '#{pane_id} #{@st_sidebar} #{pane_width} #{pane_height} #{@st_pad}' 2>/dev/null |
+    awk -v w="$ST_SIDEBAR_WIDTH" '
+      $5 == "x" && $3 != 1 { print $1, "-x", 1 }
+      $5 == "y" && $4 != 1 { print $1, "-y", 1 }
+      $2 == 1 && $5 == "" && $3 != w { print $1, "-x", w }' |
+    while read -r pane flag size; do tmux resize-pane -t "$pane" "$flag" "$size" 2>/dev/null || true; done
 }
 
 # Not a pane-exited hook: tmux 3.6 runs that hook from whichever window is current, not the one that exited.
@@ -73,12 +118,13 @@ sidebar_fit() {
 # and this refresher both added one.
 sidebar_sweep() {
   local kind target sess windows
-  tmux list-panes -a -F '#{window_id}|#{pane_id}|#{@st_sidebar}|#{session_name}|#{session_windows}|#{@st_tree_dir}' 2>/dev/null |
+  tmux list-panes -a -F '#{window_id}|#{pane_id}|#{@st_sidebar}|#{session_name}|#{session_windows}|#{@st_tree_dir}|#{@st_pad}' 2>/dev/null |
     awk -F'|' -v restore="$(sidebar_enabled && echo 1)" '
       { panes[$1]++; sess[$1] = $4; nwin[$1] = $5; tree[$1] = $6
-        if ($3 == 1) { if (side[$1]++) print "extra|" $2 } }
+        if ($3 == 1) chrome[$1]++
+        if ($3 == 1 && $7 == "") { if (side[$1]++) print "extra|" $2 } }
       END { for (w in panes) {
-        if (side[w] == panes[w]) print "empty|" w "|" sess[w] "|" nwin[w]
+        if (chrome[w] == panes[w]) print "empty|" w "|" sess[w] "|" nwin[w]
         else if (!side[w] && restore && tree[w] != "") print "restore|" w "|" tree[w]
       } }' |
     while IFS='|' read -r kind target sess windows; do
@@ -352,7 +398,7 @@ cmd_sidebar() {
           --bind="l:execute-silent:$self _sidebar-open {2} {3}" \
           --bind="double-click:execute-silent:$self _sidebar-open {2} {3}" \
           --bind="d:execute-silent:$self _sidebar-rm {2} {3}" \
-          --bind='esc:execute-silent(tmux select-pane -R),h:execute-silent(tmux select-pane -R),q:execute-silent(tmux select-pane -R)' \
+          --bind="esc:execute-silent($self _sidebar-leave),h:execute-silent($self _sidebar-leave),q:execute-silent($self _sidebar-leave)" \
           --bind="ctrl-r:reload:$self _sidebar-rows" \
           --bind="resize:execute-silent:$self _sidebar-heal" || sleep 1
   done
@@ -368,7 +414,7 @@ cmd_sidebar_open() {
       return 0;;
   esac
   # Leave focus on the tab so coming back to this tree lands in the program, not the list.
-  tmux select-pane -t "$TMUX_PANE" -R
+  cmd_sidebar_leave
   build_session "$sess" "$dir"
   attach "$sess"
 }
@@ -403,7 +449,14 @@ focus_content() {
   local active
   active=$(tmux display-message -p -t "=$1:" '#{pane_id} #{@st_sidebar}' 2>/dev/null) || return 0
   [ "${active#* }" = 1 ] || return 0
-  tmux select-pane -t "${active%% *}" -R
+  active=$(program_pane "${active%% *}")
+  [ -z "$active" ] || tmux select-pane -t "$active"
+}
+
+cmd_sidebar_leave() {
+  local pane
+  pane=$(program_pane "$TMUX_PANE")
+  [ -z "$pane" ] || tmux select-pane -t "$pane"
 }
 
 cmd_tree_step() {
@@ -456,6 +509,9 @@ cmd_sidebar_toggle() {
     return 0
   fi
   tmux set-option -g @st_sidebar_off 1
+  tmux list-windows -a -F '#{window_id}'$'\t''#{@st_tree_dir}' | while IFS=$'\t' read -r win dir; do
+    [ -z "$dir" ] || unframe_window "$win"
+  done
   tmux list-panes -a -F '#{pane_id} #{@st_sidebar}' | awk '$2 == 1 { print $1 }' | while read -r pane; do
     tmux kill-pane -t "$pane"
   done
@@ -470,6 +526,7 @@ st_register_command '_sidebar-rm' cmd_sidebar_rm ''
 st_register_command '_sidebar-rm-run' cmd_sidebar_rm_run ''
 st_register_command '_sidebar-focus' cmd_sidebar_focus ''
 st_register_command '_sidebar-heal' cmd_sidebar_heal ''
+st_register_command '_sidebar-leave' cmd_sidebar_leave ''
 st_register_command '_tree-next' cmd_tree_next ''
 st_register_command '_tree-prev' cmd_tree_prev ''
 st_register_command '_sidebar-toggle' cmd_sidebar_toggle ''
