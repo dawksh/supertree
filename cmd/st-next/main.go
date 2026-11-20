@@ -1,4 +1,4 @@
-// st-next is the opt-in, read-only Go workspace client.
+// st-next is the opt-in Go workspace client and local daemon.
 package main
 
 import (
@@ -16,54 +16,26 @@ import (
 	"text/tabwriter"
 
 	"github.com/dawksh/supertree/internal/command"
+	"github.com/dawksh/supertree/internal/core"
+	"github.com/dawksh/supertree/internal/rpc"
 	"github.com/dawksh/supertree/internal/workspace"
 )
 
-type inspectArgs struct {
-	WorkspaceID string `json:"workspace_id,omitempty"`
-}
+type inspectArgs = core.InspectArgs
+type commandList = core.CommandList
 
-type commandList struct {
-	SchemaVersion int                  `json:"schema_version"`
-	Commands      []command.Definition `json:"commands"`
-}
+// Set by release builds; source and dev builds keep these defaults.
+var version = "dev"
+var commit = "unknown"
 
 func registry(options workspace.Options) (*command.Registry, error) {
-	r := command.New()
-	err := command.Register(r, command.Definition{Name: "command.list", Version: 1,
-		Description: "Discover workspace commands and their argument and result schemas.",
-		Effects:     []string{"read"}, Repeatable: true}, func(_ context.Context, _ struct{}) (commandList, error) {
-		return commandList{SchemaVersion: command.SchemaVersion, Commands: r.Definitions()}, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	err = command.Register(r, command.Definition{Name: "workspace.inspect", Version: 1,
-		Description: "Take a read-only snapshot of registered repositories, the current checkout, and tmux sessions.",
-		Effects:     []string{"read"}, Repeatable: true}, func(ctx context.Context, args inspectArgs) (workspace.Snapshot, error) {
+	return core.Registry(func(ctx context.Context, args core.InspectArgs) (workspace.Snapshot, error) {
 		snapshot, err := workspace.Discover(ctx, options)
-		if err != nil || args.WorkspaceID == "" {
+		if err != nil {
 			return snapshot, err
 		}
-		for _, w := range snapshot.Workspaces {
-			if w.ID == args.WorkspaceID {
-				snapshot.Workspaces = []workspace.Workspace{w}
-				sessions := snapshot.Sessions[:0]
-				for _, s := range snapshot.Sessions {
-					for _, id := range w.SessionIDs {
-						if s.ID == id {
-							sessions = append(sessions, s)
-							break
-						}
-					}
-				}
-				snapshot.Sessions = sessions
-				return snapshot, nil
-			}
-		}
-		return snapshot, &command.Error{Code: "not_found", Message: "workspace not found: " + args.WorkspaceID}
+		return core.Select(snapshot, args.WorkspaceID)
 	})
-	return r, err
 }
 
 func main() {
@@ -72,22 +44,37 @@ func main() {
 	os.Exit(run(ctx, os.Args[1:], os.Stdout, os.Stderr))
 }
 
-const usage = `st next — experimental read-only workspace commands
+const usage = `st next — experimental workspace core
 
+  st next --version
   st next inspect [--workspace <id>] [--json]
   st next commands [--json]
   st next invoke <command> [<JSON object>]
+  st next daemon <start|serve|status|stop> [--json]
+  st next events [--workspace <id>] [--epoch <epoch> --after <sequence>] [--json]
+
+Start the daemon explicitly for durable IDs and shared state. Without a daemon,
+inspect/commands/invoke use read-only discovery. Prefix with --offline to force it.
+ST_NEXT_SOCKET overrides the daemon socket and requires a running daemon.
 
 Uses ST_STATE, ST_WORKTREE_ROOT, and the current checkout. ST_NEXT_TMUX_SOCKET
 selects a specific tmux socket; otherwise tmux uses its normal environment.
 `
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 1 && (args[0] == "--version" || args[0] == "version") {
+		fmt.Fprintf(stdout, "st-next %s (%s)\n", version, commit)
+		return 0
+	}
+	offline := len(args) > 0 && args[0] == "--offline"
+	if offline {
+		args = args[1:]
+	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		fmt.Fprint(stdout, usage)
 		return 0
 	}
-	jsonOutput := args[0] == "invoke"
+	jsonOutput := args[0] == "invoke" || args[0] == "events"
 	for _, arg := range args[1:] {
 		if arg == "--json" || arg == "--json=true" {
 			jsonOutput = true
@@ -108,6 +95,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
+	if args[0] == "daemon" || args[0] == "events" {
+		if offline {
+			return fail(&command.Error{Code: "invalid_arguments", Message: "daemon and events require an online connection"})
+		}
+		if err := runtimeCommand(ctx, args, stdout, jsonOutput); err != nil {
+			return fail(err)
+		}
+		return 0
+	}
 	var name string
 	var raw json.RawMessage
 	switch args[0] {
@@ -115,6 +111,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 		flags.SetOutput(io.Discard)
 		asJSON := flags.Bool("json", false, "print structured output")
+		flags.BoolVar(&offline, "offline", offline, "inspect without the daemon")
 		var id string
 		if args[0] == "inspect" {
 			flags.StringVar(&id, "workspace", "", "inspect one workspace ID")
@@ -146,17 +143,54 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	default:
 		return fail(&command.Error{Code: "unknown_command", Message: "unknown subcommand: " + args[0]})
 	}
+	if len(raw) != 0 && !json.Valid(raw) {
+		return fail(&command.Error{Code: "invalid_arguments", Message: "command arguments must be valid JSON"})
+	}
 	options, err := environment()
 	if err != nil {
 		return fail(err)
 	}
-	r, err := registry(options)
-	if err != nil {
-		return fail(err)
-	}
-	result, err := r.Invoke(ctx, name, raw)
-	if err != nil {
-		return fail(err)
+	var result any
+	socket := daemonSocket(options)
+	_, socketErr := os.Lstat(socket)
+	online := !offline && (socketErr == nil || !os.IsNotExist(socketErr) || os.Getenv("ST_NEXT_SOCKET") != "")
+	if online {
+		if name == "event.subscribe" {
+			err := rpc.Stream(ctx, socket, raw, clientMeta(options), func(data json.RawMessage) error { return json.NewEncoder(stdout).Encode(data) })
+			if err != nil && !errors.Is(err, context.Canceled) {
+				return fail(err)
+			}
+			return 0
+		}
+		data, err := rpc.Call(ctx, socket, name, raw, clientMeta(options))
+		if err != nil {
+			return fail(err)
+		}
+		switch name {
+		case "workspace.inspect":
+			var value workspace.Snapshot
+			if err := json.Unmarshal(data, &value); err != nil {
+				return fail(err)
+			}
+			result = value
+		case "command.list":
+			var value commandList
+			if err := json.Unmarshal(data, &value); err != nil {
+				return fail(err)
+			}
+			result = value
+		default:
+			result = data
+		}
+	} else {
+		r, err := registry(options)
+		if err != nil {
+			return fail(err)
+		}
+		result, err = r.Invoke(ctx, name, raw)
+		if err != nil {
+			return fail(err)
+		}
 	}
 	if jsonOutput {
 		encoder := json.NewEncoder(stdout)
@@ -208,5 +242,14 @@ func environment() (workspace.Options, error) {
 	if root == "" {
 		root = filepath.Join(homeDir, "projects", ".worktrees")
 	}
+	state, err = filepath.Abs(state)
+	if err != nil {
+		return workspace.Options{}, err
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return workspace.Options{}, err
+	}
+	state, root = workspace.CanonicalPath(state), workspace.CanonicalPath(root)
 	return workspace.Options{StateDir: state, WorktreeRoot: root, Directory: directory, TmuxSocket: os.Getenv("ST_NEXT_TMUX_SOCKET")}, nil
 }
