@@ -60,6 +60,7 @@ grep -Fx "$task_checkout/.dev/worktrees" "$task_tmp/result" >/dev/null
 grep -Fx 'default-core' "$task_tmp/result" >/dev/null
 [ "$(wc -l < "$ST_DEV_GO_LOG" | tr -d ' ')" = 1 ]
 grep -Fx "ST_WINDOWS='agent vim shell'" "$task_checkout/.dev/config" >/dev/null
+grep -Fx 'ST_AGENT_MODE=terminal' "$task_checkout/.dev/config" >/dev/null
 [ ! -e "$task_user/installed-state" ]
 [ ! -e "$task_user/installed-trees" ]
 [ -z "$(find "$task_checkout/.dev" -type l -print)" ]
@@ -140,10 +141,15 @@ grep -Fx 'installed st config' "$task_user/installed-config" >/dev/null
 
 # The manual entrypoint must open the familiar agent/editor/shell workspace.
 # Fixtures stand in for interactive programs; never start a real provider here.
+export ST_DEV_PROGRAM_LOG="$task_tmp/programs"
 for task_program in codex nvim; do
-  printf '#!/bin/sh\nexec /bin/sleep 60\n' > "$task_user/.local/bin/$task_program"
-  chmod +x "$task_user/.local/bin/$task_program"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$(basename "$0")" >> "$ST_DEV_PROGRAM_LOG"\nexec /bin/sleep 60\n' > "$task_tools/$task_program"
+  chmod +x "$task_tools/$task_program"
 done
+# The keybinding check deliberately replaced the server PATH. Restore it before
+# launching fixtures, and publish the log path to newly created program panes.
+"$task_checkout/dev" tmux set-environment -g PATH "$PATH"
+"$task_checkout/dev" tmux set-environment -g ST_DEV_PROGRAM_LOG "$ST_DEV_PROGRAM_LOG"
 git -C "$task_checkout" init -q -b main
 git -C "$task_checkout" -c user.name=Test -c user.email=test@example.com commit -q --allow-empty -m initial
 cd "$task_checkout"
@@ -152,6 +158,11 @@ task_tree=$("$task_checkout/dev" tmux list-sessions -F '#{session_name}' | sed '
 [ -n "$task_tree" ] || { cat "$task_tmp/open.log" >&2; exit 1; }
 "$task_checkout/dev" tmux list-windows -t "=$task_tree" -F '#{window_name}' > "$task_tmp/windows"
 for task_window in codex nvim shell; do grep -Fx "$task_window" "$task_tmp/windows" >/dev/null; done
+for task_tick in $(seq 1 40); do
+  if [ -f "$ST_DEV_PROGRAM_LOG" ] && grep -qx codex "$ST_DEV_PROGRAM_LOG"; then break; fi
+  sleep 0.05
+done
+grep -qx codex "$ST_DEV_PROGRAM_LOG" || { printf 'FAIL: default agent tab did not launch the actual Codex harness\n' >&2; exit 1; }
 # A new layout setting adds a window when reopening; existing programs survive.
 task_before=$("$task_checkout/dev" tmux list-panes -s -t "=$task_tree" -F '#{pane_id} #{pane_pid}')
 # Restyling also covers the older Go-only sessions, without switching clients or

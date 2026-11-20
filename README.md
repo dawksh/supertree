@@ -92,7 +92,7 @@ For a first manual check:
 4. From the shell, run `st control` to try the new workspace controls in a popup.
    Press `q` to return to your terminal. You can keep using the regular agent,
    editor, shell, tree picker, and splits without opening these controls.
-5. In a paired worktree, run `st share --diff --message 'Review this change'`
+5. If you explicitly enable experimental paired mode, run `st share --diff --message 'Review this change'`
    from the shell. In Neovim, select saved lines and run `:SupertreeAsk` to ask
    about them. Both use the agent already in this tree's Codex tab.
 
@@ -107,14 +107,16 @@ The base tab strip, pane borders, sidebar, and paired conversation use the same
 palette as the controls. Old extra-terminal sessions stay open and are labelled
 as extra terminals; opening the checkout returns to its normal worktree tabs.
 
-The agent tab says `terminal` for an existing regular agent CLI and `paired` for
-the native shared conversation. Changing config does not replace a running CLI.
-To try pairing immediately, use `./dev new try-pairing` from outside the sandbox
-(or `st new try-pairing` inside it). Fresh dev config enables pairing; existing
-config needs `ST_AGENT_MODE=paired`. Chat in Option-1, edit in Option-2, run tests
-in Option-3, then share saved code, a diff, or test output when useful. The paired
-agent receives that context in the same conversation; review its changes in Vim
-and answer pending questions through `st control`.
+The agent tab runs the actual selected harness: Codex, Claude Code, OpenCode, or
+your configured command. Chat and answer its approvals there, edit in Option-2,
+and run tests in Option-3. Supertree provides the surrounding workspace without
+replacing the harness's own interface.
+
+The tab says `terminal` for that normal harness and `paired` for the experimental
+native conversation console. Fresh dev config uses `ST_AGENT_MODE=terminal`.
+Native context delivery (`st share` and `:SupertreeAsk`) currently requires
+explicitly opting into `ST_AGENT_MODE=paired`; it does not inject messages into
+the regular harness. Changing config does not replace any running programs.
 
 Additional development commands:
 
@@ -488,8 +490,10 @@ The same workflow is available through structured commands:
 
 #### Pairing in the usual agent tab
 
-Dev sandboxes use `ST_AGENT_MODE=paired` with Codex. Opening a new worktree starts
-native pairing in its normal Codex tab beside the unchanged Neovim and shell tabs.
+Dev sandboxes default to `ST_AGENT_MODE=terminal`, showing the actual harness UI.
+The native pairing console is experimental and opt-in: set `ST_AGENT_MODE=paired`
+in `.dev/config` to try it with Codex. Opening a new worktree then starts native
+pairing in its normal Codex tab beside the unchanged Neovim and shell tabs.
 Type messages there as usual. `/interrupt` stops a turn; `/quit` returns to its
 shell. `st pair status`, `st pair send --message '...'`, and `st pair interrupt`
 target this worktree's agent without copying IDs or opening another agent.
