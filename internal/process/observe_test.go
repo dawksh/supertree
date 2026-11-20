@@ -128,4 +128,9 @@ func TestExistingWorkspaceTerminalsAreObservedWithoutTakingOwnership(t *testing.
 	for _, pane := range []string{agentPane, editor, outsider} {
 		run("display-message", "-p", "-t", pane, "#{pane_pid}")
 	}
+	// Read-only observation must not reserve managed process names, including
+	// names retained by older observations after their terminal has disappeared.
+	if _, err := invoke("process.start", process.StartArgs{WorkspaceID: snapshot.Workspaces[0].ID, Name: "nvim", Kind: "tests", Command: []string{"/bin/sh", "-c", "exit 0"}}); err != nil {
+		t.Fatalf("observed names changed launch behavior: %v", err)
+	}
 }

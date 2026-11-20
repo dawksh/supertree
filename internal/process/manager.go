@@ -145,7 +145,7 @@ func (m *Manager) available(id string) (workspace.Workspace, error) {
 }
 func unique(items []saved, ws, name string) error {
 	for _, item := range items {
-		if item.Process.WorkspaceID == ws && item.Process.Name == name {
+		if item.Process.Source != "observed" && item.Process.WorkspaceID == ws && item.Process.Name == name {
 			return conflict("process name already exists; restart it or choose another name")
 		}
 	}
