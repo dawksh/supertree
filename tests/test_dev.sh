@@ -154,6 +154,14 @@ task_tree=$("$task_checkout/dev" tmux list-sessions -F '#{session_name}' | sed '
 for task_window in codex nvim shell; do grep -Fx "$task_window" "$task_tmp/windows" >/dev/null; done
 # A new layout setting adds a window when reopening; existing programs survive.
 task_before=$("$task_checkout/dev" tmux list-panes -s -t "=$task_tree" -F '#{pane_id} #{pane_pid}')
+# Restyling also covers the older Go-only sessions, without switching clients or
+# replacing any programs. The scope guard rejects a normal tmux socket.
+"$task_checkout/dev" tmux new-session -d -s st-next-fixture -n tests -c "$task_checkout" 'sleep 60'
+task_extra_pid=$("$task_checkout/dev" tmux display-message -p -t '=st-next-fixture:tests' '#{pane_pid}')
+"$task_checkout/.dev/bin/st" _dev-style
+task_style=$("$task_checkout/dev" tmux show-options -v -t '=st-next-fixture:' status-style)
+case $task_style in *'bg=green'*) printf 'FAIL: extra terminals kept tmux default chrome\n' >&2; exit 1;; esac
+[ "$("$task_checkout/dev" tmux display-message -p -t '=st-next-fixture:tests' '#{pane_pid}')" = "$task_extra_pid" ]
 printf "ST_WINDOWS='agent vim shell extra'\nST_TAB_extra='sleep 60'\n" >> "$task_checkout/.dev/config"
 "$task_checkout/dev" open </dev/null >/dev/null 2>&1 || true
 "$task_checkout/dev" tmux list-windows -t "=$task_tree" -F '#{window_name}' | grep -Fx extra >/dev/null

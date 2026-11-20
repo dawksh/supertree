@@ -164,6 +164,7 @@ case ${TMUX:-} in "$dev_socket,"*) ;; *) unset TMUX TMUX_PANE;; esac
 if [ "$dev_internal" = 0 ]; then
   if "$dev_bin/tmux" -N has-session 2>/dev/null; then
     "$dev_bin/tmux" source-file "$dev_dir/tmux.conf"
+    case ${1:-} in ''|open|new|go|resume|home|control) "$dev_bin/st" _dev-style;; esac
   fi
   if [ "${1:-}" = tmux ]; then
     shift

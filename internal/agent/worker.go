@@ -25,7 +25,7 @@ import (
 	"github.com/dawksh/supertree/internal/workspace"
 )
 
-type WorkerOptions struct{ ID, WorkspaceID, TaskID, Directory, Socket, StateFile, Model, ThreadID, Executable string }
+type WorkerOptions struct{ ID, WorkspaceID, TaskID, Directory, Socket, StateFile, Model, ThreadID, Executable, PaneID, ProcessID, TmuxSocket string }
 type workerRequest struct {
 	Method         string `json:"method"`
 	Text           string `json:"text,omitempty"`
@@ -60,6 +60,7 @@ type worker struct {
 	answers      sync.Mutex
 	persist      sync.Mutex
 	print        sync.Mutex
+	presentation sync.Mutex
 	state        workerFile
 	questions    map[string]pendingQuestion
 	provider     *provider
@@ -85,6 +86,7 @@ func (w *worker) log(text string) {
 }
 func (w *worker) change(persist bool, fn func(*workspace.Agent)) error {
 	w.mu.Lock()
+	previous := w.state.Agent.State
 	fn(&w.state.Agent)
 	if w.storageError != "" {
 		w.state.Agent.State, w.state.Agent.Error = "failed", w.storageError
@@ -94,6 +96,7 @@ func (w *worker) change(persist bool, fn func(*workspace.Agent)) error {
 	if len(w.state.Agent.Messages) > 32 {
 		w.state.Agent.Messages = w.state.Agent.Messages[len(w.state.Agent.Messages)-32:]
 	}
+	changed := previous != w.state.Agent.State
 	w.mu.Unlock()
 	if persist {
 		if err := w.checkpoint(); err != nil {
@@ -106,6 +109,9 @@ func (w *worker) change(persist bool, fn func(*workspace.Agent)) error {
 			w.log("\nCannot checkpoint native session: " + err.Error() + ". Restore storage and restart this named process before sending again.\n")
 			return err
 		}
+	}
+	if changed {
+		w.publishState()
 	}
 	return nil
 }
@@ -186,7 +192,7 @@ func RunWorker(ctx context.Context, options WorkerOptions, input io.Reader, outp
 	defer listener.Close()
 	stop := context.AfterFunc(ctx, func() { listener.Close() })
 	defer stop()
-	w.log("Supertree · Codex\nConnecting to the native provider. The core may disconnect without stopping this session.\n")
+	w.row("running", "connecting", "Codex · this worktree's agent")
 	p, err := startProvider(ctx, options.Executable, w.notification, stderr)
 	if err != nil {
 		return err
@@ -243,7 +249,11 @@ func RunWorker(ctx context.Context, options WorkerOptions, input io.Reader, outp
 		}); err != nil {
 			return
 		}
-		w.log("\nCodex ready. Send context from the control panel, or type a message here. /interrupt stops the active turn.\n")
+		w.row("ok", "paired", "Codex · "+response.Model)
+		w.row("info", "chat", "Type a message here, then Enter. /interrupt stops the turn; /quit returns to shell.")
+		w.row("info", "workspace", "M-2 edit · M-3 run tests · M-w switch worktrees")
+		w.row("info", "share", "Vim :SupertreeAsk · shell st share --output --message 'Explain this failure'")
+		w.prompt()
 	}()
 	go func() {
 		<-p.done
@@ -269,7 +279,8 @@ func RunWorker(ctx context.Context, options WorkerOptions, input io.Reader, outp
 				}
 				reply := w.handle(req)
 				if reply.Error != nil {
-					w.log("\n" + reply.Error.Message + "\n")
+					w.row("warn", "waiting", reply.Error.Message)
+					w.prompt()
 				}
 			}
 		}()
@@ -417,7 +428,16 @@ func (w *worker) handle(req workerRequest) workerResponse {
 		}); err != nil {
 			return fail(fmt.Errorf("save pending delivery before sending: %w", err))
 		}
-		w.log("\nYou: " + safe(req.Text[:min(len(req.Text), 2000)]) + "\n")
+		message := req.Text
+		for _, marker := range []string{"\n\nShared goal:", "\n\n<captured-context"} {
+			if before, _, ok := strings.Cut(message, marker); ok {
+				message = before
+			}
+		}
+		w.row("info", "you", string([]rune(message)[:min(len([]rune(message)), 400)]))
+		if count := strings.Count(req.Text, "<captured-context "); count > 0 {
+			w.row("info", "shared", fmt.Sprintf("%d captured context item(s) · full receipt available in st control", count))
+		}
 		data, err := w.provider.call(ctx, "turn/start", map[string]any{"threadId": a.ThreadID, "clientUserMessageId": req.DeliveryID, "input": []map[string]any{{"type": "text", "text": req.Text}}})
 		var result struct {
 			Turn struct {
@@ -573,7 +593,8 @@ func (w *worker) notification(msg providerMessage) {
 				a.Error = params.Turn.Error.Message
 			}
 		})
-		w.log("\nTurn " + params.Turn.Status + ".\n")
+		w.row("info", "turn", params.Turn.Status+" · review the result or ask the next question")
+		w.prompt()
 	case "error":
 		w.change(true, func(a *workspace.Agent) { a.Error = params.Error.Message })
 	}
@@ -628,7 +649,8 @@ func (w *worker) request(msg providerMessage) {
 		}
 		a.Questions = append(a.Questions, q)
 	})
-	w.log("\nCodex is waiting for a response in the control panel: " + q.Prompt + "\n")
+	w.row("input", "needs you", q.Kind+" · M-3 then st control to review and answer")
+	w.log("\n" + q.Prompt + "\n")
 }
 func (w *worker) answer(req workerRequest, fail func(error) workerResponse) workerResponse {
 	w.mu.Lock()

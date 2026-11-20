@@ -116,6 +116,7 @@ EOF
     pane=$lent; state=${row%%"$tab"*}; command=${row#*"$tab"}
   fi
   if [ "$state" = done ]; then printf 'done'; return; fi
+  case $state in native:waiting) printf input; return;; native:running|native:connecting) printf running; return;; native:*) printf done; return;; esac
   if [ -z "$state" ]; then
     # Sessions created before status tracking have no pane option yet.
     bin=$(harness_bin)
@@ -160,6 +161,9 @@ agent_statuses() {
         s = order[i]; status = "running"
         if (s in pane) { state[s] = pane_state[pane[s]]; command[s] = pane_command[pane[s]] }
         if (!(s in pane) || state[s] == "done") status = "done"
+        else if (state[s] == "native:waiting") status = "input"
+        else if (state[s] == "native:running" || state[s] == "native:connecting") status = "native-running"
+        else if (state[s] ~ /^native:/) status = "done"
         else if (state[s] == "" && command[s] != bin && command[s] != "node" && command[s] != "bun") status = "done"
         printf "%s\037%s\037%s\n", s, status, pane[s]
       }
@@ -172,6 +176,7 @@ $rows
 EOF
   waiting=$'\n'$(panes_waiting_for_input "$running")$'\n'
   while IFS=$'\037' read -r sess status pane; do
+    [ "$status" != native-running ] || status=running
     if [ "$status" = running ]; then
       case $waiting in *$'\n'"$pane"$'\n'*) status=input;; esac
     fi
@@ -299,6 +304,7 @@ cmd_harness() {
     "$bin" pair run
     return
   fi
+  [ -z "${TMUX_PANE:-}" ] || tmux set-option -w -t "$TMUX_PANE" @st_agent_mode terminal 2>/dev/null || true
   repo=$(repo_key "$main")
   branch=$(tree_branch .)
   slug=$(branch_key "${branch:-(detached)}")

@@ -100,6 +100,22 @@ Inside the sandbox, `st` points to this checkout. Outside it, use `./dev` so
 commands target the local environment. `./dev test` runs automated tests; it does
 not open your manual workspace.
 
+The worktree is the workspace: its agent, Neovim, shell, and extra test/server
+terminals share one tab strip. `st control` shows that workspace's processes,
+shared context, and questions in an optional popup; it is not a separate desktop.
+The base tab strip, pane borders, sidebar, and paired conversation use the same
+palette as the controls. Old extra-terminal sessions stay open and are labelled
+as extra terminals; opening the checkout returns to its normal worktree tabs.
+
+The agent tab says `terminal` for an existing regular agent CLI and `paired` for
+the native shared conversation. Changing config does not replace a running CLI.
+To try pairing immediately, use `./dev new try-pairing` from outside the sandbox
+(or `st new try-pairing` inside it). Fresh dev config enables pairing; existing
+config needs `ST_AGENT_MODE=paired`. Chat in Option-1, edit in Option-2, run tests
+in Option-3, then share saved code, a diff, or test output when useful. The paired
+agent receives that context in the same conversation; review its changes in Vim
+and answer pending questions through `st control`.
+
 Additional development commands:
 
 ```sh

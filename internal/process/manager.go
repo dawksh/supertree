@@ -245,6 +245,20 @@ func (m *Manager) launch(ctx context.Context, item *saved) error {
 	p := &item.Process
 	sum := sha256.Sum256([]byte(p.WorkspaceID))
 	session := fmt.Sprintf("st-next-%x", sum[:8])
+	styledSession := false
+	// Extra terminals belong beside this checkout's existing agent/editor/shell.
+	// A background launch must never send the human into another workspace UI.
+	if w, err := m.available(p.WorkspaceID); err == nil {
+		if sessions, _, err := tmux.Inspect(ctx, m.client.Socket); err == nil {
+			for _, s := range sessions {
+				if s.SupertreeLabel != "" && s.Name != "supertree" && !strings.HasPrefix(s.Name, "st-next-") && slices.Contains(w.SessionIDs, s.ID) {
+					session = s.Name
+					styledSession = true
+					break
+				}
+			}
+		}
+	}
 	reserved := "stp_" + strings.TrimPrefix(p.ID, "proc_")
 	dir := strings.ReplaceAll(p.Directory, "#", "##") + string(filepath.Separator)
 	args := []string{"new-window", "-d", "-P", "-F", "#{pane_id}", "-t", "=" + session, "-n", reserved, "-c", dir, "exec sleep 86400"}
@@ -255,6 +269,18 @@ func (m *Manager) launch(ctx context.Context, item *saved) error {
 	if err == nil {
 		p.PaneID = pane
 		_, err = m.client.Run(ctx, "set-option", "-p", "-t", pane, "@st_next_process", p.ID)
+	}
+	if err == nil && styledSession {
+		// Reuse the worktree's actual tab theme, including user overrides. Window
+		// options do not inherit from sibling windows in tmux.
+		if windows, e := m.client.Run(ctx, "list-windows", "-t", "="+session, "-F", "#{window_id}"); e == nil {
+			source := strings.Split(windows, "\n")[0]
+			for _, option := range []string{"window-status-separator", "window-status-format", "window-status-current-format", "window-status-current-style", "pane-border-style", "pane-active-border-style"} {
+				if value, e := m.client.Run(ctx, "show-options", "-wqv", "-t", source, option); e == nil {
+					_, _ = m.client.Run(ctx, "set-option", "-w", "-t", pane, option, value)
+				}
+			}
+		}
 	}
 	if err == nil {
 		_, err = m.client.Run(ctx, "set-option", "-p", "-t", pane, "remain-on-exit", "on")

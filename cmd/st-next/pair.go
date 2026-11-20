@@ -115,7 +115,7 @@ func pairCommand(ctx context.Context, args []string, stdout io.Writer) error {
 		os.Setenv("ST_NEXT_TMUX_SOCKET", options.TmuxSocket)
 		workerCtx, stop := signal.NotifyContext(ctx, syscall.SIGHUP)
 		defer stop()
-		return agent.RunWorker(workerCtx, agent.WorkerOptions{ID: binding.Agent.ID, WorkspaceID: *ws, TaskID: binding.Agent.TaskID, Directory: binding.Directory, Socket: binding.Socket, StateFile: binding.StateFile, Model: binding.Agent.Model, ThreadID: binding.Agent.ThreadID, Executable: provider}, os.Stdin, stdout, os.Stderr)
+		return agent.RunWorker(workerCtx, agent.WorkerOptions{ID: binding.Agent.ID, WorkspaceID: *ws, TaskID: binding.Agent.TaskID, Directory: binding.Directory, Socket: binding.Socket, StateFile: binding.StateFile, Model: binding.Agent.Model, ThreadID: binding.Agent.ThreadID, Executable: provider, PaneID: bind.PaneID, ProcessID: binding.Agent.ProcessID, TmuxSocket: options.TmuxSocket}, os.Stdin, stdout, os.Stderr)
 	}
 	data, err := call("agent.primary", agent.PrimaryArgs{WorkspaceID: *ws})
 	if err != nil {

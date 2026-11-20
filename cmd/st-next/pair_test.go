@@ -233,6 +233,15 @@ func TestPairingLivesInNormalAgentTabAndResumesExactConversation(t *testing.T) {
 			t.Fatalf("worker not in original agent tab: %#v", p)
 		}
 	}
+	var extra workspace.Process
+	json.Unmarshal(call("process", "start", "--name", "test watcher", "--kind", "tests", "--", "sleep", "120"), &extra)
+	if extra.SessionID != tmux("display-message", "-p", "-t", "="+session+":codex", "#{session_id}") {
+		t.Fatal("new test process opened a separate workspace instead of another tab")
+	}
+	if tmux("show-options", "-wqv", "-t", extra.WindowID, "window-status-current-format") != tmux("show-options", "-wqv", "-t", "="+session+":codex", "window-status-current-format") {
+		t.Fatal("new test tab did not inherit the worktree's visual design")
+	}
+	call("process", "stop", extra.ID)
 	params, _ := json.Marshal(agent.BindArgs{WorkspaceID: a.WorkspaceID, PaneID: agentPane})
 	if out, err := command(binary, "invoke", "agent.bind", string(params)); err == nil || !strings.Contains(string(out), "already running") {
 		t.Fatalf("duplicate primary binding allowed: %s %v", out, err)

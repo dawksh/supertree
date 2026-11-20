@@ -56,6 +56,7 @@ func (m *Manager) Host(ctx context.Context, workspaceID, paneID, agentID string)
 	if _, err := m.client.Run(ctx, "set-option", "-p", "-t", pane.ID, "@st_next_process", id); err != nil {
 		return item.Process, err
 	}
+	_, _ = m.client.Run(ctx, "set-option", "-w", "-t", pane.WindowID, "@st_agent_mode", "paired")
 	if err := m.save(ctx, &item); err != nil {
 		if pane.ProcessID == "" {
 			_, _ = m.client.Run(context.WithoutCancel(ctx), "set-option", "-pu", "-t", pane.ID, "@st_next_process")

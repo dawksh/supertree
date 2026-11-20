@@ -214,7 +214,7 @@ style_session() {
 style_tab() {
   local target=$1 slot=$2 label
   # @st_tab_state comes from the sidebar refresher (running/input); without it, fall back to the pane state.
-  label='#{?@st_slot,#{@st_slot}. ,}#W'
+  label='#{?@st_slot,#{@st_slot}. ,}#W#{?@st_agent_mode, · #{@st_agent_mode},}'
   label="$label#{?@st_tab_state,#{?#{==:#{@st_tab_state},input}, #[fg=$UI_IN_T]$G_IN,#{?#{==:#{@st_tab_state},running}, #[fg=$UI_RUN_T]$G_RUN,}},#{?#{==:#{@st_agent_state},running}, #[fg=$UI_RUN_T]$G_RUN,}}"
   tmux set-option -w -t "$target" @st_slot "$slot" &&
   tmux set-option -w -t "$target" window-status-separator '  ' &&
@@ -237,6 +237,44 @@ style_panes() {
   tmux set-option -w -t "$target" window-style 'bg=default'
   tmux set-option -w -t "$target" window-active-style 'bg=default'
   tmux set-option -w -t "$target" pane-scrollbars off 2>/dev/null || true
+}
+
+# Apply the shared chrome to this checkout's private dev server, including old
+# named-process windows. Only status/options change; no programs are restarted.
+cmd_dev_style() {
+  [ -n "${ST_DEV_ROOT:-}" ] && [ "$ST_STATE" = "$ST_DEV_ROOT/.dev/state" ] || return 0
+  local key expected sess name label path win slot hint agent_name mode
+  key=$(identity_hash "$ST_DEV_ROOT")
+  expected="/tmp/supertree-dev-$(id -u)/${key:0:16}.sock"
+  [ "${ST_NEXT_TMUX_SOCKET:-}" = "$expected" ] || die 'refusing to style a different tmux server'
+  tmux set-option -g status-position top
+  tmux set-option -g status-style "fg=$UI_TEXT_T,bg=$UI_BAR_T"
+  tmux set-option -g message-style "fg=$UI_TEXT_T,bg=$UI_TAB_T"
+  tmux set-option -g status-right "#[fg=$UI_DIM_T]dev · M-/ keys "
+  tmux list-sessions -F '#{session_name}'$'\037''#{@supertree_label}'$'\037''#{session_path}' 2>/dev/null |
+    while IFS=$'\037' read -r sess label path; do
+      hint='dev · M-w trees · M-/ keys'
+      case $sess in st-next-*)
+        label="$(basename "$(main_worktree "$path")")/$(tree_branch "$path")"
+        hint='dev · extra terminals · M-w trees'
+        tmux set-option -t "=$sess:" @supertree_label "$label";;
+      esac
+      [ -n "$label" ] || continue
+      style_session "$sess"
+      agent_name=$(tmux show-options -qv -t "=$sess:" @st_agent_window 2>/dev/null) || agent_name=''
+      [ -n "$agent_name" ] || agent_name=$(harness_window)
+      tmux set-option -t "=$sess:" status-right "#{?@st_need_text,#[fg=$UI_PANEL_T]#[bg=$UI_IN_T]#[bold] #{@st_need_text} #[default] ,}#[fg=$UI_DIM_T]$hint "
+      tmux list-windows -t "=$sess" -F '#{window_id}'$'\t''#{window_name}' |
+        while IFS=$'\t' read -r win name; do
+          if [ "$name" = "$agent_name" ]; then
+            mode=terminal
+            if tmux list-panes -t "$win" -F '#{@st_next_process}' | grep -q '^host_agent_'; then mode=paired; fi
+            tmux set-option -w -t "$win" @st_agent_mode "$mode"
+          fi
+          slot=$(configured_windows | while read -r key; do printf '%s\n' "$(window_name "$key")"; done | grep -nxF -- "$name" | cut -d: -f1) || slot=''
+          style_tab "$win" "$slot"
+        done
+    done
 }
 
 cmd_split() {
@@ -788,6 +826,7 @@ cmd_leave() {
 
 st_register_command 'down' cmd_down 'close sessions; keep worktrees' 'down [branch|--subtrees|--all]'
 st_register_command 'home' cmd_home 'open the Supertree home shell'
+st_register_command '_dev-style' cmd_dev_style ''
 st_register_command 'toggle' cmd_toggle ''
 st_register_command 'window' cmd_window ''
 st_register_command 'last' cmd_last 'switch to the previous tree'
