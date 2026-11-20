@@ -6,11 +6,14 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"os"
 	"reflect"
 	"slices"
 	"sync"
 	"time"
 
+	"github.com/dawksh/supertree/internal/agent"
+	"github.com/dawksh/supertree/internal/collab"
 	"github.com/dawksh/supertree/internal/command"
 	"github.com/dawksh/supertree/internal/process"
 	"github.com/dawksh/supertree/internal/store"
@@ -56,6 +59,10 @@ func Select(snapshot workspace.Snapshot, id string) (workspace.Snapshot, error) 
 			snapshot.Processes = slices.Clone(snapshot.Processes)
 			snapshot.Processes = slices.DeleteFunc(snapshot.Processes, func(p workspace.Process) bool { return p.WorkspaceID != id })
 			snapshot.Views = filterViews(snapshot.Views, id)
+			snapshot.Tasks = slices.DeleteFunc(slices.Clone(snapshot.Tasks), func(t workspace.Task) bool { return t.WorkspaceID != id })
+			snapshot.Contexts = slices.DeleteFunc(slices.Clone(snapshot.Contexts), func(t workspace.ContextItem) bool { return t.WorkspaceID != id })
+			snapshot.Questions = slices.DeleteFunc(slices.Clone(snapshot.Questions), func(t workspace.Question) bool { return t.WorkspaceID != id })
+			snapshot.Agents = slices.DeleteFunc(slices.Clone(snapshot.Agents), func(t workspace.Agent) bool { return t.WorkspaceID != id })
 			return selectSessions(snapshot, w), nil
 		}
 	}
@@ -105,15 +112,18 @@ type subscriber struct {
 }
 
 type Core struct {
-	options   workspace.Options
-	store     *store.Store
-	refresh   sync.Mutex
-	mu        sync.Mutex
-	state     workspace.Snapshot
-	history   []Event
-	clients   map[*subscriber]bool
-	processes *process.Manager
-	views     map[string]viewLease
+	options       workspace.Options
+	store         *store.Store
+	refresh       sync.Mutex
+	mu            sync.Mutex
+	state         workspace.Snapshot
+	history       []Event
+	clients       map[*subscriber]bool
+	processes     *process.Manager
+	views         map[string]viewLease
+	collaboration *collab.Manager
+	agents        *agent.Manager
+	observed      []workspace.Workspace
 }
 
 func Open(ctx context.Context, options workspace.Options) (*Core, error) {
@@ -126,16 +136,15 @@ func Open(ctx context.Context, options workspace.Options) (*Core, error) {
 	c := &Core{options: options, store: s, clients: make(map[*subscriber]bool),
 		views: make(map[string]viewLease),
 		state: workspace.Snapshot{Epoch: fmt.Sprintf("%x", token)}}
-	c.processes = process.New(s, tmux.Client{Socket: options.TmuxSocket}, func(id string) (workspace.Workspace, error) {
-		snapshot, err := c.Snapshot(id)
-		if err != nil {
-			return workspace.Workspace{}, err
+	c.processes = process.New(s, tmux.Client{Socket: options.TmuxSocket}, c.workspace)
+	c.processes.Defaults = map[string]string{"ST_STATE": options.StateDir, "ST_WORKTREE_ROOT": options.WorktreeRoot, "ST_NEXT_TMUX_SOCKET": options.TmuxSocket, "ST_NEXT_SOCKET": options.ControlSocket, "PATH": os.Getenv("PATH"), "HOME": os.Getenv("HOME")}
+	for _, key := range []string{"ST_DEV_ROOT", "ST_CONFIG", "ST_CONFDIR", "CODEX_HOME"} {
+		if value := os.Getenv(key); value != "" {
+			c.processes.Defaults[key] = value
 		}
-		if len(snapshot.Workspaces) != 1 {
-			return workspace.Workspace{}, &command.Error{Code: "invalid_arguments", Message: "workspace ID is required"}
-		}
-		return snapshot.Workspaces[0], nil
-	})
+	}
+	c.collaboration = collab.New(s, c.workspace, c.processes.Output)
+	c.agents = agent.New(s, c.processes, c.collaboration, options.StateDir, c.workspace)
 	if err := c.Refresh(ctx, options.Directory, Origin{Actor: "system"}); err != nil {
 		s.Close()
 		return nil, err
@@ -144,6 +153,17 @@ func Open(ctx context.Context, options workspace.Options) (*Core, error) {
 }
 
 func (c *Core) Close() error { return c.store.Close() }
+
+func (c *Core) workspace(id string) (workspace.Workspace, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, w := range c.observed {
+		if w.ID == id {
+			return w, nil
+		}
+	}
+	return workspace.Workspace{}, &command.Error{Code: "not_found", Message: "workspace not found: " + id}
+}
 
 // Refresh serializes discovery and its database commit. Slow subprocesses run
 // without holding the state mutex, so subscribers and cached reads stay usable.
@@ -171,9 +191,24 @@ func (c *Core) refreshState(ctx context.Context, directory string, origin Origin
 	if err := c.store.Reconcile(ctx, &next); err != nil {
 		return err
 	}
+	c.mu.Lock()
+	c.observed = slices.Clone(next.Workspaces)
+	c.mu.Unlock()
 	next.Processes, err = c.processes.Snapshot(ctx)
 	if err != nil {
 		return err
+	}
+	shared, err := c.collaboration.Snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	next.Tasks, next.Contexts, next.Questions = shared.Tasks, shared.Contexts, shared.Questions
+	next.Agents, err = c.agents.Snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	for _, a := range next.Agents {
+		next.Questions = append(next.Questions, a.Questions...)
 	}
 	// Administrative identity keys are persistence details, never client state.
 	for i := range next.Workspaces {
@@ -215,6 +250,9 @@ func (c *Core) refreshState(ctx context.Context, directory string, origin Origin
 }
 
 func changedWorkspaces(old, next workspace.Snapshot) []string {
+	if !reflect.DeepEqual(old.Tasks, next.Tasks) || !reflect.DeepEqual(old.Contexts, next.Contexts) || !reflect.DeepEqual(old.Questions, next.Questions) || !reflect.DeepEqual(old.Agents, next.Agents) {
+		return []string{}
+	}
 	previous := make(map[string]workspace.Workspace)
 	for _, w := range old.Workspaces {
 		previous[w.ID] = w

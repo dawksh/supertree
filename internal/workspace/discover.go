@@ -27,7 +27,8 @@ type Options struct {
 	TmuxSocket   string
 	// Repositories supplies paths remembered by the daemon, without modifying
 	// the legacy repository registry. Discover itself remains read-only.
-	Repositories []string
+	Repositories  []string
+	ControlSocket string
 }
 
 type Workspace struct {
@@ -68,6 +69,10 @@ type Snapshot struct {
 	Sequence      int64          `json:"sequence"`
 	Processes     []Process      `json:"processes"`
 	Views         []View         `json:"views"`
+	Tasks         []Task         `json:"tasks"`
+	Contexts      []ContextItem  `json:"contexts"`
+	Questions     []Question     `json:"questions"`
+	Agents        []Agent        `json:"agents"`
 }
 
 // Discover includes registered repositories and the current checkout. All Git
@@ -76,7 +81,7 @@ type Snapshot struct {
 func Discover(ctx context.Context, o Options) (Snapshot, error) {
 	snapshot := Snapshot{SchemaVersion: command.SchemaVersion, CapturedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		StateDir: canonical(o.StateDir), WorktreeRoot: canonical(o.WorktreeRoot),
-		Workspaces: []Workspace{}, Sessions: []tmux.Session{}, Warnings: []Warning{}, Processes: []Process{}, Views: []View{}}
+		Workspaces: []Workspace{}, Sessions: []tmux.Session{}, Warnings: []Warning{}, Processes: []Process{}, Views: []View{}, Tasks: []Task{}, Contexts: []ContextItem{}, Questions: []Question{}, Agents: []Agent{}}
 	if _, err := exec.LookPath("git"); err != nil {
 		return snapshot, &command.Error{Code: "dependency_missing", Message: "workspace discovery requires git on PATH"}
 	}

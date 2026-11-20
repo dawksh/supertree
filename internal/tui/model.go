@@ -69,6 +69,9 @@ type Model struct {
 	lastPresent                         time.Time
 	generation                          int64
 	localSelection                      bool
+	agentID                             string
+	contextIDs                          []string
+	collabIndex                         int
 }
 
 func New(options Options) Model {
@@ -155,6 +158,7 @@ func (m *Model) normalize() {
 			m.processID = items[0].ID
 		}
 	}
+	m.normalizeCollaboration()
 }
 func (m Model) output() tea.Cmd {
 	p, ok := m.selected()
@@ -176,7 +180,7 @@ func (m Model) present() tea.Cmd {
 		return nil
 	}
 	input := m.input
-	if m.mode == "form" {
+	if m.mode == "form" || strings.HasSuffix(m.mode, "-form") {
 		input = strings.Join(m.fields, " | ")
 	}
 	for _, d := range m.commands {
@@ -257,6 +261,17 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.message = msg.Name + " completed"
 		m.result = string(msg.Data)
+		if msg.Name == "task.create" || msg.Name == "context.capture" || msg.Name == "agent.start" {
+			m.panel = "collaboration"
+		}
+		if msg.Name == "agent.send" {
+			var delivery workspace.Delivery
+			if json.Unmarshal(msg.Data, &delivery) == nil {
+				m.message = "Delivery " + delivery.Status + " · " + delivery.ID
+			}
+			m.mode, m.index = "result", 0
+			return m, tea.Batch(m.load(), m.present())
+		}
 		if msg.Name == "process.attach" {
 			var attachment process.Attachment
 			if err := json.Unmarshal(msg.Data, &attachment); err != nil {
@@ -301,6 +316,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.mode != "browse" {
 			return m.edit(msg)
+		}
+		if next, cmd, handled := m.collaborationKey(msg); handled {
+			return next, cmd
 		}
 		switch msg.String() {
 		case "q":
@@ -438,6 +456,9 @@ func (m Model) edit(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = "browse"
 		m.pendingName = ""
 		return m, m.present()
+	}
+	if strings.HasSuffix(m.mode, "-form") {
+		return m.editCollaboration(key)
 	}
 	switch m.mode {
 	case "result":
@@ -644,6 +665,9 @@ func (m Model) View() string {
 	for _, text := range preview {
 		right = append(right, line(text, rightWidth-4))
 	}
+	if m.panel == "collaboration" {
+		right = m.collaborationView(rightWidth - 4)
+	}
 	leftBorder, rightBorder := lipgloss.Color("238"), lipgloss.Color("238")
 	if m.panel == "workspaces" {
 		leftBorder = "86"
@@ -656,9 +680,15 @@ func (m Model) View() string {
 		body = m.overlay(rightWidth+leftWidth-1, boxHeight+2)
 	}
 	footer := muted.Render(line("Tab switch · ↑↓/jk navigate · Enter attach · s shell · n new · x stop · r restart · m move · p palette · ? help · q quit", m.width))
+	if m.panel == "collaboration" {
+		footer = muted.Render(line("c processes · ↑↓ select · Space mark context · Enter inspect/answer · t goal · a agent · f file · d diff · i send · I interrupt · p palette · q quit", m.width))
+	}
 	return strings.Join([]string{header, body, line(m.message, m.width), footer}, "\n")
 }
 func (m Model) overlay(width, height int) string {
+	if strings.HasSuffix(m.mode, "-form") {
+		return m.collaborationOverlay(width, height)
+	}
 	rows := []string{}
 	switch m.mode {
 	case "result":
@@ -719,7 +749,7 @@ func (m Model) overlay(width, height int) string {
 			rows = append(rows, prefix+name)
 		}
 	case "help":
-		rows = append(rows, accent.Render("WORK TOGETHER"), "s starts a shell; n starts any named shell command.", "Enter attaches to a process; detach from tmux to return here.", "x closes only the selected process after confirmation.", "m moves an existing terminal without restarting its program.", "p discovers the same commands available to agent clients.", "Agents inspect view.list and select IDs with view.select.", "The core and terminals survive closing this control client.", "", "Esc returns · q/Ctrl-C quits from the main view")
+		rows = append(rows, accent.Render("WORK TOGETHER"), "s shell · n named program · Enter attach · x stop · m move", "c opens pairing · t shared goal · u marks goal done", "a starts native Codex · i sends message + marked context · I interrupts", "f captures saved file lines · d tracked diff · o process output · N note", "Space marks context · r recaptures · Enter answers a pending question", "p invokes discovered commands · agents inspect/select semantic views", "Closing the control client leaves the core and terminals running.", "", "Esc returns · q/Ctrl-C quits from the main view")
 	}
 	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("86")).Width(width).Height(height - 2).MaxHeight(height).Render(strings.Join(rows, "\n"))
 }

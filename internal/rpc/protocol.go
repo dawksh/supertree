@@ -15,7 +15,7 @@ import (
 	"github.com/dawksh/supertree/internal/command"
 )
 
-const MaxFrame = 1 << 20
+const MaxFrame = 8 << 20
 
 type Meta struct {
 	Directory    string `json:"directory,omitempty"`

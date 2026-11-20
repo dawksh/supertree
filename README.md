@@ -264,7 +264,7 @@ ordinary requests. Method names are the same commands exposed by `commands --jso
 Responses retain the request ID. JSON-RPC errors include the structured command
 error in `error.data`. Actor labels provide attribution, not authentication.
 The CLI defaults to actor `human`; set `ST_NEXT_ACTOR` and `ST_NEXT_REQUEST_ID`
-for scripts and agent clients. Frames are limited to 1 MiB, writes time out after
+for scripts and agent clients. Frames are limited to 8 MiB, writes time out after
 five seconds, and ordinary idle connections close after one minute.
 
 `event.subscribe` uses a dedicated connection and requires a request ID:
@@ -384,6 +384,99 @@ selection without selecting a tmux pane. Selection changes are rejected while
 human input is active. Agents operate the same `process.*` commands directly;
 no simulated keystrokes or screen-coordinate parsing is needed. Connected views
 expire after 30 seconds without a heartbeat; closing a view stops no processes.
+
+### Pairing through shared goals and context
+
+The Go baseline now includes named processes, the control TUI, and one native
+agent integration. Git worktree creation/removal still uses the existing shell
+commands. Macros, registers, bookmarks, and the Lua extension runtime come later.
+
+```sh
+./dev next tui
+```
+
+Press `c` for the pairing panel. `t` creates a shared goal; `a` starts native Codex.
+`f` captures saved file lines, `d` captures the tracked Git diff, `o` captures the
+selected process's output, and `N` adds a note. Use arrows to select a context item
+and Space to mark it. `i` opens a message with the marked context IDs, which you
+can inspect or edit before sending. Capturing context alone sends nothing.
+
+Questions appear in the same panel. Select one and press Enter to answer;
+provider approvals require an explicit `accept` or `decline`. `I` interrupts the
+selected native agent after confirmation, checking that its turn has not changed.
+Keep editing in your editor or shell
+while the agent runs. `r` recaptures a selected context source; `u` marks the shared
+goal done after confirmation. Agent turn completion does not mark a goal successful.
+
+The same workflow is available through structured commands:
+
+```sh
+./dev next daemon start
+./dev next task add --title 'Investigate the failing test' --notes 'Keep the interface stable'
+./dev next context add --file internal/example.go --start-line 10 --end-line 30
+./dev next context add --kind diff
+./dev next agent start --name pair --task <task-id>
+./dev next agent list
+./dev next agent send <agent-id> --message 'Investigate this failure' --context <context-id>
+./dev next question list
+./dev next question answer <question-id> --revision 1 --answer 'decline'
+./dev next agent interrupt <agent-id>
+./dev next invoke delivery.list '{}'
+./dev next invoke delivery.inspect '{"delivery_id":"<delivery-id>"}'
+```
+
+`task`, `context`, `agent`, and `question` accept `help`; `commands --json` describes
+all argument/result schemas. Human and agent clients invoke the same commands.
+Named terminals inherit the core's workspace/socket settings, so an agent calling
+the CLI reaches the same workspace interface. Task and question updates use
+revision checks to preserve concurrent human decisions.
+
+File captures record a hash of the saved source, path, and line range. Diff
+captures disable external diff/textconv commands and hash the tracked diff.
+Changed sources are marked stale and rejected during export/delivery unless a
+caller explicitly allows stale context. `context refresh <id>` retains the
+identity and records a new revision. Notes and output are captured snapshots,
+not continuously updated inputs. Context text is bounded to 32 KiB per item;
+truncation is visible, and deliveries include source revisions and capture times.
+Files must be regular text files up to 1 MiB within the selected checkout.
+
+The first native adapter uses the installed `codex app-server --stdio` protocol
+and your Codex login/configuration. It starts a worker as a named tmux process,
+so daemon or TUI disconnects leave its provider and conversation running. Native
+thread and turn IDs are exposed explicitly. Restarting the named worker resumes
+its saved exact thread; it never uses a provider's implicit “last conversation”.
+Native mode uses workspace-write sandboxing and on-request approvals. Command,
+file-change approvals, and provider user-input questions are supported; unknown
+provider requests are rejected visibly. Provider approvals require a `human` or
+`human:<name>` actor; agent-labeled clients cannot approve them. Actor labels
+remain cooperative attribution, not an authentication boundary. A corrupt
+checkpoint prevents startup; a checkpoint write failure disables new sends until
+storage is restored and the worker is restarted. Generic agent CLIs remain available as
+ordinary named terminal processes, with no invented native send/resume capabilities.
+
+Each delivery has a durable receipt containing the exact text/context sent.
+`sent` means the provider accepted a turn, not that its task succeeded. If an
+acknowledgement is lost, the receipt remains `pending`/`unknown`; inspect it to
+reconcile against the worker's receipt. Reusing an actor/request ID returns the
+previous delivery rather than sending twice. The TUI never automatically retries
+mutations. Recent receipt lists omit large text; inspect an ID for the full payload.
+Native conversation previews retain the latest 32 bounded messages; complete
+provider history remains with Codex. This is cooperative file access: arbitrary
+editors and agents can both write files, and the harness does not lock them out.
+
+For Neovim, explicitly load the optional selection bridge:
+
+```lua
+dofile('/path/to/supertree/editor/supertree.lua').setup({
+  command = { '/path/to/supertree/dev', 'next' },
+})
+```
+
+Select saved lines and run `:'<,'>SupertreeContext`. It uses the same CLI capture
+command, reports the context ID, and leaves delivery to you. Unsaved buffers must
+be saved first; the bridge never silently writes them. Other editors can invoke
+the CLI with a file path and line range directly. No symlinks or plugin install
+are required to test this bridge locally.
 
 ### Releases
 

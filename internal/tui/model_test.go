@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/dawksh/supertree/internal/agent"
+	"github.com/dawksh/supertree/internal/collab"
 	"github.com/dawksh/supertree/internal/command"
 	"github.com/dawksh/supertree/internal/core"
 	"github.com/dawksh/supertree/internal/process"
@@ -117,5 +119,49 @@ func TestPresentRedactsSensitiveArguments(t *testing.T) {
 	m.present()()
 	if strings.Contains(presented.Input, "secret") {
 		t.Fatal("sensitive input leaked into shared view state")
+	}
+}
+
+func TestCollaborationSelectsExplicitContextAndNeverDefaultsApproval(t *testing.T) {
+	m, _ := fixture(t)
+	var sent any
+	var method string
+	m.options.Invoke = func(_ context.Context, name string, args any) (json.RawMessage, error) {
+		method, sent = name, args
+		return json.RawMessage(`{}`), nil
+	}
+	m.state.Agents = []workspace.Agent{{ID: "agent_one", WorkspaceID: "ws_one", Name: "pair", State: "idle"}}
+	m.state.Contexts = []workspace.ContextItem{{ID: "ctx_one", WorkspaceID: "ws_one", Kind: "file", Title: "selected code"}}
+	m.state.Questions = []workspace.Question{{ID: "provider_question", WorkspaceID: "ws_one", AgentID: "agent_one", Kind: "approval", Prompt: "Allow command?", Options: []string{"accept", "decline"}, Status: "open", Revision: 1}}
+	m.normalize()
+	m, _ = key(m, runeKey("c"))
+	m, _ = key(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = key(m, tea.KeyMsg{Type: tea.KeySpace})
+	m, _ = key(m, runeKey("i"))
+	if m.mode != "message-form" || m.fields[1] != "ctx_one" {
+		t.Fatal("marked context not selected explicitly")
+	}
+	m, _ = key(m, runeKey("investigate this"))
+	m, _ = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	cmd()
+	args := sent.(agent.SendArgs)
+	if method != "agent.send" || args.AgentID != "agent_one" || len(args.ContextIDs) != 1 || args.ContextIDs[0] != "ctx_one" {
+		t.Fatal("delivery changed explicit targets")
+	}
+	m.mode = "browse"
+	m.collabIndex = 2
+	m, _ = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	method = ""
+	m, _ = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if method != "" || m.mode != "answer-form" || m.fields[0] != "" {
+		t.Fatal("approval defaulted to an answer")
+	}
+	m, _ = key(m, runeKey("decline"))
+	_, cmd = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	cmd()
+	answer := sent.(collab.AnswerArgs)
+	if method != "question.answer" || answer.Answer != "decline" || answer.ExpectedRevision != 1 {
+		t.Fatal("explicit approval answer was not preserved")
 	}
 }

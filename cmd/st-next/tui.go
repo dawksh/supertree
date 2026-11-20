@@ -58,14 +58,12 @@ func tuiCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	if err := json.Unmarshal(data, &commands); err != nil {
 		return err
 	}
-	ready := false
+	available := make(map[string]bool)
 	for _, d := range commands.Commands {
-		if d.Name == "view.open" {
-			ready = true
-		}
+		available[d.Name] = true
 	}
-	if !ready {
-		return &command.Error{Code: "upgrade_required", Message: "restart the core to load the TUI commands: st next daemon stop; st next daemon start"}
+	if !available["view.open"] || !available["agent.send"] || !available["context.capture"] {
+		return &command.Error{Code: "upgrade_required", Message: "restart the core to load the TUI and collaboration commands: st next daemon stop; st next daemon start (terminal programs keep running)"}
 	}
 	return tui.Run(ctx, tui.Options{Invoke: invoke, Attach: attachTerminal, WorkspaceID: *id}, socket, meta, os.Stdin, stdout)
 }

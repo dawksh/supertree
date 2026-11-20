@@ -11,15 +11,26 @@ type ProcessList struct {
 }
 
 func registerProcess[A, R any](c *Core, r *command.Registry, name, description string, effects []string, handler func(context.Context, A) (R, error)) error {
-	return command.Register(r, command.Definition{Name: name, Version: 1, Description: description, Effects: effects, Repeatable: len(effects) == 1 && effects[0] == "read", SensitiveArguments: []string{"environment"}}, func(ctx context.Context, args A) (R, error) {
+	sensitive := []string{}
+	if name == "process.start" {
+		sensitive = append(sensitive, "environment")
+	}
+	return command.Register(r, command.Definition{Name: name, Version: 1, Description: description, Effects: effects, Repeatable: len(effects) == 1 && effects[0] == "read", SensitiveArguments: sensitive}, func(ctx context.Context, args A) (R, error) {
 		mutating := !(len(effects) == 1 && effects[0] == "read")
-		if mutating {
+		long := name == "agent.send" || name == "agent.interrupt" || name == "question.answer"
+		if mutating && !long {
 			c.refresh.Lock()
 			defer c.refresh.Unlock()
 		}
 		result, err := handler(ctx, args)
 		if mutating {
-			if refreshErr := c.refreshState(ctx, "", command.Caller(ctx)); err == nil {
+			var refreshErr error
+			if long {
+				refreshErr = c.Refresh(ctx, "", command.Caller(ctx))
+			} else {
+				refreshErr = c.refreshState(ctx, "", command.Caller(ctx))
+			}
+			if err == nil {
 				err = refreshErr
 			}
 		}

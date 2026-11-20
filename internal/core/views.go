@@ -48,7 +48,7 @@ func (c *Core) RegisterViews(r *command.Registry) error {
 		if err := c.validateSelection(args.WorkspaceID, ""); err != nil {
 			return workspace.View{}, err
 		}
-		view := workspace.View{ID: process.ID("view"), WorkspaceID: args.WorkspaceID, Panel: "processes", Mode: "browse", Revision: 1, Actions: []string{"view.select", "process.start", "process.stop", "process.restart", "process.move", "process.attach", "command.list"}}
+		view := workspace.View{ID: process.ID("view"), WorkspaceID: args.WorkspaceID, Panel: "processes", Mode: "browse", Revision: 1, Actions: []string{"view.select", "process.start", "process.stop", "process.restart", "process.move", "process.attach", "command.list", "task.create", "task.update", "context.capture", "context.refresh", "context.export", "question.ask", "question.answer", "agent.start", "agent.send", "agent.interrupt", "delivery.inspect"}}
 		c.views[view.ID] = viewLease{view, time.Now()}
 		return view, nil
 	}); err != nil {

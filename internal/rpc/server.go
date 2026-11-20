@@ -50,6 +50,7 @@ type server struct {
 // Serve owns only the daemon socket, database and client connections. Shutdown
 // never signals tmux or the terminal programs it hosts.
 func Serve(ctx context.Context, options workspace.Options, socket string, log io.Writer) error {
+	options.ControlSocket = socket
 	endpoint, err := Listen(options.StateDir, socket)
 	if err != nil {
 		return err
@@ -74,6 +75,9 @@ func Serve(ctx context.Context, options workspace.Options, socket string, log io
 	}
 	if err == nil {
 		err = c.RegisterViews(s.r)
+	}
+	if err == nil {
+		err = c.RegisterCollaboration(s.r)
 	}
 	if err == nil {
 		err = command.Register(s.r, command.Definition{Name: "daemon.status", Version: 1,

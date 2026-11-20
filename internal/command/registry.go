@@ -183,6 +183,8 @@ func validate(value any, s map[string]any) error {
 // commands. Unsupported types fail registration instead of publishing a guess.
 func schema(t reflect.Type) (map[string]any, error) {
 	switch t.Kind() {
+	case reflect.Pointer:
+		return schema(t.Elem())
 	case reflect.String:
 		return map[string]any{"type": "string"}, nil
 	case reflect.Bool:

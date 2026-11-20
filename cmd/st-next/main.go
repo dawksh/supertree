@@ -54,6 +54,7 @@ const usage = `st next — experimental workspace core
   st next events [--workspace <id>] [--epoch <epoch> --after <sequence>] [--json]
   st next process <list|start|register|stop|restart|attach|move|output> [args]
   st next tui [--workspace <id>]
+  st next <task|context|agent|question> <action> [args]
 
 Start the daemon explicitly for durable IDs and shared state. Without a daemon,
 inspect/commands/invoke use read-only discovery. Prefix with --offline to force it.
@@ -96,6 +97,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "st next: %s\n", coded.Message)
 		}
 		return 1
+	}
+	if args[0] == "_agent" {
+		if err := agentWorkerCommand(ctx, args[1:]); err != nil {
+			return fail(err)
+		}
+		return 0
+	}
+	if args[0] == "task" || args[0] == "context" || args[0] == "agent" || args[0] == "question" {
+		if offline {
+			return fail(&command.Error{Code: "invalid_arguments", Message: "collaboration commands require a daemon"})
+		}
+		if err := collaborationCommand(ctx, args, stdout); err != nil {
+			return fail(err)
+		}
+		return 0
 	}
 	if args[0] == "daemon" || args[0] == "events" {
 		if offline {

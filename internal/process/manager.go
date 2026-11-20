@@ -72,10 +72,11 @@ type saved struct {
 	RequestHash string            `json:"request_hash"`
 }
 type Manager struct {
-	mu      sync.Mutex
-	store   *store.Store
-	client  tmux.Client
-	resolve func(string) (workspace.Workspace, error)
+	mu       sync.Mutex
+	store    *store.Store
+	client   tmux.Client
+	resolve  func(string) (workspace.Workspace, error)
+	Defaults map[string]string
 }
 
 func New(s *store.Store, client tmux.Client, resolve func(string) (workspace.Workspace, error)) *Manager {
@@ -91,7 +92,7 @@ func invalid(message string) error {
 	return &command.Error{Code: "invalid_arguments", Message: message}
 }
 func conflict(message string) error { return &command.Error{Code: "conflict", Message: message} }
-func validName(name string) bool {
+func ValidName(name string) bool {
 	return len(name) > 0 && len(name) <= 64 && strings.TrimSpace(name) == name && strings.IndexFunc(name, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !strings.ContainsRune(" ._-", r)
 	}) < 0
@@ -153,7 +154,15 @@ func unique(items []saved, ws, name string) error {
 func (m *Manager) Start(ctx context.Context, args StartArgs) (workspace.Process, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !validName(args.Name) {
+	environment := map[string]string{}
+	for key, value := range m.Defaults {
+		environment[key] = value
+	}
+	for key, value := range args.Environment {
+		environment[key] = value
+	}
+	args.Environment = environment
+	if !ValidName(args.Name) {
 		return workspace.Process{}, invalid("name must be 1–64 letters, digits, spaces, dots, underscores or hyphens")
 	}
 	if len(args.Command) == 0 || args.Command[0] == "" {
@@ -331,7 +340,7 @@ func (m *Manager) Snapshot(ctx context.Context) ([]workspace.Process, error) {
 func (m *Manager) Register(ctx context.Context, args RegisterArgs) (workspace.Process, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !validName(args.Name) {
+	if !ValidName(args.Name) {
 		return workspace.Process{}, invalid("invalid process name")
 	}
 	if args.Kind == "" {
