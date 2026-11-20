@@ -419,16 +419,7 @@ disconnected. A sidebar closed by hand comes back within a few seconds; use
 ```sh
 ST_SIDEBAR=0           # never add sidebars
 ST_SIDEBAR_WIDTH=24    # columns
-ST_FRAME=0             # no boxes: panes run to the screen edge
 ```
-
-Each tab is drawn as boxes: the program panes, and the sidebar when it is
-shown, with a gap between them and around the edge. tmux has no padding
-setting, so the gaps are thin empty panes (one column, or one row at the
-bottom) that give tmux a neighbour to draw each border line against. They cost
-about 6 columns and 2 rows. `M-h`/`M-l`, `M-x` and splits skip them; a mouse
-click can still land on one, and `M-l` moves on. With the sidebar hidden the
-program panes keep their box.
 
 The sidebar needs `curl` and an fzf recent enough for `--listen`, `--id-nth`
 and `--gutter`. Sessions opened before upgrading get their tabs and sidebar the
