@@ -66,7 +66,7 @@ grep -Fx 'ST_AGENT_MODE=terminal' "$task_checkout/.dev/config" >/dev/null
 [ -z "$(find "$task_checkout/.dev" -type l -print)" ]
 
 # Launch real local terminals without an attached client or the optional sidebar.
-printf 'ST_SIDEBAR=0\n' >> "$task_checkout/.dev/config"
+printf 'ST_SIDEBAR=0\nST_AGENT_TOOLS=0\n' >> "$task_checkout/.dev/config"
 "$task_checkout/dev" home </dev/null >/dev/null 2>&1 || true
 "$task_checkout/dev" tmux has-session -t '=supertree'
 "$task_checkout/dev" tmux list-keys -T root M-1 > "$task_tmp/key"

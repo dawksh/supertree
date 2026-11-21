@@ -112,6 +112,22 @@ your configured command. Chat and answer its approvals there, edit in Option-2,
 and run tests in Option-3. Supertree provides the surrounding workspace without
 replacing the harness's own interface.
 
+When the Go core is installed, Codex and Claude Code also receive a session-local
+Supertree MCP connection. Ask the agent to inspect the shared workspace, read
+captured context, update a task, ask a shared question, or start a named test
+process. These are the same commands used by the controls, attributed to the
+agent. Its normal conversation and approvals stay in the harness. Other MCP
+servers and global agent settings are preserved. Set `ST_AGENT_TOOLS=0` in your
+Supertree config to launch without this connection. OpenCode and custom harnesses
+retain their existing launch path; automatic MCP configuration is currently
+implemented for Codex and Claude Code.
+
+The stdio endpoint is also available as `st next mcp --harness <name>` for manual
+MCP configuration. It defaults workspace arguments to the launching checkout.
+Tools expose core schemas and errors, preserve revision checks, and never claim
+to be human actions or publish the human TUI's input state. Disconnecting the
+harness tools or restarting the core leaves terminal programs running.
+
 The tab says `terminal` for that normal harness and `paired` for the experimental
 native conversation console. Fresh dev config uses `ST_AGENT_MODE=terminal`.
 Native context delivery (`st share` and `:SupertreeAsk`) currently requires

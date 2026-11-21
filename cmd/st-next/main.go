@@ -56,6 +56,8 @@ const usage = `st next — experimental workspace core
   st next events [--workspace <id>] [--epoch <epoch> --after <sequence>] [--json]
   st next process <list|start|register|stop|restart|attach|move|output> [args]
   st next tui [--workspace <id>]
+  st next harness <codex|claude> -- [harness arguments]
+  st next mcp [--harness <name>]
   st next <task|context|agent|question> <action> [args]
   st next pair <run|status|send|interrupt> [args]
   st next share [--file <path>|--diff|--output|--context <id>] --message <text>
@@ -110,6 +112,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "_agent" {
 		if err := agentWorkerCommand(ctx, args[1:]); err != nil {
+			return fail(err)
+		}
+		return 0
+	}
+	if args[0] == "mcp" || args[0] == "harness" {
+		if offline {
+			return fail(&command.Error{Code: "invalid_arguments", Message: "harness integration requires the local core"})
+		}
+		var err error
+		if args[0] == "mcp" {
+			err = mcpCommand(ctx, args[1:], stdout)
+		} else {
+			err = harnessCommand(ctx, args[1:], stdout, stderr)
+		}
+		if err != nil {
 			return fail(err)
 		}
 		return 0

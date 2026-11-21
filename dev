@@ -158,7 +158,7 @@ export ST_WORKTREE_ROOT="$dev_dir/worktrees" ST_NEXT_TMUX_SOCKET=$dev_socket
 unset ST_NEXT_SOCKET
 export PATH="$dev_bin:$PATH"
 # Use the sandbox config rather than an installed agent/layout inherited from tmux.
-unset ST_WINDOWS ST_HARNESS ST_HARNESS_COMMAND ST_HARNESS_RESUME_COMMAND ST_SHELL ST_AGENT_MODE
+unset ST_WINDOWS ST_HARNESS ST_HARNESS_COMMAND ST_HARNESS_RESUME_COMMAND ST_SHELL ST_AGENT_MODE ST_AGENT_TOOLS
 case ${TMUX:-} in "$dev_socket,"*) ;; *) unset TMUX TMUX_PANE;; esac
 
 if [ "$dev_internal" = 0 ]; then

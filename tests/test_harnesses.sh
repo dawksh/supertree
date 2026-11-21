@@ -9,6 +9,8 @@ export HOME="$TEST_ROOT/home"
 export ST_STATE="$TEST_ROOT/state"
 export ST_CONFIG="$TEST_ROOT/config"
 export ST_TEST_LOG="$TEST_ROOT/agent.log"
+# Legacy launch/resume behavior; the Go integration tests cover MCP overrides.
+export ST_AGENT_TOOLS=0
 mkdir -p "$HOME/.local/bin"
 
 for command in claude codex opencode aider; do

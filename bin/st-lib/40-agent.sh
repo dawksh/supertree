@@ -278,10 +278,25 @@ set_agent_status() {
   tmux set-option -pq -t "$TMUX_PANE" @st_agent_state "$1" 2>/dev/null || true
 }
 
+# Keep the selected harness's own interactive interface. A launch-scoped MCP
+# override connects it to the optional Go core without editing its config files.
+harness_launch() {
+  local provider=$1 binary=$st_bin_dir/st-next
+  shift
+  [ "$ST_VERSION" = dev ] || binary=$st_lib_dir/st-next
+  if [ "${ST_AGENT_TOOLS:-1}" != 0 ] && [ -x "$binary" ]; then
+    export ST_STATE ST_WORKTREE_ROOT
+    "$binary" harness "$provider" -- "$@"
+  else
+    "$provider" "$@"
+  fi
+}
+
 cmd_run() {
   case ${1:-} in
     _agent) cmd_harness || true;;
     _claude) ST_HARNESS=claude cmd_harness || true;; # old live sessions
+    codex|claude) harness_launch "$@" || true;;
     nvim)
       shift
       local bridge="$st_lib_dir/editor.lua" client=''
@@ -327,8 +342,8 @@ cmd_harness() {
     case $ST_HARNESS in
       # None of these CLIs document an exit code for "nothing to continue", so
       # any failure falls through to the shell rather than discarding the session.
-      claude) claude --continue || info "Claude Code exited with an error; run 'claude' to start fresh";;
-      codex) codex --no-daemon resume --last || info "Codex exited with an error; run 'codex' to start fresh";;
+      claude) harness_launch claude --continue || info "Claude Code exited with an error; run 'claude' to start fresh";;
+      codex) harness_launch codex --no-daemon resume --last || info "Codex exited with an error; run 'codex' to start fresh";;
       openrouter) opencode --continue || info "OpenCode exited with an error; run 'opencode' to start fresh";;
       *) if [ -n "$ST_HARNESS_RESUME_COMMAND" ]; then
            eval "$ST_HARNESS_RESUME_COMMAND" || eval "$ST_HARNESS_COMMAND"
@@ -339,8 +354,8 @@ cmd_harness() {
   else
     : > "$marker"
     case $ST_HARNESS in
-      claude) claude;;
-      codex) codex --no-daemon;;
+      claude) harness_launch claude;;
+      codex) harness_launch codex --no-daemon;;
       openrouter) opencode;;
       *) eval "$ST_HARNESS_COMMAND";;
     esac
