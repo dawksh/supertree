@@ -834,8 +834,9 @@ Prefix stays `C-a`. `M-arrow` pane movement and `S-Enter` are untouched.
 The top strip shows the current repository/branch and your configured tab slots
 (`1 agent`, `2 vim`, `3 shell` by default). These labels leave the actual Codex,
 Neovim and shell windows and their shortcuts in place. Long tree names keep
-their start and end with an ellipsis. Below 100 columns the tabs become numbers;
-wide terminals at least 30 rows tall add a blank row above and below the strip.
+their start and end with an ellipsis. Below 100 columns the tabs become numbers.
+The strip stays one row high at every size, leaving the remaining rows for your
+programs without blank rows above or below the navigation.
 Resizing preserves sidebar visibility, terminal programs and keyboard focus.
 The strip uses native tmux formats, without launching a command on each redraw.
 

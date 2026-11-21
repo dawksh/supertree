@@ -2,7 +2,7 @@
 # supertree tmux module
 
 # The theme is part of it so open sessions restyle after ST_THEME changes.
-ST_LAYOUT_VERSION=12-${ST_THEME:-dark}-${ST_PROGRAM_THEME:-workspace}
+ST_LAYOUT_VERSION=13-${ST_THEME:-dark}-${ST_PROGRAM_THEME:-workspace}
 
 layout_signature() {
   printf '%s|%s|%s|%s' "$ST_HARNESS" "$ST_WINDOWS" "${ST_SHELL:-${SHELL:-/bin/zsh}}" "${ST_AGENT_MODE:-terminal}"

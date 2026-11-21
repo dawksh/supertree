@@ -15,12 +15,19 @@ export TERM=xterm-256color COLORTERM=truecolor
 export ST_SHELL=/bin/sh
 configured_windows() { printf 'agent\nvim\nshell\n'; }
 
-for spec in 'wide 160 48 3' 'medium 120 36 3' 'narrow 80 24 on' 'short 120 24 on' 'tiny 36 20 on'; do
+for spec in 'wide 160 48 on' 'medium 120 36 on' 'narrow 80 24 on' 'short 120 24 on' 'tiny 36 20 on'; do
   read -r sess width height rows <<< "$spec"
   tmux -f /dev/null new-session -d -s "$sess" -x "$width" -y "$height" -n codex 'sleep 60'
   tmux new-window -d -t "=$sess" -n nvim 'sleep 60'
   tmux new-window -d -t "=$sess" -n shell 'sleep 60'
   tmux set-option -t "=$sess:" @supertree_label 'supertree/fix-login'
+  if [ "$sess" = wide ]; then
+    # An existing workspace must lose its padding hooks without losing the
+    # user's hooks or restarting any of its terminals.
+    tmux set-option -t "=$sess:" status 3
+    tmux set-hook -t "=$sess:" 'client-resized[730]' 'set-option status 3'
+    tmux set-hook -t "=$sess:" 'client-resized[999]' 'set-option @user-resize yes'
+  fi
   style_session "$sess"
   style_tab "=$sess:codex" 1
   style_tab "=$sess:nvim" 2
@@ -29,29 +36,24 @@ for spec in 'wide 160 48 3' 'medium 120 36 3' 'narrow 80 24 on' 'short 120 24 on
     *'bg=#0f131b'*) ;; *) fail "$sess program background differs from workspace";;
   esac
   [ "$(tmux show-options -v -t "=$sess:" status)" = "$rows" ] || fail "$sess strip height"
-  strip=$(tmux show-options -v -t "=$sess:" 'status-format[1]')
+  strip=$(tmux show-options -v -t "=$sess:" 'status-format[0]')
   text=$(tmux display-message -p -t "=$sess:" "$strip" | sed 's/#\[[^]]*\]//g')
   case $sess in
     narrow|tiny) case $text in *'1 agent'*|*'2 vim'*) fail "$sess didn't collapse tabs";; esac;;
     *) case $text in *'1 agent'*'2 vim'*'3 shell'*) ;; *) fail "$sess missing logical tabs: $text";; esac;;
   esac
 done
+hooks=$(tmux show-hooks -t '=wide:')
+case $hooks in *'client-resized[730]'*) fail 'old padding hook survived';; esac
+case $hooks in *'client-resized[999]'*) ;; *) fail 'user resize hook was removed';; esac
 
 # Styling and geometry changes cannot move focus or restart a terminal.
 before=$(tmux list-panes -a -F '#{session_name} #{window_id} #{pane_id} #{pane_pid}')
 active=$(tmux display-message -p -t '=medium:' '#{window_id} #{pane_id}')
 tmux resize-window -t '=medium:codex' -x 80 -y 24
-for _ in {1..30}; do
-  [ "$(tmux show-options -v -t '=medium:' status)" != 3 ] && break
-  sleep .05
-done
 [ "$(tmux show-options -v -t '=medium:' status)" = on ] || fail 'resize did not compact strip'
 tmux resize-window -t '=medium:codex' -x 120 -y 36
-for _ in {1..30}; do
-  [ "$(tmux show-options -v -t '=medium:' status)" = 3 ] && break
-  sleep .05
-done
-[ "$(tmux show-options -v -t '=medium:' status)" = 3 ] || fail 'resize did not restore wide strip'
+[ "$(tmux show-options -v -t '=medium:' status)" = on ] || fail 'wide resize added padding'
 [ "$(tmux display-message -p -t '=medium:' '#{window_id} #{pane_id}')" = "$active" ] || fail 'resize changed focus'
 [ "$(tmux list-panes -a -F '#{session_name} #{window_id} #{pane_id} #{pane_pid}')" = "$before" ] || fail 'chrome replaced a program'
 [ "$(tmux show-options -v -t '=narrow:' status)" = on ] || fail 'resize changed another session'
@@ -82,6 +84,8 @@ def draw(session, width, height):
         # Colour changes can split repo/branch text across several SGR runs.
         raw = data.decode(errors='replace')
         assert '\x1b[48;2;15;19;27m' in raw, 'terminal body did not use workspace background'
+        body_height = int(tmux('display-message', '-p', '-t', session, '#{window_height}').strip())
+        assert body_height == height - 1, ('unused terminal rows', body_height, height)
         return re.sub(r'\x1b\[[0-9;]*m|\x1b\(B', '', raw)
     finally:
         # Detach only the client created above. Never send prefix keys into a program.
@@ -94,6 +98,7 @@ def draw(session, width, height):
 
 wide = draw('wide', 160, 48)
 assert all(word in wide for word in ('supertree/', 'fix-login', '1 agent', '2 vim', '3 shell', 'M-w')), repr(wide)
+assert '\x1b[H supertree/fix-login' in wide, 'strip did not start at the top edge'
 narrow = draw('narrow', 80, 24)
 assert 'fix-login' in narrow and '1 agent' not in narrow and 'M-w' in narrow, repr(narrow)
 
@@ -110,4 +115,4 @@ output = draw('wide', 160, 48)
 assert 'a [31m branch' in output, repr(output)
 print('ok: actual terminal frames and literal labels')
 PY
-printf 'ok: reference sizes, resize recovery, logical tabs, and preserved programs/focus\n'
+printf 'ok: compact terminal coverage, old padding migration, logical tabs, and preserved programs/focus\n'

@@ -46,25 +46,20 @@ chrome_formats() {
 }
 
 style_chrome() {
-  local target="=$1:" geometry resize hook
+  local target="=$1:" hook
   chrome_formats
   tmux set-option -t "$target" status-left-length 200 &&
   tmux set-option -t "$target" status-right-length 100 &&
   tmux set-option -t "$target" status-left "$CHROME_LEFT" &&
   tmux set-option -t "$target" status-right "$CHROME_RIGHT" &&
-  tmux set-option -t "$target" 'status-format[0]' "#{?#{==:#{status},3},,$CHROME_STRIP}" &&
-  tmux set-option -t "$target" 'status-format[1]' "$CHROME_STRIP" &&
-  tmux set-option -t "$target" 'status-format[2]' '' || return 1
+  tmux set-option -t "$target" 'status-format[0]' "$CHROME_STRIP" &&
+  tmux set-option -ut "$target" 'status-format[1]' &&
+  tmux set-option -ut "$target" 'status-format[2]' &&
+  tmux set-option -t "$target" status on || return 1
 
-  # Wide reference: a blank row above and below the strip. Preserve content
-  # space in 80x24 and short terminals. Use effective window geometry so two
-  # attached clients agree on the height. Include the existing status height
-  # to avoid oscillating when changing from one row to three.
-  geometry='#{&&:#{e|>=:#{window_width},100},#{e|>=:#{e|+:#{window_height},#{?#{==:#{status},3},3,1}},30}}'
-  resize="if-shell -F \"$geometry\" \"set-option status 3\" \"set-option status on\""
+  # Remove only Supertree's old padding hooks. Width-dependent labels remain
+  # native formats; resizing never needs to add blank rows or run a command.
   for hook in client-attached client-resized client-session-changed window-resized; do
-    tmux set-hook -t "$target" "$hook[730]" "$resize" || return 1
+    tmux set-hook -u -t "$target" "$hook[730]" || return 1
   done
-  tmux if-shell -t "$target" -F "$geometry" \
-    'set-option status 3' 'set-option status on'
 }
