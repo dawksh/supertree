@@ -102,7 +102,6 @@ sidebar_session() {
   for win in $(tmux list-windows -t "=$sess" -F '#{window_id}'); do
     add_sidebar "$win" "$dir"
   done
-  # style_session keeps the left label aligned with the configured sidebar width.
   tmux set-hook -t "$sess" after-new-window "run-shell \"$(tmux_cmd_word "$self" dq) _sidebar-attach '#{window_id}'\""
 }
 
@@ -202,6 +201,7 @@ sidebar_tab_states() {
       *) glyph=$G_DONE;;
     esac
     tmux set-option -q -t "=$sess:" @st_state_glyph "$glyph" 2>/dev/null || true
+    tmux set-option -q -t "=$sess:" @st_tree_state "$status" 2>/dev/null || true
   done
 }
 

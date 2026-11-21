@@ -831,9 +831,13 @@ newer it refreshes every two seconds while open and fills in the uncommitted
 (`±`) and unpushed (`↑`) counts shortly after it opens.
 
 Prefix stays `C-a`. `M-arrow` pane movement and `S-Enter` are untouched.
-`status-left` shows the agent state and current repository/branch. Long tree names
-keep their start and end with an ellipsis in the middle, so the tree you are
-typing into stays identifiable.
+The top strip shows the current repository/branch and your configured tab slots
+(`1 agent`, `2 vim`, `3 shell` by default). These labels leave the actual Codex,
+Neovim and shell windows and their shortcuts in place. Long tree names keep
+their start and end with an ellipsis. Below 100 columns the tabs become numbers;
+wide terminals at least 30 rows tall add a blank row above and below the strip.
+Resizing preserves sidebar visibility, terminal programs and keyboard focus.
+The strip uses native tmux formats, without launching a command on each redraw.
 
 Agent state appears in `st ls` and the `M-w` picker. `running` means the agent
 process is active, `input` means its pane shows a prompt, `done` means the agent

@@ -59,6 +59,8 @@ ui_tones() {
   ui_tone UI_SEL    262626 235 e3e8f0 254 -1
   ui_tone UI_BAR    1c1c1c 234 e9ecf1 255 -1
   ui_tone UI_TAB    303030 236 d5dbe5 253 -1
+  ui_tone UI_INPUT_BG 2b2416 235 fcebd3 230 -1
+  ui_tone UI_READY_BG 1a2618 234 e2efd9 194 -1
   ui_tone UI_BORDER 444444 238 9aa4b2 248 8
 }
 ui_tones
@@ -95,9 +97,9 @@ G_OK='✓' G_ERR='✗' G_WARN='!' G_INFO='›' G_ASK='?'
 # Agent states match the sidebar and tabs. done is a hollow circle, not a tick:
 # it only means the agent exited, maybe after a crash.
 G_IN='◆' G_RUN='●' G_DONE='○' G_OFF='·' G_MAIN='⌂' G_DIRTY='±' G_AHEAD='↑'
-G_HERE='▌' G_MORE='…'
+G_HERE='▌' G_MORE='…' G_DOWN='▾'
 if [ -n "${ST_ASCII:-}" ]; then
-  G_OK='+' G_ERR='x' G_INFO='>' G_HERE='|' G_MORE='~'
+  G_OK='+' G_ERR='x' G_INFO='>' G_HERE='|' G_MORE='~' G_DOWN='v'
   G_IN='!' G_RUN='*' G_DONE='o' G_OFF='.' G_MAIN='@' G_DIRTY='~' G_AHEAD='^'
 fi
 

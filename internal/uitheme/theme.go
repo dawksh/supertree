@@ -21,7 +21,7 @@ type Theme struct {
 
 func New() Theme {
 	t := Theme{Pointer: "▌", Main: "⌂", Ellipsis: "…", Prompt: "›", ASCII: os.Getenv("ST_ASCII") != "", Plain: os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb"}
-	dark := []string{"#5ccfe6", "#ffb454", "#73b8ff", "#9fdc7c", "#8b94a6", "#ff7a7a", "#ffb454", "#d2a6ff", "#3a4458"}
+	dark := []string{"#5ccfe6", "#ffb454", "#73b8ff", "#9fdc7c", "#a0aabd", "#ff7a7a", "#ffb454", "#d2a6ff", "#3a4458"}
 	if os.Getenv("ST_THEME") == "light" {
 		dark = []string{"#0b6680", "#9a4a08", "#1d4ed8", "#126c34", "#566170", "#b91c1c", "#9a4a08", "#7e22ce", "#9aa4b2"}
 	}

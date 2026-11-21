@@ -2,7 +2,7 @@
 # supertree tmux module
 
 # The theme is part of it so open sessions restyle after ST_THEME changes.
-ST_LAYOUT_VERSION=10${ST_THEME:+-$ST_THEME}
+ST_LAYOUT_VERSION=11${ST_THEME:+-$ST_THEME}
 
 layout_signature() {
   printf '%s|%s|%s|%s' "$ST_HARNESS" "$ST_WINDOWS" "${ST_SHELL:-${SHELL:-/bin/zsh}}" "${ST_AGENT_MODE:-terminal}"
@@ -186,41 +186,33 @@ create_window() {
 
 # Tab look is set per session and window so other tmux sessions keep the user's status bar.
 style_session() {
-  local width=$(( ${ST_SIDEBAR_WIDTH:-24} + 1 )) label_width left_half right_half left label
-  label_width=$((width - 4))
-  left_half=$(((label_width - 1) / 2))
-  right_half=$((label_width - 1 - left_half))
-  # Keep the tab strip aligned with the configured sidebar width. A long name
-  # keeps both ends so its repo and branch suffix stay identifiable.
-  label="#{?#{==:#{@supertree_label},#{=$label_width:@supertree_label}},#{@supertree_label},#{=$left_half:@supertree_label}$G_MORE#{=-$right_half:@supertree_label}}"
-  # Repo in its colour, branch bold. A name cut before its slash stays plain.
-  label="#{s|^([^/$G_MORE]*/)|#[fg=$UI_REPO_T]\\1#[fg=$UI_TEXT_T]#[bold]|:$label}"
-  left=" #{?@supertree_home,#{p$((width - 2)):@supertree_label},#{?@st_state_glyph,#{@st_state_glyph},${G_OFF:-·}} #{p$label_width:$label}#[default]} "
   tmux set-option -t "=$1:" default-shell "$(tree_shell)" &&
   tmux set-option -t "=$1:" status-position top &&
   tmux set-option -t "=$1:" status-justify left &&
   tmux set-option -t "=$1:" status-style "fg=$UI_TEXT_T,bg=$UI_BAR_T" &&
   tmux set-option -t "=$1:" message-style "fg=$UI_TEXT_T,bg=$UI_TAB_T" &&
-  tmux set-option -t "=$1:" status-left-length "$width" &&
-  tmux set-option -t "=$1:" status-left "$left" &&
-  tmux set-option -t "=$1:" status-right-length 80 &&
-  # @st_need_text (global, opt-in) and @st_state_glyph (per tree) come from the sidebar refresher.
-  tmux set-option -t "=$1:" status-right "#{?@st_need_text,#[fg=$UI_PANEL_T]#[bg=$UI_IN_T]#[bold] #{@st_need_text} #[default] ,}" &&
-  tmux set-option -t "=$1:" status on &&
+  style_chrome "$1" &&
   # When a tree's last program exits, switch to the most recent session instead of
   # leaving tmux. Session-scoped, so the global setting is untouched.
   tmux set-option -t "=$1:" detach-on-destroy off
 }
 
 style_tab() {
-  local target=$1 slot=$2 label
-  # @st_tab_state comes from the sidebar refresher (running/input); without it, fall back to the pane state.
-  label='#{?@st_slot,#{@st_slot}. ,}#W#{?@st_agent_mode, · #{@st_agent_mode},}'
-  label="$label#{?@st_tab_state,#{?#{==:#{@st_tab_state},input}, #[fg=$UI_IN_T]$G_IN,#{?#{==:#{@st_tab_state},running}, #[fg=$UI_RUN_T]$G_RUN,}},#{?#{==:#{@st_agent_state},running}, #[fg=$UI_RUN_T]$G_RUN,}}"
+  local target=$1 slot=$2 role='' index=0 type
+  if [ -n "$slot" ]; then
+    while read -r type; do
+      index=$((index + 1))
+      [ "$index" != "$slot" ] || { role=$type; break; }
+    done <<EOF
+$(configured_windows)
+EOF
+  fi
+  chrome_formats
   tmux set-option -w -t "$target" @st_slot "$slot" &&
-  tmux set-option -w -t "$target" window-status-separator '  ' &&
-  tmux set-option -w -t "$target" window-status-format "#[fg=$UI_DIM_T] $label #[default]" &&
-  tmux set-option -w -t "$target" window-status-current-format "#[fg=$UI_A_T]#[bg=$UI_TAB_T]#[bold] $label #[default]" &&
+  tmux set-option -w -t "$target" @st_tab_label "$role" &&
+  tmux set-option -w -t "$target" window-status-separator '' &&
+  tmux set-option -w -t "$target" window-status-format "$CHROME_TAB" &&
+  tmux set-option -w -t "$target" window-status-current-format "$CHROME_TAB_CURRENT" &&
   tmux set-option -w -t "$target" window-status-current-style default &&
   style_panes "$target"
 }
@@ -244,7 +236,7 @@ style_panes() {
 # named-process windows. Only status/options change; no programs are restarted.
 cmd_dev_style() {
   [ -n "${ST_DEV_ROOT:-}" ] && [ "$ST_STATE" = "$ST_DEV_ROOT/.dev/state" ] || return 0
-  local key expected sess name label path win slot hint agent_name mode
+  local key expected sess name label path win slot agent_name mode
   key=$(identity_hash "$ST_DEV_ROOT")
   expected="/tmp/supertree-dev-$(id -u)/${key:0:16}.sock"
   [ "${ST_NEXT_TMUX_SOCKET:-}" = "$expected" ] || die 'refusing to style a different tmux server'
@@ -254,17 +246,14 @@ cmd_dev_style() {
   tmux set-option -g status-right "#[fg=$UI_DIM_T]dev · M-/ keys "
   tmux list-sessions -F '#{session_name}'$'\037''#{@supertree_label}'$'\037''#{session_path}' 2>/dev/null |
     while IFS=$'\037' read -r sess label path; do
-      hint='dev · M-w trees · M-/ keys'
       case $sess in st-next-*)
         label="$(basename "$(main_worktree "$path")")/$(tree_branch "$path")"
-        hint='dev · extra terminals · M-w trees'
         tmux set-option -t "=$sess:" @supertree_label "$label";;
       esac
       [ -n "$label" ] || continue
       style_session "$sess"
       agent_name=$(tmux show-options -qv -t "=$sess:" @st_agent_window 2>/dev/null) || agent_name=''
       [ -n "$agent_name" ] || agent_name=$(harness_window)
-      tmux set-option -t "=$sess:" status-right "#{?@st_need_text,#[fg=$UI_PANEL_T]#[bg=$UI_IN_T]#[bold] #{@st_need_text} #[default] ,}#[fg=$UI_DIM_T]$hint "
       tmux list-windows -t "=$sess" -F '#{window_id}'$'\t''#{window_name}' |
         while IFS=$'\t' read -r win name; do
           if [ "$name" = "$agent_name" ]; then
