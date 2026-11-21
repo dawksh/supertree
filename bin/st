@@ -126,6 +126,7 @@ ST_HARNESS_COMMAND=${ST_HARNESS_COMMAND:-}
 ST_HARNESS_RESUME_COMMAND=${ST_HARNESS_RESUME_COMMAND:-}
 ST_WINDOWS=${ST_WINDOWS-'agent vim shell'}
 ST_AGENT_MODE=${ST_AGENT_MODE:-terminal}
+ST_PROGRAM_THEME=${ST_PROGRAM_THEME:-workspace}
 
 # Keep NO_COLOR for st's own UI. session_environment and shell_command remove it
 # from tmux panes so agents still use the terminal's colors.
@@ -154,6 +155,7 @@ fi
 [ -f "$st_lib_dir/00-core.sh" ] || { printf 'st: missing modules in %s\n' "$st_lib_dir" >&2; exit 1; }
 # shellcheck disable=SC1090
 . "$st_lib_dir/00-core.sh"
+case $ST_PROGRAM_THEME in workspace|native) ;; *) die 'ST_PROGRAM_THEME must be workspace or native';; esac
 
 # Slot 0 is a placeholder: bash 3.2 treats an empty array as unset under set -u.
 ST_COMMAND_NAMES=('')

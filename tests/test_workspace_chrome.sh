@@ -25,6 +25,9 @@ for spec in 'wide 160 48 3' 'medium 120 36 3' 'narrow 80 24 on' 'short 120 24 on
   style_tab "=$sess:codex" 1
   style_tab "=$sess:nvim" 2
   style_tab "=$sess:shell" 3
+  case $(tmux show-options -wv -t "=$sess:codex" window-style) in
+    *'bg=#0f131b'*) ;; *) fail "$sess program background differs from workspace";;
+  esac
   [ "$(tmux show-options -v -t "=$sess:" status)" = "$rows" ] || fail "$sess strip height"
   strip=$(tmux show-options -v -t "=$sess:" 'status-format[1]')
   text=$(tmux display-message -p -t "=$sess:" "$strip" | sed 's/#\[[^]]*\]//g')
@@ -52,6 +55,10 @@ done
 [ "$(tmux display-message -p -t '=medium:' '#{window_id} #{pane_id}')" = "$active" ] || fail 'resize changed focus'
 [ "$(tmux list-panes -a -F '#{session_name} #{window_id} #{pane_id} #{pane_pid}')" = "$before" ] || fail 'chrome replaced a program'
 [ "$(tmux show-options -v -t '=narrow:' status)" = on ] || fail 'resize changed another session'
+ST_PROGRAM_THEME=native style_panes '=tiny:codex'
+case $(tmux show-options -wv -t '=tiny:codex' window-style) in
+  *'bg=default'*) ;; *) fail 'native mode overrode terminal background';;
+esac
 
 # Verify what tmux actually sends a terminal, not just the format source.
 python3 - <<'PY'
@@ -73,7 +80,9 @@ def draw(session, width, height):
             if select.select([master], [], [], .05)[0]:
                 data += os.read(master, 65536)
         # Colour changes can split repo/branch text across several SGR runs.
-        return re.sub(r'\x1b\[[0-9;]*m|\x1b\(B', '', data.decode(errors='replace'))
+        raw = data.decode(errors='replace')
+        assert '\x1b[48;2;15;19;27m' in raw, 'terminal body did not use workspace background'
+        return re.sub(r'\x1b\[[0-9;]*m|\x1b\(B', '', raw)
     finally:
         # Detach only the client created above. Never send prefix keys into a program.
         for line in tmux('list-clients', '-F', '#{client_pid} #{client_name}').splitlines():

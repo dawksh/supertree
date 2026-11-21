@@ -2,7 +2,7 @@
 # supertree tmux module
 
 # The theme is part of it so open sessions restyle after ST_THEME changes.
-ST_LAYOUT_VERSION=11${ST_THEME:+-$ST_THEME}
+ST_LAYOUT_VERSION=12-${ST_THEME:-dark}-${ST_PROGRAM_THEME:-workspace}
 
 layout_signature() {
   printf '%s|%s|%s|%s' "$ST_HARNESS" "$ST_WINDOWS" "${ST_SHELL:-${SHELL:-/bin/zsh}}" "${ST_AGENT_MODE:-terminal}"
@@ -22,7 +22,7 @@ shell_command() {
 # command that created the session. Pin the resolved choices on this session.
 session_environment() {
   local target="=$1" signature
-  signature="$HOME|$(tree_shell)|$ST_CONFIG|$ST_STATE|$ST_WORKTREE_ROOT|$ST_HARNESS|$ST_WINDOWS|$ST_HARNESS_COMMAND|$ST_HARNESS_RESUME_COMMAND|${ST_SHELL:-}|color|${ST_AGENT_MODE:-terminal}|${ST_AGENT_TOOLS:-1}"
+  signature="$HOME|$(tree_shell)|$ST_CONFIG|$ST_STATE|$ST_WORKTREE_ROOT|$ST_HARNESS|$ST_WINDOWS|$ST_HARNESS_COMMAND|$ST_HARNESS_RESUME_COMMAND|${ST_SHELL:-}|color|${ST_AGENT_MODE:-terminal}|${ST_AGENT_TOOLS:-1}|${ST_THEME:-dark}|${ST_PROGRAM_THEME:-workspace}"
   [ "$(tmux show-options -qv -t "$target:" @st_environment 2>/dev/null)" != "$signature" ] || return 0
   tmux set-environment -t "$target" HOME "$HOME"
   tmux set-environment -t "$target" SHELL "$(tree_shell)"
@@ -33,6 +33,8 @@ session_environment() {
   tmux set-environment -t "$target" ST_WINDOWS "$ST_WINDOWS"
   tmux set-environment -t "$target" ST_AGENT_MODE "${ST_AGENT_MODE:-terminal}"
   tmux set-environment -t "$target" ST_AGENT_TOOLS "${ST_AGENT_TOOLS:-1}"
+  tmux set-environment -t "$target" ST_THEME "${ST_THEME:-dark}"
+  tmux set-environment -t "$target" ST_PROGRAM_THEME "${ST_PROGRAM_THEME:-workspace}"
   tmux set-environment -t "$target" ST_HARNESS_COMMAND "$ST_HARNESS_COMMAND"
   tmux set-environment -t "$target" ST_HARNESS_RESUME_COMMAND "$ST_HARNESS_RESUME_COMMAND"
   tmux set-environment -t "$target" ST_SHELL "${ST_SHELL:-}"
@@ -166,9 +168,9 @@ create_window() {
   name=$(window_name "$type")
   # The first pane starts before session_environment can remove NO_COLOR from
   # tmux's server environment. Keep the user's UI preference out of programs.
-  printf -v run 'env -u NO_COLOR HOME=%q SHELL=%q ST_CONFIG=%q ST_STATE=%q ST_WORKTREE_ROOT=%q ST_HARNESS=%q ST_WINDOWS=%q ST_HARNESS_COMMAND=%q ST_HARNESS_RESUME_COMMAND=%q ST_SHELL=%q %q _run' \
+  printf -v run 'env -u NO_COLOR HOME=%q SHELL=%q ST_CONFIG=%q ST_STATE=%q ST_WORKTREE_ROOT=%q ST_HARNESS=%q ST_WINDOWS=%q ST_HARNESS_COMMAND=%q ST_HARNESS_RESUME_COMMAND=%q ST_SHELL=%q ST_THEME=%q ST_PROGRAM_THEME=%q %q _run' \
     "$HOME" "$(tree_shell)" "$ST_CONFIG" "$ST_STATE" "$ST_WORKTREE_ROOT" \
-    "$ST_HARNESS" "$ST_WINDOWS" "$ST_HARNESS_COMMAND" "$ST_HARNESS_RESUME_COMMAND" "${ST_SHELL:-}" "$self"
+    "$ST_HARNESS" "$ST_WINDOWS" "$ST_HARNESS_COMMAND" "$ST_HARNESS_RESUME_COMMAND" "${ST_SHELL:-}" "${ST_THEME:-dark}" "${ST_PROGRAM_THEME:-workspace}" "$self"
   case $type in
     agent) cmd=("$run _agent");;
     vim) cmd=("$run nvim");;
@@ -217,18 +219,19 @@ EOF
   style_panes "$target"
 }
 
-# Keep program panes on the user's terminal background. Only split panes need a
-# divider; a single program gets the full height without an empty title row.
+# Default-colour cells in Codex and shells share the workspace surface. Programs
+# retain explicit colours; native mode leaves their terminal defaults alone.
 style_panes() {
-  local target=$1
+  local target=$1 surface='fg=default,bg=default'
+  if [ "${ST_PROGRAM_THEME:-workspace}" = workspace ]; then surface="fg=$UI_TEXT_T,bg=$UI_PANEL_T"; fi
   tmux set-option -w -t "$target" pane-border-status off
   tmux set-option -w -t "$target" pane-border-style "fg=$UI_BORDER_T,bg=default"
   tmux set-option -w -t "$target" pane-active-border-style "fg=$UI_DIM_T,bg=default"
   tmux set-option -w -t "$target" popup-style "fg=$UI_TEXT_T,bg=$UI_PANEL_T"
   tmux set-option -w -t "$target" popup-border-style "fg=$UI_BORDER_T,bg=$UI_PANEL_T"
   tmux set-option -w -t "$target" popup-border-lines rounded
-  tmux set-option -w -t "$target" window-style 'bg=default'
-  tmux set-option -w -t "$target" window-active-style 'bg=default'
+  tmux set-option -w -t "$target" window-style "$surface"
+  tmux set-option -w -t "$target" window-active-style "$surface"
   tmux set-option -w -t "$target" pane-scrollbars off 2>/dev/null || true
 }
 

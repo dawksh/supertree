@@ -912,13 +912,21 @@ ST_TAB_dev='npm run dev'
 ST_TAB_git='lazygit'
 ```
 
-Program panes use your terminal's background, without card padding or title
-rows. Split panes get a quiet divider; a single program uses the full area.
+Program panes share the workspace background (`#0f131b` in the dark theme).
+Codex and shells inherit it for default-colour cells. Neovim launched through
+Supertree gets a local palette overlay for its surfaces and syntax, including
+after a lazy colourscheme loads. Your Vim configuration, plugins, mappings and
+buffers stay in place; Vim opened outside Supertree keeps its usual theme.
+Set `ST_PROGRAM_THEME=native` in the Supertree config to keep native program
+themes and terminal backgrounds, or use `ST_THEME=ansi` for terminal-owned colours.
+The editor overlay applies to newly launched Vim instances. An existing editor
+can load it with `:lua dofile('/path/to/supertree/bin/st-lib/program-theme.lua').setup()`.
+Split panes get a quiet divider; a single program uses the full area.
 
-Tree sessions show their windows as tabs at the top (`1. codex ●`, `2. nvim`,
-`3. shell`). The active tab is underlined, and the current repository and branch
-appear on the left after the agent's state (`●` running, `◆` waiting for you,
-`○` exited). Other tmux sessions keep your own status line.
+Tree sessions show their configured windows as tabs at the top (`1 agent`,
+`2 vim`, `3 shell` by default), with a cyan label and filled background on the
+active tab. The current repository and branch appear on the left. Other tmux
+sessions keep your own status line.
 
 When an agent in another tree starts waiting for you, tmux shows a short notice
 (`◆ webauth/feat-otp needs you · M-w`) to every terminal looking at a different

@@ -64,6 +64,7 @@ make_core_assets
 # Shell-only is the default, including an old release with no Go assets.
 "$task_repo/install.sh" > "$task_tmp/shell.out"
 cmp -s "$ST_PREFIX/st-lib-$ST_VERSION/editor.lua" "$task_repo/bin/st-lib/editor.lua" || fail 'installer dropped the editor bridge'
+cmp -s "$ST_PREFIX/st-lib-$ST_VERSION/program-theme.lua" "$task_repo/bin/st-lib/program-theme.lua" || fail 'installer dropped the program theme'
 [ ! -e "$ST_PREFIX/st-lib-$ST_VERSION/st-next" ] || fail 'default install enabled the core'
 ! grep -q '/st-next-' "$ST_TEST_DOWNLOADS" || fail 'shell-only install fetched the core'
 if "$ST_PREFIX/st" next --version > "$task_tmp/missing.out" 2>&1; then fail 'missing installed core was accepted'; fi

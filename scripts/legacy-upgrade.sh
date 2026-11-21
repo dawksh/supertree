@@ -32,7 +32,7 @@ else actual_sum=$(shasum -a 256 "$tmp/st.tar.gz"); fi
 [ -n "$expected_sum" ] && [ "$expected_sum" = "${actual_sum%% *}" ] ||
   { printf 'st: modular release %s does not match its published checksum; nothing was changed\n' "$ST_VERSION" >&2; exit 1; }
 tar -tzf "$tmp/st.tar.gz" | awk '
-  $0 == "st" || $0 == "st-lib/" || $0 == "st-lib/editor.lua" || $0 ~ /^st-lib\/[A-Za-z0-9_.-]+\.sh$/ { next }
+  $0 == "st" || $0 == "st-lib/" || $0 == "st-lib/editor.lua" || $0 == "st-lib/program-theme.lua" || $0 ~ /^st-lib\/[A-Za-z0-9_.-]+\.sh$/ { next }
   { exit 1 }
 ' || { printf 'st: invalid modular release archive\n' >&2; exit 1; }
 mkdir "$tmp/package"
@@ -48,6 +48,7 @@ bash -n "$tmp/stamped"
 install -m 0755 "$tmp/stamped" "$staged"
 cp "$tmp/package"/st-lib/*.sh "$staged_lib/"
 if [ -f "$tmp/package/st-lib/editor.lua" ]; then cp "$tmp/package/st-lib/editor.lua" "$staged_lib/"; fi
+if [ -f "$tmp/package/st-lib/program-theme.lua" ]; then cp "$tmp/package/st-lib/program-theme.lua" "$staged_lib/"; fi
 previous_lib=''
 if [ -e "$prefix/st-lib-$ST_VERSION" ]; then
   previous_lib=$(mktemp -d "$prefix/.st-lib.previous.XXXXXX")

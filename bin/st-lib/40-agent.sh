@@ -299,11 +299,18 @@ cmd_run() {
     codex|claude) harness_launch "$@" || true;;
     nvim)
       shift
-      local bridge="$st_lib_dir/editor.lua" client=''
+      local bridge="$st_lib_dir/editor.lua" surface="$st_lib_dir/program-theme.lua" client=''
+      local init=()
+      if [ -f "$surface" ]; then
+        init+=(--cmd 'lua dofile(vim.env.ST_EDITOR_THEME).setup({theme=vim.env.ST_THEME,mode=vim.env.ST_PROGRAM_THEME})')
+      fi
       if [ -f "$bridge" ]; then client=$(next_binary 2>/dev/null) || client=''; fi
       if [ -n "$client" ]; then
-        ST_AGENT_MODE="${ST_AGENT_MODE:-terminal}" ST_EDITOR_BRIDGE="$bridge" ST_EDITOR_COMMAND="$client" nvim --cmd 'lua dofile(vim.env.ST_EDITOR_BRIDGE).setup({command={vim.env.ST_EDITOR_COMMAND}})' "$@" || true
-      else nvim "$@" || true; fi;;
+        init+=(--cmd 'lua dofile(vim.env.ST_EDITOR_BRIDGE).setup({command={vim.env.ST_EDITOR_COMMAND}})')
+      fi
+      ST_THEME="${ST_THEME:-dark}" ST_PROGRAM_THEME="${ST_PROGRAM_THEME:-workspace}" ST_EDITOR_THEME="$surface" \
+        ST_AGENT_MODE="${ST_AGENT_MODE:-terminal}" ST_EDITOR_BRIDGE="$bridge" ST_EDITOR_COMMAND="$client" \
+        nvim ${init[@]+"${init[@]}"} "$@" || true;;
     *) "$@" || true;;
   esac
   exec "$(tree_shell)" -l
