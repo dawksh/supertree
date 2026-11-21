@@ -278,13 +278,13 @@ set_agent_status() {
   tmux set-option -pq -t "$TMUX_PANE" @st_agent_state "$1" 2>/dev/null || true
 }
 
-# Keep the selected harness's own interactive interface. A launch-scoped MCP
-# override connects it to the optional Go core without editing its config files.
+# Normal launches follow the release even when a Go binary happens to exist.
+# Only an explicit opt-in adds the launch-scoped MCP connection.
 harness_launch() {
   local provider=$1 binary=$st_bin_dir/st-next
   shift
   [ "$ST_VERSION" = dev ] || binary=$st_lib_dir/st-next
-  if [ "${ST_AGENT_TOOLS:-1}" != 0 ] && [ -x "$binary" ]; then
+  if [ "${ST_AGENT_TOOLS:-0}" = 1 ] && [ -x "$binary" ]; then
     export ST_STATE ST_WORKTREE_ROOT
     "$binary" harness "$provider" -- "$@"
   else
@@ -304,7 +304,9 @@ cmd_run() {
       if [ -f "$surface" ]; then
         init+=(--cmd 'lua dofile(vim.env.ST_EDITOR_THEME).setup({theme=vim.env.ST_THEME,mode=vim.env.ST_PROGRAM_THEME})')
       fi
-      if [ -f "$bridge" ]; then client=$(next_binary 2>/dev/null) || client=''; fi
+      if [ "${ST_AGENT_TOOLS:-0}" = 1 ] || [ "${ST_AGENT_MODE:-terminal}" = paired ]; then
+        if [ -f "$bridge" ]; then client=$(next_binary 2>/dev/null) || client=''; fi
+      fi
       if [ -n "$client" ]; then
         init+=(--cmd 'lua dofile(vim.env.ST_EDITOR_BRIDGE).setup({command={vim.env.ST_EDITOR_COMMAND}})')
       fi

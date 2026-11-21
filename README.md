@@ -12,6 +12,17 @@ one key flips between your primary windows, and two keys leave tmux while keepin
 the tree running. Closing a tree with `st down` lets you reopen the agent in the
 same conversation.
 
+The default workflow follows [release v0.4.34](https://github.com/dawksh/supertree/releases/tag/v0.4.34):
+open or resume a worktree, use the real agent/editor/shell tabs, switch trees,
+split panes, and detach while programs keep running. Existing key bindings,
+picker actions, configured tab order, resume commands, and removal confirmations
+are the compatibility baseline. Visual updates and reliability fixes may improve
+these actions; new features must add optional actions without redirecting them.
+Installing or building the Go core alone does not enable integration or start it
+when opening the normal workspace. Agent questions and approvals stay in the
+actual harness. Controls, shared requests, named processes and native pairing
+remain explicit additions to this flow.
+
 ```
  Supertree                 1. codex ●   2. nvim   3. shell      webauth/feat-otp
  n new · d remove
@@ -89,13 +100,15 @@ For a first manual check:
    command lets you bring terminals beside each other.
 3. From the local shell, run `st new local-harness-test` to try a new worktree.
    Use Option-w to switch trees. Each keeps its own programs.
-4. From the shell, run `st control` to try the new workspace controls in a popup.
-   Press `q` to return to your terminal. You can keep using the regular agent,
-   editor, shell, tree picker, and splits without opening these controls.
-5. Run `st share --diff --message 'Review this change'` from the shell, or select
-   saved lines in Neovim and run `:SupertreeAsk`. Return to the actual agent tab
-   and say **“Check my Supertree questions.”** It can read the request and context
-   through its tools and save its answer. Review shared replies in `st control`.
+4. Use Option-Tab to return to the previous tree and Option-q to detach. Run
+   `./dev` again to return to your workspace with its programs still running.
+
+Optional controls open with `st control`; `q` returns to your terminal. They are
+not needed to delegate work, answer the agent, edit code, or switch projects.
+To try agent workspace tools and editor sharing, explicitly set
+`ST_AGENT_TOOLS=1` in `.dev/config` before launching a new agent/editor. Shared
+requests and captured context can then be inspected through those tools or the
+control popup when you choose to use them.
 
 Inside the sandbox, `st` points to this checkout. Outside it, use `./dev` so
 commands target the local environment. `./dev test` runs automated tests; it does
@@ -113,13 +126,14 @@ your configured command. Chat and answer its approvals there, edit in Option-2,
 and run tests in Option-3. Supertree provides the surrounding workspace without
 replacing the harness's own interface.
 
-When the Go core is installed, Codex and Claude Code also receive a session-local
-Supertree MCP connection. Ask the agent to inspect the shared workspace, read
-captured context, update a task, ask a shared question, or start a named test
+With the Go core installed and `ST_AGENT_TOOLS=1` explicitly enabled, Codex and
+Claude Code receive a session-local Supertree MCP connection. Ask the agent to
+inspect the shared workspace, read captured context, update a task, ask a shared
+question, or start a named test
 process. These are the same commands used by the controls, attributed to the
 agent. Its normal conversation and approvals stay in the harness. Other MCP
-servers and global agent settings are preserved. Set `ST_AGENT_TOOLS=0` in your
-Supertree config to launch without this connection. OpenCode and custom harnesses
+servers and global agent settings are preserved. `ST_AGENT_TOOLS=0` is the
+default: normal launches do not use the core. OpenCode and custom harnesses
 retain their existing launch path; automatic MCP configuration is currently
 implemented for Codex and Claude Code.
 
@@ -129,8 +143,7 @@ Tools expose core schemas and errors, preserve revision checks, and never claim
 to be human actions or publish the human TUI's input state. Disconnecting the
 harness tools or restarting the core leaves terminal programs running.
 
-The tab says `terminal` for that normal harness and `paired` for the experimental
-native conversation console. Fresh dev config uses `ST_AGENT_MODE=terminal`.
+Fresh dev config uses `ST_AGENT_MODE=terminal` and `ST_AGENT_TOOLS=0`.
 In normal mode, `st share` and `:SupertreeAsk` save shared requests for the harness
 to read through MCP. Ask it to check Supertree questions; saving a request does
 not inject a prompt or interrupt a busy turn. The experimental paired console
@@ -541,7 +554,8 @@ generic restart is reserved for processes with a recorded launch definition.
 
 #### Share from the editor or shell
 
-Neovim tabs load the bridge automatically when the Go core is present. Your mappings and editor
+Neovim tabs load the bridge when the Go core is present and `ST_AGENT_TOOLS=1`
+is enabled, or when you explicitly choose paired mode. Your mappings and editor
 configuration stay yours. Select saved lines and use `:SupertreeAsk <question>`;
 without a question it prompts for one. `:SupertreePreview` captures a selection
 into a temporary preview without delivery. `:SupertreeContext` captures only, and

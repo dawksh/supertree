@@ -126,6 +126,7 @@ ST_HARNESS_COMMAND=${ST_HARNESS_COMMAND:-}
 ST_HARNESS_RESUME_COMMAND=${ST_HARNESS_RESUME_COMMAND:-}
 ST_WINDOWS=${ST_WINDOWS-'agent vim shell'}
 ST_AGENT_MODE=${ST_AGENT_MODE:-terminal}
+ST_AGENT_TOOLS=${ST_AGENT_TOOLS:-0}
 ST_PROGRAM_THEME=${ST_PROGRAM_THEME:-workspace}
 
 # Keep NO_COLOR for st's own UI. session_environment and shell_command remove it

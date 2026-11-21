@@ -61,6 +61,7 @@ grep -Fx 'default-core' "$task_tmp/result" >/dev/null
 [ "$(wc -l < "$ST_DEV_GO_LOG" | tr -d ' ')" = 1 ]
 grep -Fx "ST_WINDOWS='agent vim shell'" "$task_checkout/.dev/config" >/dev/null
 grep -Fx 'ST_AGENT_MODE=terminal' "$task_checkout/.dev/config" >/dev/null
+grep -Fx 'ST_AGENT_TOOLS=0' "$task_checkout/.dev/config" >/dev/null
 [ ! -e "$task_user/installed-state" ]
 [ ! -e "$task_user/installed-trees" ]
 [ -z "$(find "$task_checkout/.dev" -type l -print)" ]

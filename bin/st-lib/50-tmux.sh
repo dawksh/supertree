@@ -22,7 +22,7 @@ shell_command() {
 # command that created the session. Pin the resolved choices on this session.
 session_environment() {
   local target="=$1" signature
-  signature="$HOME|$(tree_shell)|$ST_CONFIG|$ST_STATE|$ST_WORKTREE_ROOT|$ST_HARNESS|$ST_WINDOWS|$ST_HARNESS_COMMAND|$ST_HARNESS_RESUME_COMMAND|${ST_SHELL:-}|color|${ST_AGENT_MODE:-terminal}|${ST_AGENT_TOOLS:-1}|${ST_THEME:-dark}|${ST_PROGRAM_THEME:-workspace}"
+  signature="$HOME|$(tree_shell)|$ST_CONFIG|$ST_STATE|$ST_WORKTREE_ROOT|$ST_HARNESS|$ST_WINDOWS|$ST_HARNESS_COMMAND|$ST_HARNESS_RESUME_COMMAND|${ST_SHELL:-}|color|${ST_AGENT_MODE:-terminal}|${ST_AGENT_TOOLS:-0}|${ST_THEME:-dark}|${ST_PROGRAM_THEME:-workspace}"
   [ "$(tmux show-options -qv -t "$target:" @st_environment 2>/dev/null)" != "$signature" ] || return 0
   tmux set-environment -t "$target" HOME "$HOME"
   tmux set-environment -t "$target" SHELL "$(tree_shell)"
@@ -32,7 +32,7 @@ session_environment() {
   tmux set-environment -t "$target" ST_HARNESS "$ST_HARNESS"
   tmux set-environment -t "$target" ST_WINDOWS "$ST_WINDOWS"
   tmux set-environment -t "$target" ST_AGENT_MODE "${ST_AGENT_MODE:-terminal}"
-  tmux set-environment -t "$target" ST_AGENT_TOOLS "${ST_AGENT_TOOLS:-1}"
+  tmux set-environment -t "$target" ST_AGENT_TOOLS "${ST_AGENT_TOOLS:-0}"
   tmux set-environment -t "$target" ST_THEME "${ST_THEME:-dark}"
   tmux set-environment -t "$target" ST_PROGRAM_THEME "${ST_PROGRAM_THEME:-workspace}"
   tmux set-environment -t "$target" ST_HARNESS_COMMAND "$ST_HARNESS_COMMAND"
@@ -168,9 +168,9 @@ create_window() {
   name=$(window_name "$type")
   # The first pane starts before session_environment can remove NO_COLOR from
   # tmux's server environment. Keep the user's UI preference out of programs.
-  printf -v run 'env -u NO_COLOR HOME=%q SHELL=%q ST_CONFIG=%q ST_STATE=%q ST_WORKTREE_ROOT=%q ST_HARNESS=%q ST_WINDOWS=%q ST_HARNESS_COMMAND=%q ST_HARNESS_RESUME_COMMAND=%q ST_SHELL=%q ST_THEME=%q ST_PROGRAM_THEME=%q %q _run' \
+  printf -v run 'env -u NO_COLOR HOME=%q SHELL=%q ST_CONFIG=%q ST_STATE=%q ST_WORKTREE_ROOT=%q ST_HARNESS=%q ST_WINDOWS=%q ST_HARNESS_COMMAND=%q ST_HARNESS_RESUME_COMMAND=%q ST_SHELL=%q ST_THEME=%q ST_PROGRAM_THEME=%q ST_AGENT_MODE=%q ST_AGENT_TOOLS=%q %q _run' \
     "$HOME" "$(tree_shell)" "$ST_CONFIG" "$ST_STATE" "$ST_WORKTREE_ROOT" \
-    "$ST_HARNESS" "$ST_WINDOWS" "$ST_HARNESS_COMMAND" "$ST_HARNESS_RESUME_COMMAND" "${ST_SHELL:-}" "${ST_THEME:-dark}" "${ST_PROGRAM_THEME:-workspace}" "$self"
+    "$ST_HARNESS" "$ST_WINDOWS" "$ST_HARNESS_COMMAND" "$ST_HARNESS_RESUME_COMMAND" "${ST_SHELL:-}" "${ST_THEME:-dark}" "${ST_PROGRAM_THEME:-workspace}" "${ST_AGENT_MODE:-terminal}" "${ST_AGENT_TOOLS:-0}" "$self"
   case $type in
     agent) cmd=("$run _agent");;
     vim) cmd=("$run nvim");;

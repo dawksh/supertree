@@ -126,7 +126,7 @@ else
     {
       printf '# Local development config; sourced as shell by st.\n'
       printf "ST_WINDOWS='agent vim shell'\nST_HARNESS=codex\nST_SIDEBAR=1\nST_NOTIFY=0\n"
-      printf 'ST_AGENT_MODE=terminal\n'
+      printf 'ST_AGENT_MODE=terminal\nST_AGENT_TOOLS=0\n'
       printf 'ST_SHELL=%q\n' "$dev_bin/dev-shell"
     } > "$dev_dir/config"
   fi
