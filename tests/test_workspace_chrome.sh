@@ -35,6 +35,11 @@ for spec in 'wide 160 48 on' 'medium 120 36 on' 'narrow 80 24 on' 'short 120 24 
   case $(tmux show-options -wv -t "=$sess:codex" window-style) in
     *'bg=#0f131b'*) ;; *) fail "$sess program background differs from workspace";;
   esac
+  for option in pane-border-style pane-active-border-style; do
+    case $(tmux show-options -wv -t "=$sess:codex" "$option") in
+      *'bg=#0f131b'*) ;; *) fail "$sess divider background differs from program surface";;
+    esac
+  done
   [ "$(tmux show-options -v -t "=$sess:" status)" = "$rows" ] || fail "$sess strip height"
   strip=$(tmux show-options -v -t "=$sess:" 'status-format[0]')
   text=$(tmux display-message -p -t "=$sess:" "$strip" | sed 's/#\[[^]]*\]//g')
@@ -60,6 +65,9 @@ tmux resize-window -t '=medium:codex' -x 120 -y 36
 ST_PROGRAM_THEME=native style_panes '=tiny:codex'
 case $(tmux show-options -wv -t '=tiny:codex' window-style) in
   *'bg=default'*) ;; *) fail 'native mode overrode terminal background';;
+esac
+case $(tmux show-options -wv -t '=tiny:codex' pane-border-style) in
+  *'bg=default'*) ;; *) fail 'native mode overrode divider background';;
 esac
 
 # Verify what tmux actually sends a terminal, not just the format source.

@@ -2,7 +2,7 @@
 # supertree tmux module
 
 # The theme is part of it so open sessions restyle after ST_THEME changes.
-ST_LAYOUT_VERSION=13-${ST_THEME:-dark}-${ST_PROGRAM_THEME:-workspace}
+ST_LAYOUT_VERSION=14-${ST_THEME:-dark}-${ST_PROGRAM_THEME:-workspace}
 
 layout_signature() {
   printf '%s|%s|%s|%s' "$ST_HARNESS" "$ST_WINDOWS" "${ST_SHELL:-${SHELL:-/bin/zsh}}" "${ST_AGENT_MODE:-terminal}"
@@ -222,11 +222,14 @@ EOF
 # Default-colour cells in Codex and shells share the workspace surface. Programs
 # retain explicit colours; native mode leaves their terminal defaults alone.
 style_panes() {
-  local target=$1 surface='fg=default,bg=default'
-  if [ "${ST_PROGRAM_THEME:-workspace}" = workspace ]; then surface="fg=$UI_TEXT_T,bg=$UI_PANEL_T"; fi
+  local target=$1 background=default surface='fg=default,bg=default'
+  if [ "${ST_PROGRAM_THEME:-workspace}" = workspace ]; then
+    background=$UI_PANEL_T
+    surface="fg=$UI_TEXT_T,bg=$background"
+  fi
   tmux set-option -w -t "$target" pane-border-status off
-  tmux set-option -w -t "$target" pane-border-style "fg=$UI_BORDER_T,bg=default"
-  tmux set-option -w -t "$target" pane-active-border-style "fg=$UI_DIM_T,bg=default"
+  tmux set-option -w -t "$target" pane-border-style "fg=$UI_BORDER_T,bg=$background"
+  tmux set-option -w -t "$target" pane-active-border-style "fg=$UI_DIM_T,bg=$background"
   tmux set-option -w -t "$target" popup-style "fg=$UI_TEXT_T,bg=$UI_PANEL_T"
   tmux set-option -w -t "$target" popup-border-style "fg=$UI_BORDER_T,bg=$UI_PANEL_T"
   tmux set-option -w -t "$target" popup-border-lines rounded

@@ -885,6 +885,21 @@ For an edge-to-edge workspace, set the host terminal's padding to zero:
 These are terminal preferences, not Supertree settings. Whole terminal cells
 may still leave a thin pixel remainder at the edge of an arbitrarily sized
 window; OS full-screen mode does not remove configured terminal padding.
+Zero padding alone cannot eliminate that remainder. To make it blend into the
+workspace, WezTerm can use the same default background as Supertree's dark
+surface (use `#f6f7f9` with the light theme):
+
+```lua
+config.colors = config.colors or {}
+config.colors.background = '#0f131b'
+```
+
+[Ghostty](https://ghostty.org/docs/config/reference#window-padding-color) can
+extend the nearest cell's color with `window-padding-color = extend-always`;
+[Kitty](https://sw.kovidgoyal.net/kitty/conf/#opt-kitty.padding_fill_strategy)
+offers `padding_fill_strategy neighboring_cell`. Support depends on the terminal
+version. These affect the fill outside the grid; they do not give the TUI more
+rows or columns. Supertree's split dividers use its workspace surface as well.
 
 Agent state appears in `st ls` and the `M-w` picker. `running` means the agent
 process is active, `input` means its pane shows a prompt, `done` means the agent
