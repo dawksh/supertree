@@ -187,3 +187,43 @@ func TestCollaborationSelectsExplicitContextAndNeverDefaultsApproval(t *testing.
 		t.Fatal("explicit approval answer was not preserved")
 	}
 }
+
+func TestRealHarnessRequestsKeepAgentRepliesSeparateFromHumanInput(t *testing.T) {
+	m, _ := fixture(t)
+	m.width, m.height, m.panel = 120, 40, "collaboration"
+	m.state.Contexts = []workspace.ContextItem{{ID: "ctx_one", WorkspaceID: "ws_one", Kind: "file", Title: "selected code"}}
+	m.contextIDs = []string{"ctx_one"}
+	var method string
+	var sent any
+	m.options.Invoke = func(_ context.Context, name string, args any) (json.RawMessage, error) {
+		method, sent = name, args
+		return json.RawMessage(`{}`), nil
+	}
+	m, _ = key(m, runeKey("i"))
+	if overlay := m.collaborationOverlay(90, 25); m.mode != "message-form" || !strings.Contains(overlay, "ASK WORKTREE AGENT") || !strings.Contains(overlay, "shared request") || !strings.Contains(overlay, "Supertree questions") {
+		t.Fatal("real harness handoff is not explained before sharing")
+	}
+	m, _ = key(m, runeKey("Explain this selection"))
+	m, _ = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	cmd()
+	request, ok := sent.(agent.ShareArgs)
+	if !ok || method != "context.share" || request.Target != "harness" || len(request.ContextIDs) != 1 || request.ContextIDs[0] != "ctx_one" {
+		t.Fatal("sharing launched another provider or lost selected context")
+	}
+	m.mode = "browse"
+	m.state.Questions = []workspace.Question{{ID: "request", WorkspaceID: "ws_one", Recipient: "agent", Prompt: "Explain this selection", ContextIDs: []string{"ctx_one"}, Status: "open", Revision: 1}}
+	if view := m.View(); strings.Contains(view, "need you") || !strings.Contains(view, "For agent") {
+		t.Fatal("a request for the agent was presented as waiting for the human")
+	}
+	m.collabIndex = 1
+	m, _ = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mode != "result" {
+		t.Fatal("human was prompted to answer their own request")
+	}
+	m.mode = "browse"
+	m.state.Questions[0].Status, m.state.Questions[0].Answer, m.state.Questions[0].AnsweredBy = "answered", "Agent explanation", "agent:codex"
+	if view := m.View(); !strings.Contains(view, "Agent replied") || !strings.Contains(view, "Agent explanation") {
+		t.Fatal("agent reply disappeared from the collaboration view")
+	}
+}

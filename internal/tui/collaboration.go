@@ -61,8 +61,15 @@ func (m Model) collaborationItems() []collaborationRow {
 		rows = append(rows, collaborationRow{"context", item.ID, label})
 	}
 	for _, q := range m.state.Questions {
-		if q.WorkspaceID == m.workspaceID && q.Status == "open" {
-			rows = append(rows, collaborationRow{"question", q.ID, "Question · " + q.Kind + " · " + q.Prompt})
+		if q.WorkspaceID == m.workspaceID && (q.Status == "open" || q.Recipient == "agent") {
+			label := "Question · " + q.Kind + " · " + q.Prompt
+			if q.Recipient == "agent" {
+				label = "For agent · " + q.Prompt
+				if q.Status == "answered" {
+					label = "Agent replied · " + q.Prompt
+				}
+			}
+			rows = append(rows, collaborationRow{"question", q.ID, label})
 		}
 	}
 	return rows
@@ -141,20 +148,16 @@ func (m Model) collaborationKey(key tea.KeyMsg) (Model, tea.Cmd, bool) {
 		}
 		for _, p := range m.processes() {
 			if p.Kind == "agent" {
-				m.message = "Use st pair run in the existing agent tab after exiting its CLI; --thread resumes its exact conversation"
+				m.message = "Keep using the existing agent tab; i saves a shared request for its Supertree tools"
 				return m, nil, true
 			}
 		}
-		name := "codex"
-		for i := 2; slices.ContainsFunc(m.processes(), func(p workspace.Process) bool { return p.Name == name }); i++ {
-			name = fmt.Sprintf("codex %d", i)
-		}
-		m.panel = "collaboration"
-		return m, m.invoke("agent.start", agent.StartArgs{WorkspaceID: m.workspaceID, TaskID: m.goalID(), Name: name}), true
+		m.message = "Open the worktree's normal agent tab; i saves a shared request without starting another agent"
+		return m, nil, true
 	case "i":
 		if _, ok := m.native(); !ok {
-			m.message = "Start a native agent with a, or select one in the collaboration panel"
-			return m, nil, true
+			m.form("message-form", "context.share", []string{"", strings.Join(m.contextIDs, ",")})
+			return m, m.present(), true
 		}
 		m.form("message-form", "agent.send", []string{"", strings.Join(m.contextIDs, ",")})
 		return m, m.present(), true
@@ -213,6 +216,11 @@ func (m Model) collaborationKey(key tea.KeyMsg) (Model, tea.Cmd, bool) {
 		case "question":
 			for _, q := range m.state.Questions {
 				if q.ID == row.ID {
+					if q.Recipient == "agent" {
+						data, _ := json.Marshal(q)
+						m.result, m.mode, m.index = string(data), "result", 0
+						break
+					}
 					m.pendingArgs = collab.AnswerArgs{QuestionID: q.ID, ExpectedRevision: q.Revision}
 					m.form("answer-form", "question.answer", []string{""})
 				}
@@ -301,6 +309,9 @@ func (m Model) editCollaboration(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		args = agent.SendArgs{AgentID: m.agentID, Message: m.fields[0], ContextIDs: ids, TaskID: m.goalID()}
+		if m.pendingName == "context.share" {
+			args = agent.ShareArgs{WorkspaceID: m.workspaceID, Target: "harness", Message: m.fields[0], ContextIDs: ids, TaskID: m.goalID()}
+		}
 	case "answer-form":
 		if strings.TrimSpace(m.fields[0]) == "" {
 			m.message = "Enter an explicit answer; approvals use accept or decline"
@@ -331,7 +342,11 @@ func (m Model) collaborationView(width int) []string {
 		}
 		text := line(prefix+items[i].Label, width)
 		if items[i].Kind == "question" {
-			text = m.theme.Input.Render(text)
+			for _, q := range m.state.Questions {
+				if q.ID == items[i].ID && q.Recipient != "agent" {
+					text = m.theme.Input.Render(text)
+				}
+			}
 		} else if items[i].Kind == "agent" {
 			for _, a := range m.state.Agents {
 				if a.ID == items[i].ID {
@@ -345,9 +360,9 @@ func (m Model) collaborationView(width int) []string {
 		rows = append(rows, text)
 	}
 	if len(items) == 0 {
-		rows = append(rows, "a selects the agent · f captures code · N adds a note")
+		rows = append(rows, "f captures code · N adds a note · i asks the agent")
 	}
-	rows = append(rows, "", m.theme.Muted.Render(fmt.Sprintf("%d context item(s) marked · i sends explicitly", len(m.contextIDs))))
+	rows = append(rows, "", m.theme.Muted.Render(fmt.Sprintf("%d context item(s) marked · i shares explicitly", len(m.contextIDs))))
 	preview := ""
 	if row, ok := m.collabSelected(); ok {
 		switch row.Kind {
@@ -385,6 +400,12 @@ func (m Model) collaborationView(width int) []string {
 			for _, q := range m.state.Questions {
 				if q.ID == row.ID {
 					preview = q.Prompt + "\nOptions: " + strings.Join(q.Options, ", ") + "\nEnter to answer"
+					if q.Recipient == "agent" {
+						preview = q.Prompt + "\nContext: " + strings.Join(q.ContextIDs, ", ") + "\nAsk your agent: Check my Supertree questions"
+						if q.Status == "answered" {
+							preview = q.Prompt + "\n\n" + q.AnsweredBy + ": " + q.Answer
+						}
+					}
 				}
 			}
 		}
@@ -416,6 +437,10 @@ func (m Model) collaborationOverlay(width, height int) string {
 	case "message-form":
 		title = "SEND TO NATIVE AGENT"
 		description = "Only the listed context IDs are sent. Stale captures must be refreshed first."
+		if m.pendingName == "context.share" {
+			title = "ASK WORKTREE AGENT"
+			description = "Saves a shared request with the selected context. In the agent tab, ask: Check my Supertree questions."
+		}
 		labels = []string{"Message", "Context IDs (comma-separated)"}
 	case "answer-form":
 		title = "ANSWER SHARED QUESTION"

@@ -49,5 +49,5 @@ st_register_command next cmd_next 'use the experimental workspace core' 'next <i
 st_register_command control cmd_control 'open optional workspace controls; q returns to work' 'control [--workspace <id>]'
 cmd_pair() { cmd_next pair "$@"; }
 st_register_command pair cmd_pair 'pair with the agent in this worktree tab' 'pair <run|status|send|interrupt> [args]'
-cmd_share() { cmd_next share "$@"; }
+cmd_share() { export ST_AGENT_MODE; cmd_next share "$@"; }
 st_register_command share cmd_share 'share code, diff or output with this worktree agent' 'share <--file path|--diff|--output|--context id> --message <text>'

@@ -16,7 +16,7 @@ import (
 	"github.com/dawksh/supertree/internal/uitheme"
 )
 
-const shareUsage = `Share with the paired agent in this worktree:
+const shareUsage = `Share with the agent in this worktree:
   st share --file <path> [--start-line <n> --end-line <n>] --message <question>
   st share --diff --message <question>
   st share --output [--process <id>] --message <question>
@@ -27,6 +27,8 @@ const shareUsage = `Share with the paired agent in this worktree:
 --output captures the current terminal's last 200 lines. --preview captures but
 sends nothing; reuse its context IDs to deliver the reviewed snapshot. Stale
 snapshots are rejected. --json returns the same structured result as context.share.
+Normal harness mode saves a shared request; ask the agent to check Supertree
+questions. --target paired explicitly delivers to the experimental native console.
 `
 
 func shareCommand(ctx context.Context, args []string, stdout io.Writer) error {
@@ -40,6 +42,11 @@ func shareCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	var source agent.ShareSource
 	var ids stringFlags
 	var diff, output, asJSON bool
+	target := "harness"
+	if os.Getenv("ST_AGENT_MODE") == "paired" {
+		target = "paired"
+	}
+	f.StringVar(&share.Target, "target", target, "harness (shared request) or paired (direct delivery)")
 	f.StringVar(&share.WorkspaceID, "workspace", "", "workspace ID")
 	f.StringVar(&share.Message, "message", "", "question or instruction")
 	f.StringVar(&share.TaskID, "task", "", "shared goal (defaults to latest open goal)")
@@ -124,6 +131,10 @@ func shareCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	if result.Status == "preview" {
 		_, err := fmt.Fprintf(stdout, "%s\n\n%s\n", uitheme.Clean(result.Text), uitheme.New().Row("info", "captured", strings.Join(result.ContextIDs, ", ")))
+		return err
+	}
+	if result.Status == "requested" && result.Question != nil {
+		_, err := fmt.Fprintln(stdout, uitheme.New().Row("ok", "saved", "request "+result.Question.ID+" · ask your agent: Check my Supertree questions"))
 		return err
 	}
 	if result.Delivery == nil {

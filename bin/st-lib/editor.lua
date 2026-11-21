@@ -16,6 +16,8 @@ function M.setup(opts)
             vim.notify('Captured ' .. result.id .. '; select it before sending')
           elseif sharing and result.status == 'sent' and result.delivery then
             vim.notify('Shared with this worktree\'s agent · ' .. result.delivery.id)
+          elseif sharing and result.status == 'requested' and result.question then
+            vim.notify('Saved ' .. result.question.id .. '; ask your agent: Check my Supertree questions')
           elseif sharing and result.status == 'preview' then
             vim.cmd('botright new')
             vim.bo.buftype, vim.bo.bufhidden, vim.bo.swapfile = 'nofile', 'wipe', false

@@ -31,6 +31,8 @@ type ContextItem struct {
 }
 
 type Question struct {
+	Recipient   string   `json:"recipient,omitempty"`
+	ContextIDs  []string `json:"context_ids,omitempty"`
 	ID          string   `json:"id"`
 	WorkspaceID string   `json:"workspace_id"`
 	TaskID      string   `json:"task_id"`

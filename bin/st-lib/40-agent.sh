@@ -300,9 +300,9 @@ cmd_run() {
     nvim)
       shift
       local bridge="$st_lib_dir/editor.lua" client=''
-      if [ "${ST_AGENT_MODE:-terminal}" = paired ] && [ -f "$bridge" ]; then client=$(next_binary 2>/dev/null) || client=''; fi
+      if [ -f "$bridge" ]; then client=$(next_binary 2>/dev/null) || client=''; fi
       if [ -n "$client" ]; then
-        ST_EDITOR_BRIDGE="$bridge" ST_EDITOR_COMMAND="$client" nvim --cmd 'lua dofile(vim.env.ST_EDITOR_BRIDGE).setup({command={vim.env.ST_EDITOR_COMMAND}})' "$@" || true
+        ST_AGENT_MODE="${ST_AGENT_MODE:-terminal}" ST_EDITOR_BRIDGE="$bridge" ST_EDITOR_COMMAND="$client" nvim --cmd 'lua dofile(vim.env.ST_EDITOR_BRIDGE).setup({command={vim.env.ST_EDITOR_COMMAND}})' "$@" || true
       else nvim "$@" || true; fi;;
     *) "$@" || true;;
   esac

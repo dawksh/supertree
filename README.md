@@ -92,9 +92,10 @@ For a first manual check:
 4. From the shell, run `st control` to try the new workspace controls in a popup.
    Press `q` to return to your terminal. You can keep using the regular agent,
    editor, shell, tree picker, and splits without opening these controls.
-5. If you explicitly enable experimental paired mode, run `st share --diff --message 'Review this change'`
-   from the shell. In Neovim, select saved lines and run `:SupertreeAsk` to ask
-   about them. Both use the agent already in this tree's Codex tab.
+5. Run `st share --diff --message 'Review this change'` from the shell, or select
+   saved lines in Neovim and run `:SupertreeAsk`. Return to the actual agent tab
+   and say **“Check my Supertree questions.”** It can read the request and context
+   through its tools and save its answer. Review shared replies in `st control`.
 
 Inside the sandbox, `st` points to this checkout. Outside it, use `./dev` so
 commands target the local environment. `./dev test` runs automated tests; it does
@@ -130,9 +131,12 @@ harness tools or restarting the core leaves terminal programs running.
 
 The tab says `terminal` for that normal harness and `paired` for the experimental
 native conversation console. Fresh dev config uses `ST_AGENT_MODE=terminal`.
-Native context delivery (`st share` and `:SupertreeAsk`) currently requires
-explicitly opting into `ST_AGENT_MODE=paired`; it does not inject messages into
-the regular harness. Changing config does not replace any running programs.
+In normal mode, `st share` and `:SupertreeAsk` save shared requests for the harness
+to read through MCP. Ask it to check Supertree questions; saving a request does
+not inject a prompt or interrupt a busy turn. The experimental paired console
+supports direct delivery. Changing config does not replace running programs;
+already open harnesses and editors pick up new launch options when you next
+start them yourself. New worktrees get the current integration immediately.
 
 Additional development commands:
 
@@ -471,7 +475,11 @@ From a local worktree's shell, run `st control`. It opens controls for that chec
 `q` returns to your editor and terminals. Direct `./dev next tui` remains available.
 
 Press `c` for the pairing panel. `t` creates a shared goal; `a` selects this
-worktree's paired agent. An ordinary CLI tab shows migration instructions.
+worktree's paired agent when one is explicitly configured. With an ordinary
+harness, `i` saves a request with the marked context; the actual harness reads it
+through its MCP tools. `a` never replaces a running CLI or implicitly launches the
+experimental native console. Requests labelled **For agent** do not count as
+waiting for human input. Answered requests remain visible with the agent's reply.
 `f` captures saved file lines, `d` captures the tracked Git diff, `o` captures the
 selected process's output, and `N` adds a note. Use arrows to select a context item
 and Space to mark it. `i` opens a message with the marked context IDs, which you
@@ -533,7 +541,7 @@ generic restart is reserved for processes with a recorded launch definition.
 
 #### Share from the editor or shell
 
-Paired-mode Neovim tabs load the bridge automatically. Your mappings and editor
+Neovim tabs load the bridge automatically when the Go core is present. Your mappings and editor
 configuration stay yours. Select saved lines and use `:SupertreeAsk <question>`;
 without a question it prompts for one. `:SupertreePreview` captures a selection
 into a temporary preview without delivery. `:SupertreeContext` captures only, and
@@ -552,11 +560,23 @@ st share --context <reviewed-context-id> --message 'Investigate these lines'
 
 Output sharing captures the current terminal's last 200 lines; `--process <id>`
 selects another terminal explicitly. Preview creates a context ID and sends no
-turn. Reusing that ID sends the reviewed snapshot and rejects it if the saved
-source has changed. The latest open shared goal accompanies delivery. No action
-automatically starts another agent. `--json` returns the receipt; structured
-clients invoke the same `context.share` command with a workspace ID and source.
-Actor/request IDs deduplicate delivery even when capture and sending are combined.
+turn. Reusing that ID selects the reviewed snapshot and rejects it if the saved
+source has changed. The latest open shared goal accompanies the request.
+
+In normal harness mode, sharing returns `status: "requested"` and a shared
+question with `recipient: "agent"` and `context_ids`. Say **“Check my Supertree
+questions”** in Codex or Claude Code. The agent uses `question_list`,
+`context_export`, and `question_answer` to read fresh context and save its reply.
+The request and answer are also visible in the control popup. Saving a request
+does not claim the agent has read it, push terminal input, or interrupt a turn.
+
+Paired mode instead returns the native delivery receipt. `--target harness` or
+`--target paired` selects explicitly. No sharing action starts another agent.
+`--json` returns the structured result; structured clients invoke the same
+`context.share` command with `target: "harness"` or `target: "paired"`, workspace
+ID, and source. An omitted target retains the older paired behavior for existing
+RPC clients. Actor/request IDs deduplicate requests and deliveries even when
+capture and sharing are combined, including retries after a core restart.
 The editor bridge ships with the modules for source and release installations.
 
 `task`, `context`, `agent`, and `question` accept `help`; `commands --json` describes

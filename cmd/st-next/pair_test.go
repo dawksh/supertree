@@ -70,6 +70,7 @@ func TestPairingLivesInNormalAgentTabAndResumesExactConversation(t *testing.T) {
 	t.Setenv("ST_NEXT_SOCKET", filepath.Join(sockets, "core.sock"))
 	t.Setenv("ST_NEXT_TMUX_SOCKET", filepath.Join(sockets, "tmux.sock"))
 	t.Setenv("ST_NEXT_ACTOR", "human:test")
+	t.Setenv("ST_AGENT_MODE", "paired")
 	t.Setenv("ST_NEXT_REQUEST_ID", "")
 	config := filepath.Join(base, "config")
 	t.Setenv("ST_CONFIG", config)

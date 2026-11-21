@@ -120,6 +120,8 @@ func collaborationCommand(ctx context.Context, args []string, stdout io.Writer) 
 		}
 	case "question.ask":
 		flags.StringVar(&ask.Prompt, "prompt", "", "question")
+		flags.StringVar(&ask.Recipient, "to", "", "human or agent (defaults to the other participant)")
+		flags.Var(&contexts, "context", "selected context ID (repeatable)")
 		flags.StringVar(&ask.TaskID, "task", "", "task ID")
 		flags.Var(&choices, "option", "answer option (repeatable)")
 	case "question.answer":
@@ -185,6 +187,7 @@ func collaborationCommand(ctx context.Context, args []string, stdout io.Writer) 
 	case "question.ask":
 		ask.WorkspaceID = *ws
 		ask.Options = choices
+		ask.ContextIDs = contexts
 		value = ask
 	case "question.answer":
 		value = answer

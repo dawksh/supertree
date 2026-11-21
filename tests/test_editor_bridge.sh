@@ -11,7 +11,8 @@ printf 'first\nselected\nthird\n' > "$task_tmp/checkout with spaces/file.lua"
 cat > "$task_tmp/client" <<'CLIENT'
 #!/bin/sh
 printf '%s\n' "$@" > "$SUPERTREE_EDITOR_TMP/captured"
-if [ "$1" = share ]; then printf '{"status":"sent","delivery":{"id":"delivery-editor"}}\n'
+if [ "$1" = share ] && [ "${SUPERTREE_EDITOR_REQUESTED:-}" = 1 ]; then printf '{"status":"requested","question":{"id":"question-editor"}}\n'
+elif [ "$1" = share ]; then printf '{"status":"sent","delivery":{"id":"delivery-editor"}}\n'
 else printf '{"id":"ctx-editor"}\n'; fi
 CLIENT
 chmod +x "$task_tmp/client"
@@ -33,6 +34,13 @@ actual = vim.fn.readfile(base .. '/captured')
 assert(actual[1] == 'share' and actual[2] == '--json', 'editor bypassed shared delivery action')
 assert(actual[4] == base .. '/checkout with spaces/file.lua' and actual[6] == '2' and actual[8] == '3', 'sharing changed the selected range')
 assert(actual[9] == '--message' and actual[10] == 'Explain this selected code', 'question was split or changed')
+vim.fn.delete(base .. '/captured')
+local notice = ''
+vim.notify = function(message) notice = message end
+vim.env.SUPERTREE_EDITOR_REQUESTED = '1'
+vim.cmd('2,3SupertreeAsk Explain this in the actual harness')
+assert(vim.wait(2000, function() return notice:find('Check my Supertree questions', 1, true) ~= nil end), 'real harness request was presented as a delivered message')
+assert(vim.fn.filereadable(base .. '/captured') == 1, 'real harness request did not capture context')
 vim.fn.delete(base .. '/captured')
 vim.ui.input = function(_, callback) callback(nil) end
 vim.cmd('2,3SupertreeAsk')

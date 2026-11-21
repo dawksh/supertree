@@ -15,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/dawksh/supertree/internal/agent"
 	"github.com/dawksh/supertree/internal/command"
 	"github.com/dawksh/supertree/internal/core"
 	"github.com/dawksh/supertree/internal/process"
@@ -273,6 +274,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.mode, m.index = "result", 0
 			return m, tea.Batch(m.load(), m.present())
+		}
+		if msg.Name == "context.share" {
+			var result agent.ShareResult
+			if json.Unmarshal(msg.Data, &result) == nil && result.Status == "requested" {
+				m.panel = "collaboration"
+				m.message = "Request saved · ask your agent: Check my Supertree questions"
+			}
 		}
 		if msg.Name == "process.attach" {
 			var attachment process.Attachment
@@ -635,7 +643,7 @@ func (m Model) View() string {
 		}
 	}
 	for _, q := range m.state.Questions {
-		if q.Status == "open" {
+		if q.Status == "open" && q.Recipient != "agent" {
 			need[q.WorkspaceID] = true
 		}
 	}

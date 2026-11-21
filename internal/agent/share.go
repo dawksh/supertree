@@ -11,6 +11,7 @@ import (
 )
 
 type ShareArgs struct {
+	Target      string       `json:"target,omitempty"`
 	WorkspaceID string       `json:"workspace_id"`
 	Message     string       `json:"message,omitempty"`
 	ContextIDs  []string     `json:"context_ids,omitempty"`
@@ -29,6 +30,7 @@ type ShareSource struct {
 	Text      string `json:"text,omitempty"`
 }
 type ShareResult struct {
+	Question   *workspace.Question `json:"question,omitempty"`
 	Status     string              `json:"status"`
 	AgentID    string              `json:"agent_id,omitempty"`
 	ContextIDs []string            `json:"context_ids"`
@@ -39,14 +41,38 @@ type ShareResult struct {
 // Share is the single action used by the shell, editor, and structured clients.
 // Source capture and delivery stay explicit, with freshness checked at delivery.
 func (m *Manager) Share(ctx context.Context, args ShareArgs) (ShareResult, error) {
+	if args.Target != "" && args.Target != "paired" && args.Target != "harness" {
+		return ShareResult{}, &command.Error{Code: "invalid_arguments", Message: "sharing target must be harness or paired"}
+	}
 	if (!args.Preview && strings.TrimSpace(args.Message) == "") || len(args.Message) > 32<<10 {
 		return ShareResult{}, &command.Error{Code: "invalid_arguments", Message: "provide a message up to 32 KiB, or use --preview to capture without sending"}
+	}
+	if args.Target == "harness" && len(args.Message) > 8000 {
+		return ShareResult{}, &command.Error{Code: "invalid_arguments", Message: "shared harness requests accept messages up to 8000 bytes"}
+	}
+	if args.Target == "harness" {
+		// Serialize request reservation through question publication. Native
+		// delivery has its own receipts; a shared request never claims delivery.
+		m.mu.Lock()
+		defer m.mu.Unlock()
 	}
 	fingerprint := argumentHash(struct {
 		Command string
 		Args    ShareArgs
 	}{"context.share", args})
-	if !args.Preview && requestKey(ctx) != "" {
+	var reservation *harnessShare
+	if args.Target == "harness" && !args.Preview && requestKey(ctx) != "" {
+		var result *ShareResult
+		var err error
+		reservation, result, err = m.reserveHarnessShare(ctx, fingerprint)
+		if err != nil || result != nil {
+			if result != nil {
+				return *result, err
+			}
+			return ShareResult{}, err
+		}
+	}
+	if args.Target != "harness" && !args.Preview && requestKey(ctx) != "" {
 		records, err := load[deliveryRecord](ctx, m.store, "delivery")
 		if err != nil {
 			return ShareResult{}, err
@@ -61,12 +87,16 @@ func (m *Manager) Share(ctx context.Context, args ShareArgs) (ShareResult, error
 			}
 		}
 	}
-	primary, err := m.Primary(ctx, PrimaryArgs{WorkspaceID: args.WorkspaceID})
-	if err != nil && !args.Preview {
-		return ShareResult{}, err
-	}
-	if !args.Preview && primary.State != "idle" && primary.State != "interrupted" && !(primary.State == "failed" && slices.Contains(primary.Capabilities, "send")) {
-		return ShareResult{}, &command.Error{Code: "busy", Message: "the paired agent is not idle; inspect or interrupt its active turn before sharing"}
+	var primary workspace.Agent
+	if args.Target != "harness" {
+		var err error
+		primary, err = m.Primary(ctx, PrimaryArgs{WorkspaceID: args.WorkspaceID})
+		if err != nil && !args.Preview {
+			return ShareResult{}, err
+		}
+		if !args.Preview && primary.State != "idle" && primary.State != "interrupted" && !(primary.State == "failed" && slices.Contains(primary.Capabilities, "send")) {
+			return ShareResult{}, &command.Error{Code: "busy", Message: "the paired agent is not idle; inspect or interrupt its active turn before sharing"}
+		}
 	}
 	if args.TaskID == "" {
 		task, err := m.collab.ActiveTask(ctx, args.WorkspaceID)
@@ -107,8 +137,53 @@ func (m *Manager) Share(ctx context.Context, args ShareArgs) (ShareResult, error
 		}
 		return ShareResult{Status: "preview", AgentID: primary.ID, ContextIDs: exported.ContextIDs, Text: strings.TrimSpace(args.Message + "\n\n" + exported.Text)}, nil
 	}
+	if args.Target == "harness" {
+		q, err := m.collab.Ask(ctx, collab.AskArgs{WorkspaceID: args.WorkspaceID, TaskID: args.TaskID, Prompt: args.Message, Recipient: "agent", ContextIDs: ids})
+		if err != nil {
+			return ShareResult{}, err
+		}
+		result := ShareResult{Status: "requested", ContextIDs: q.ContextIDs, Question: &q}
+		if reservation != nil {
+			reservation.Result = &result
+			if _, err := m.store.PutDocument(ctx, "harness-share", reservation.ID, reservation, 1); err != nil {
+				return result, err
+			}
+		}
+		return result, nil
+	}
 	d, err := m.send(ctx, SendArgs{AgentID: primary.ID, Message: args.Message, ContextIDs: ids, TaskID: args.TaskID}, fingerprint)
 	return shareReceipt(d), err
+}
+
+type harnessShare struct {
+	ID     string       `json:"id"`
+	Hash   string       `json:"hash"`
+	Result *ShareResult `json:"result,omitempty"`
+}
+
+// Reserve before creating any context/questions. If the core dies midway, a
+// retry reports the uncertain request instead of silently duplicating it.
+func (m *Manager) reserveHarnessShare(ctx context.Context, hash string) (*harnessShare, *ShareResult, error) {
+	id := "request_" + argumentHash(requestKey(ctx))
+	records, err := load[harnessShare](ctx, m.store, "harness-share")
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, r := range records {
+		if r.ID != id {
+			continue
+		}
+		if r.Hash != hash {
+			return nil, nil, &command.Error{Code: "conflict", Message: "request ID was already used for different sharing content"}
+		}
+		if r.Result == nil {
+			return nil, nil, &command.Error{Code: "request_unconfirmed", Message: "this request was started but not confirmed; inspect shared context/questions before retrying with a new request ID"}
+		}
+		return nil, r.Result, nil
+	}
+	r := &harnessShare{ID: id, Hash: hash}
+	_, err = m.store.PutDocument(ctx, "harness-share", id, r, 0)
+	return r, nil, err
 }
 func shareReceipt(d workspace.Delivery) ShareResult {
 	return ShareResult{Status: d.Status, AgentID: d.AgentID, ContextIDs: d.ContextIDs, Delivery: &d}

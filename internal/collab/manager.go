@@ -100,6 +100,8 @@ type Export struct {
 	SourceRevisions []string `json:"source_revisions"`
 }
 type AskArgs struct {
+	Recipient   string   `json:"recipient,omitempty"`
+	ContextIDs  []string `json:"context_ids,omitempty"`
 	WorkspaceID string   `json:"workspace_id"`
 	TaskID      string   `json:"task_id,omitempty"`
 	Prompt      string   `json:"prompt"`
@@ -469,6 +471,22 @@ func (m *Manager) Export(ctx context.Context, args ExportArgs) (Export, error) {
 	return result, nil
 }
 func (m *Manager) Ask(ctx context.Context, args AskArgs) (workspace.Question, error) {
+	if args.Recipient == "" {
+		args.Recipient = "agent"
+		if strings.HasPrefix(command.Caller(ctx).Actor, "agent:") {
+			args.Recipient = "human"
+		}
+	}
+	if args.Recipient != "human" && args.Recipient != "agent" {
+		return workspace.Question{}, invalid("question recipient must be human or agent")
+	}
+	if len(args.ContextIDs) > 0 {
+		exported, err := m.Export(ctx, ExportArgs{WorkspaceID: args.WorkspaceID, TaskID: args.TaskID, ContextIDs: args.ContextIDs})
+		if err != nil {
+			return workspace.Question{}, err
+		}
+		args.ContextIDs = exported.ContextIDs
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, err := m.resolve(args.WorkspaceID); err != nil {
@@ -490,7 +508,7 @@ func (m *Manager) Ask(ctx context.Context, args AskArgs) (workspace.Question, er
 	if args.Options == nil {
 		args.Options = []string{}
 	}
-	q := workspace.Question{ID: process.ID("question"), WorkspaceID: args.WorkspaceID, TaskID: args.TaskID, Kind: "question", Prompt: args.Prompt, Options: args.Options, Status: "open", Revision: 1, Actor: command.Caller(ctx).Actor, CreatedAt: timestamp()}
+	q := workspace.Question{ID: process.ID("question"), WorkspaceID: args.WorkspaceID, TaskID: args.TaskID, Kind: "question", Prompt: args.Prompt, Options: args.Options, Status: "open", Revision: 1, Actor: command.Caller(ctx).Actor, CreatedAt: timestamp(), Recipient: args.Recipient, ContextIDs: args.ContextIDs}
 	_, err := m.store.PutDocument(ctx, "question", q.ID, q, 0)
 	return q, err
 }

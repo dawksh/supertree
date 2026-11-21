@@ -82,6 +82,13 @@ func harnessCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 	env := map[string]string{"ST_STATE": options.StateDir, "ST_WORKTREE_ROOT": options.WorktreeRoot,
 		"ST_NEXT_SOCKET": daemonSocket(options), "ST_NEXT_TMUX_SOCKET": options.TmuxSocket}
+	// MCP clients filter inherited environment variables. Preserve the actual
+	// tmux context even when it uses TMUX instead of an explicit -S socket.
+	for _, key := range []string{"PATH", "HOME", "TMUX", "TMUX_PANE", "CODEX_HOME"} {
+		if value, present := os.LookupEnv(key); present {
+			env[key] = value
+		}
+	}
 	serverArgs := []string{"mcp", "--harness", provider}
 	if provider == "codex" {
 		encodedArgs, _ := json.Marshal(serverArgs)

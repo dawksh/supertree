@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dawksh/supertree/internal/agent"
 	"github.com/dawksh/supertree/internal/workspace"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -51,6 +52,7 @@ func TestRealHarnessMCPSharedWorkspaceRoundTrip(t *testing.T) {
 	t.Setenv("ST_NEXT_TMUX_SOCKET", filepath.Join(sockets, "tmux.sock"))
 	t.Setenv("ST_NEXT_ACTOR", "human:test")
 	t.Setenv("ST_NEXT_REQUEST_ID", "")
+	t.Setenv("ST_AGENT_MODE", "terminal")
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	command := func(program string, args ...string) []byte {
@@ -137,8 +139,41 @@ func TestRealHarnessMCPSharedWorkspaceRoundTrip(t *testing.T) {
 	if !strings.Contains(string(tool("context_export", map[string]any{"context_ids": []string{capture.ID}}, false)), "original source") {
 		t.Fatal("harness cannot read reviewed human context")
 	}
+	// Normal sharing creates a persistent request for the real harness. It
+	// neither starts another provider nor pretends the prompt was delivered.
+	t.Setenv("ST_NEXT_REQUEST_ID", "request-once")
+	var shared, repeated agent.ShareResult
+	shareArgs := []string{"share", "--file", file, "--message", "Explain the selected source", "--json"}
+	if err := json.Unmarshal(cli(shareArgs...), &shared); err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal(cli(shareArgs...), &repeated)
+	t.Setenv("ST_NEXT_REQUEST_ID", "")
+	if shared.Status != "requested" || shared.Delivery != nil || shared.Question == nil || shared.Question.Recipient != "agent" || len(shared.ContextIDs) != 1 || repeated.Question == nil || repeated.Question.ID != shared.Question.ID {
+		t.Fatalf("normal harness request duplicated or claimed delivery: %#v %#v", shared, repeated)
+	}
+	if !strings.Contains(string(tool("question_list", map[string]any{}, false)), shared.Question.ID) {
+		t.Fatal("harness cannot discover the human's shared request")
+	}
+	tool("context_export", map[string]any{"context_ids": shared.ContextIDs}, false)
+	tool("question_answer", map[string]any{"question_id": shared.Question.ID, "expected_revision": shared.Question.Revision, "answer": "The saved source explains the failure"}, false)
+	if !strings.Contains(string(cli("question", "list")), "The saved source explains the failure") {
+		t.Fatal("human cannot read the harness response")
+	}
+	cli("daemon", "stop")
+	cli("daemon", "start", "--json")
+	t.Setenv("ST_NEXT_REQUEST_ID", "request-once")
+	json.Unmarshal(cli(shareArgs...), &repeated)
+	t.Setenv("ST_NEXT_REQUEST_ID", "")
+	if repeated.Question == nil || repeated.Question.ID != shared.Question.ID {
+		t.Fatal("request retry after core restart created a duplicate")
+	}
 	os.WriteFile(file, []byte("human changed source\n"), 0600)
 	tool("context_export", map[string]any{"context_ids": []string{capture.ID}}, true)
+	staleShare := exec.CommandContext(ctx, binary, "share", "--context", shared.ContextIDs[0], "--message", "Review stale source", "--json")
+	if out, err := staleShare.CombinedOutput(); err == nil || !strings.Contains(string(out), "stale") {
+		t.Fatalf("request accepted stale reviewed context: %s %v", out, err)
+	}
 	var question workspace.Question
 	json.Unmarshal(tool("question_ask", map[string]any{"prompt": "Which behavior should we preserve?"}, false), &question)
 	cli("question", "answer", question.ID, "--revision", fmt.Sprint(question.Revision), "--answer", "Keep the current shortcuts")
@@ -173,6 +208,8 @@ func TestRealHarnessMCPSharedWorkspaceRoundTrip(t *testing.T) {
 	// Verify both real harness launch shapes without starting a provider,
 	// changing global config, using an account, or spending model tokens.
 	realCodex, _ := exec.LookPath("codex")
+	t.Setenv("TMUX", filepath.Join(sockets, "tmux.sock")+",123,0")
+	t.Setenv("TMUX_PANE", "%fixture")
 	testExe, _ := os.Executable()
 	toolsDir := filepath.Join(base, "tools")
 	os.Mkdir(toolsDir, 0700)
@@ -194,7 +231,7 @@ func TestRealHarnessMCPSharedWorkspaceRoundTrip(t *testing.T) {
 			t.Fatalf("launch changed cwd or resume args: %#v", launch)
 		}
 		if provider == "codex" {
-			if launch.Args[0] != "-c" || !strings.Contains(launch.Args[1], "mcp_servers.supertree=") || !strings.Contains(launch.Args[1], "core.sock") {
+			if launch.Args[0] != "-c" || !strings.Contains(launch.Args[1], "mcp_servers.supertree=") || !strings.Contains(launch.Args[1], "core.sock") || !strings.Contains(launch.Args[1], "TMUX_PANE") {
 				t.Fatalf("missing launch-scoped Codex override: %#v", launch)
 			}
 			if realCodex != "" {
@@ -208,7 +245,7 @@ func TestRealHarnessMCPSharedWorkspaceRoundTrip(t *testing.T) {
 			}
 		} else {
 			var config map[string]map[string]map[string]any
-			if launch.Args[0] != "--mcp-config" || json.Unmarshal([]byte(launch.Args[1]), &config) != nil || config["mcpServers"]["supertree"]["command"] != binary {
+			if launch.Args[0] != "--mcp-config" || json.Unmarshal([]byte(launch.Args[1]), &config) != nil || config["mcpServers"]["supertree"]["command"] != binary || config["mcpServers"]["supertree"]["env"].(map[string]any)["TMUX_PANE"] != "%fixture" {
 				t.Fatalf("missing launch-scoped Claude override: %#v", launch)
 			}
 		}
