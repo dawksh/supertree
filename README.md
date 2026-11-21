@@ -840,6 +840,38 @@ programs without blank rows above or below the navigation.
 Resizing preserves sidebar visibility, terminal programs and keyboard focus.
 The strip uses native tmux formats, without launching a command on each redraw.
 
+Supertree fills the terminal cell grid. Gutters outside that grid belong to the
+terminal emulator; neither tmux nor an application inside it can draw there.
+For an edge-to-edge workspace, set the host terminal's padding to zero:
+
+- [WezTerm](https://wezterm.org/config/lua/config/window_padding.html), in `wezterm.lua`:
+
+  ```lua
+  config.window_padding = { left = 0, right = 0, top = 0, bottom = 0 }
+  config.enable_scroll_bar = false
+  ```
+
+- [Ghostty](https://ghostty.org/docs/config/reference#window-padding-x), in its config:
+
+  ```ini
+  window-padding-x = 0
+  window-padding-y = 0
+  window-padding-balance = false
+  ```
+
+- [Kitty](https://sw.kovidgoyal.net/kitty/conf/#opt-kitty.window_padding_width), in `kitty.conf`:
+
+  ```conf
+  window_padding_width 0
+  window_margin_width 0
+  single_window_padding_width 0
+  single_window_margin_width 0
+  ```
+
+These are terminal preferences, not Supertree settings. Whole terminal cells
+may still leave a thin pixel remainder at the edge of an arbitrarily sized
+window; OS full-screen mode does not remove configured terminal padding.
+
 Agent state appears in `st ls` and the `M-w` picker. `running` means the agent
 process is active, `input` means its pane shows a prompt, `done` means the agent
 exited, and `closed` means the tree session is not open. Prompt detection is a
