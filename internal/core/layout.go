@@ -28,22 +28,44 @@ type layoutNode struct {
 	Children   []layoutNode `json:"children,omitempty"`
 }
 
-// UnmarshalJSON enforces exact field names at every level. The standard decoder
-// otherwise matches names case-insensitively even with DisallowUnknownFields.
-func (n *layoutNode) UnmarshalJSON(data []byte) error {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
+// checkLayoutShape checks depth and exact field names before decoding into the
+// recursive typed structure. Work is linear in the size of the JSON tree.
+func checkLayoutShape(data []byte) error {
+	var root any
+	if err := json.Unmarshal(data, &root); err != nil {
 		return err
 	}
-	for name := range fields {
-		switch name {
-		case "type", "resource_id", "direction", "ratio", "children":
-		default:
-			return fmt.Errorf("unknown layout field %q", name)
+	type entry struct {
+		value any
+		depth int
+	}
+	stack := []entry{{root, 1}}
+	count := 0
+	for len(stack) > 0 {
+		item := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		count++
+		if item.depth > 32 || count > 255 {
+			return fmt.Errorf("layout is too complex")
+		}
+		fields, ok := item.value.(map[string]any)
+		if !ok {
+			continue // The typed decoder reports invalid node types.
+		}
+		for name := range fields {
+			switch name {
+			case "type", "resource_id", "direction", "ratio", "children":
+			default:
+				return fmt.Errorf("unknown layout field %q", name)
+			}
+		}
+		if children, ok := fields["children"].([]any); ok {
+			for _, child := range children {
+				stack = append(stack, entry{child, item.depth + 1})
+			}
 		}
 	}
-	type node layoutNode
-	return json.Unmarshal(data, (*node)(n))
+	return nil
 }
 
 func (c *Core) RegisterLayouts(r *command.Registry) error {
@@ -111,6 +133,9 @@ func validateLayout(root map[string]any, resources map[string]bool) error {
 	}
 	if len(data) > 64<<10 {
 		return fmt.Errorf("layout exceeds 64 KiB")
+	}
+	if err := checkLayoutShape(data); err != nil {
+		return fmt.Errorf("invalid layout: %w", err)
 	}
 	var node layoutNode
 	decoder := json.NewDecoder(bytes.NewReader(data))
