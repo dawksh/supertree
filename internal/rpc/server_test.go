@@ -305,3 +305,26 @@ func TestSocketPathStableAcrossStateCreationAndSymlinkAlias(t *testing.T) {
 		t.Fatal("socket identity changed after first launch")
 	}
 }
+
+func TestDesiredLayoutCommandsAvailableOverRPC(t *testing.T) {
+	options, socket := fixture(t)
+	start(t, options, socket)
+	ws := snapshot(t, socket, rpc.Meta{}).Workspaces[0].ID
+	args, _ := json.Marshal(map[string]any{"workspace_id": ws, "expected_revision": 0})
+	raw, err := rpc.Call(context.Background(), socket, "layout.save", args, rpc.Meta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved core.Layout
+	if err := json.Unmarshal(raw, &saved); err != nil || saved.Revision != 1 {
+		t.Fatalf("save: %s %v", raw, err)
+	}
+	args, _ = json.Marshal(map[string]any{"workspace_id": ws})
+	raw, err = rpc.Call(context.Background(), socket, "layout.inspect", args, rpc.Meta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &saved); err != nil || saved.WorkspaceID != ws || saved.Revision != 1 {
+		t.Fatalf("inspect: %s %v", raw, err)
+	}
+}

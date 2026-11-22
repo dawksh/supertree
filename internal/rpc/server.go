@@ -77,6 +77,9 @@ func Serve(ctx context.Context, options workspace.Options, socket string, log io
 		err = c.RegisterViews(s.r)
 	}
 	if err == nil {
+		err = c.RegisterLayouts(s.r)
+	}
+	if err == nil {
 		err = c.RegisterCollaboration(s.r)
 	}
 	if err == nil {
