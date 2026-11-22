@@ -170,6 +170,29 @@ func TestCaptureLiveLayoutAndRejectForeignPane(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	duplicate, err := client.Run(ctx, "new-window", "-d", "-P", "-F", "#{pane_id}", "-t", p.SessionID, "-c", repo, "exec sleep 120")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = client.Run(ctx, "set-option", "-p", "-t", duplicate, "@st_next_process", p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = c.Refresh(ctx, repo, core.Origin{Actor: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = call("layout.capture", args); err == nil {
+		t.Fatal("capture accepted duplicate process tag in another window")
+	}
+	inspected, err := call("layout.inspect", map[string]any{"workspace_id": id})
+	if err != nil || inspected.(core.Layout).Revision != 0 {
+		t.Fatalf("rejected capture modified saved layout: %v %v", inspected, err)
+	}
+	if _, err = client.Run(ctx, "kill-pane", "-t", duplicate); err != nil {
+		t.Fatal(err)
+	}
+	if err = c.Refresh(ctx, repo, core.Origin{Actor: "test"}); err != nil {
+		t.Fatal(err)
+	}
 	got, err := call("layout.capture", args)
 	if err != nil {
 		t.Fatal(err)
@@ -207,6 +230,19 @@ func TestCaptureLiveLayoutAndRejectForeignPane(t *testing.T) {
 		t.Fatal(err)
 	}
 	thirdProcess := v.(workspace.Process)
+	duplicate, err = client.Run(ctx, "new-window", "-d", "-P", "-F", "#{pane_id}", "-t", p.SessionID, "-c", repo, "exec sleep 120")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = client.Run(ctx, "set-option", "-p", "-t", duplicate, "@st_next_process", second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = call("layout.capture", args); err == nil {
+		t.Fatal("capture accepted duplicate non-anchor process tag in another window")
+	}
+	if _, err = client.Run(ctx, "kill-pane", "-t", duplicate); err != nil {
+		t.Fatal(err)
+	}
 	got, err = call("layout.capture", args)
 	if err != nil {
 		t.Fatal(err)

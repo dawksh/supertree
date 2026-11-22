@@ -485,7 +485,8 @@ multi-pane slicing layouts are represented as binary splits.
 
 Every pane in the selected window must already be managed or explicitly
 registered to this workspace; observed-only, foreign, duplicate/ambiguous, or
-missing panes are rejected rather than omitted. Zoomed windows, layouts with
+missing panes are rejected rather than omitted. Captured process tags must be
+unique across all windows on the tmux server, not only the selected window. Zoomed windows, layouts with
 unsupported geometry or ratios outside 0.05–0.95, and layouts changing during
 capture are rejected. Capture saves metadata only: it does not restore a layout,
 and cannot capture multiple windows in one tree. Registering an existing pane is
@@ -518,7 +519,8 @@ running. Detach from an attached tmux terminal to return to the control client.
 Select a running managed or registered process as the window anchor. Uppercase
 `S` inspects the saved revision and asks for confirmation before capturing that
 window. Uppercase `R` inspects the current live token for an anchor included in
-the saved layout and asks before restoring. Escape cancels. Stale revisions or
+the saved layout and asks before restoring. Escape cancels before submission;
+once restore has been submitted, Escape cannot cancel or hide its result. Stale revisions or
 live tokens and other errors are shown; review the state before retrying. Both
 operations are limited to one existing window and do not adopt or stop terminals.
 The daemon must provide `layout.capture`, `layout.live`, and `layout.restore`.

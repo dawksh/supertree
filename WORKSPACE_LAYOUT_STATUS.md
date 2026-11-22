@@ -10,6 +10,13 @@ Each workspace has an independent saved layout. Inspect with `{"workspace_id":"<
 
 Process IDs must already be known in the selected workspace, including processes that are no longer running. A resource may appear only once; splits have exactly two children, horizontal/vertical direction and a ratio between 0.05 and 0.95 inclusive. Layouts are limited to 255 nodes, 32 levels and 64 KiB. The resource identifiers are Supertree process IDs, not tmux pane IDs. These commands do not automatically remove stale references after a save.
 
+## Live capture identity checks
+
+Capture rejects selected process IDs with duplicate tmux tags anywhere on the
+server, including other windows. It checks global identities before and after
+reading the selected window. Tmux state and the saved metadata are not one
+transaction; another client can still change tags after the final check.
+
 ## Explicit live restore
 
 `layout.restore` is opt-in; saving remains metadata-only. Invoke it with

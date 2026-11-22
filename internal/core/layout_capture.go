@@ -82,7 +82,11 @@ func (c *Core) registerCapture(r *command.Registry) error {
 		var geometry []capturePane
 		seen := map[string]bool{}
 		live := map[string]int{}
+		globalTags := map[string]int{}
 		for _, p := range panes {
+			if p.ProcessID != "" {
+				globalTags[p.ProcessID]++
+			}
 			if p.WindowID == window {
 				live[p.ID]++
 			}
@@ -99,7 +103,7 @@ func (c *Core) registerCapture(r *command.Registry) error {
 					return fail("unsupported pane geometry")
 				}
 			}
-			if n[2] < 1 || n[3] < 1 || f[5] == "" || byID[f[5]] != f[0] || seen[f[5]] || live[f[0]] != 1 {
+			if n[2] < 1 || n[3] < 1 || f[5] == "" || byID[f[5]] != f[0] || seen[f[5]] || live[f[0]] != 1 || globalTags[f[5]] != 1 {
 				return fail("window contains a foreign or ambiguous pane; register it first")
 			}
 			seen[f[5]] = true
@@ -133,6 +137,26 @@ func (c *Core) registerCapture(r *command.Registry) error {
 		}
 		if raw != again {
 			return fail("window panes changed during capture")
+		}
+		// Re-check globally, not just the chosen window: tags are not unique
+		// by construction and another client may duplicate them during capture.
+		finalPanes, err := client.Panes(ctx)
+		if err != nil {
+			return Layout{}, err
+		}
+		counts := map[string]int{}
+		for _, p := range finalPanes {
+			if seen[p.ProcessID] {
+				counts[p.ProcessID]++
+				if byID[p.ProcessID] != p.ID || p.WindowID != window || p.Dead {
+					return fail("process pane identity changed during capture")
+				}
+			}
+		}
+		for id := range seen {
+			if counts[id] != 1 {
+				return fail("duplicate or missing process tag during capture")
+			}
 		}
 		rev, err := c.store.PutDocument(ctx, "layout", a.WorkspaceID, root, a.ExpectedRevision)
 		if err != nil {

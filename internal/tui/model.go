@@ -80,6 +80,8 @@ type Model struct {
 	query, input, pendingName           string
 	pendingArgs                         any
 	message, preview, result            string
+	notice                              string
+	layoutSubmitted                     bool
 	connected, loading, dirty           bool
 	lastPresent                         time.Time
 	generation                          int64
@@ -370,9 +372,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.present()
 	case actionMsg:
 		if msg.Request != m.actionRequest || msg.Generation != m.generation {
+			if msg.Err != nil {
+				m.notice = fmt.Sprintf("%s failed: %v", msg.Name, msg.Err)
+			}
 			m.dirty = true
 			return m, nil
 		}
+		m.layoutSubmitted = false
 		m.layoutWorkspace = ""
 		m.mode = "browse"
 		m.pendingName = ""
@@ -437,6 +443,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		commands = append(commands, m.output())
 		return m, tea.Batch(commands...)
 	case tea.KeyMsg:
+		if msg.String() == "esc" && m.mode == "working" && m.pendingName == "layout.restore" && m.layoutSubmitted {
+			return m, nil
+		}
 		if m.mode != "working" || msg.String() == "esc" {
 			m.generation++
 		}
@@ -634,6 +643,7 @@ func (m Model) edit(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.present()
 	case "confirm":
 		if key.String() == "enter" {
+			m.layoutSubmitted = m.pendingName == "layout.restore"
 			m.mode = "working"
 			return m, m.invoke(m.pendingName, m.pendingArgs)
 		}
@@ -856,6 +866,9 @@ func (m Model) View() string {
 		right = m.collaborationView(rightWidth - 4)
 	}
 	boxHeight := m.height - 7
+	if m.notice != "" {
+		boxHeight--
+	}
 	body := lipgloss.JoinHorizontal(lipgloss.Top, m.theme.Frame(m.panel == "workspaces").Width(leftWidth-2).Height(boxHeight).MaxHeight(boxHeight+2).Render(strings.Join(left, "\n")), " ", m.theme.Frame(m.panel != "workspaces").Width(rightWidth).Height(boxHeight).MaxHeight(boxHeight+2).Render(strings.Join(right, "\n")))
 	if m.mode != "browse" {
 		body = m.overlay(rightWidth+leftWidth-1, boxHeight+2)
@@ -864,7 +877,12 @@ func (m Model) View() string {
 	if m.panel == "collaboration" {
 		footer = m.theme.Muted.Render(line("q close · ? help · S save layout · R restore layout · c terminals · ↑↓ select · Space mark · Enter open · i share · I interrupt · t goal · p commands", m.width))
 	}
-	return strings.Join([]string{header, body, line(m.message, m.width), footer}, "\n")
+	rows := []string{header, body}
+	if m.notice != "" {
+		rows = append(rows, line(m.notice, m.width))
+	}
+	rows = append(rows, line(m.message, m.width), footer)
+	return strings.Join(rows, "\n")
 }
 func (m Model) overlay(width, height int) string {
 	if strings.HasSuffix(m.mode, "-form") {

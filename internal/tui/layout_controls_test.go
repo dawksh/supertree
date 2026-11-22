@@ -281,3 +281,68 @@ func TestWorkspaceNormalizationIgnoresInFlightActionCompletion(t *testing.T) {
 		t.Fatalf("late completion hid cancellation: %q", m.message)
 	}
 }
+
+func TestRestoreEscapeAfterSubmissionShowsPartialFailure(t *testing.T) {
+	m, _ := fixture(t)
+	m.options.Invoke = func(_ context.Context, name string, _ any) (json.RawMessage, error) {
+		if name == "layout.live" {
+			return json.RawMessage(`{"workspace_id":"ws_one","process_id":"proc_one","window_id":"@1","revision":3,"expected_layout":"token"}`), nil
+		}
+		return nil, fmt.Errorf("partial_failure: inspect tmux before retrying")
+	}
+	m, cmd := key(m, runeKey("R"))
+	next, _ := m.Update(cmd())
+	m = next.(Model)
+	m, action := key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = key(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.mode != "working" {
+		t.Fatalf("escape dismissed submitted restore: %s", m.mode)
+	}
+	next, _ = m.Update(action())
+	m = next.(Model)
+	if m.mode != "browse" || !strings.Contains(m.View(), "partial_failure") {
+		t.Fatalf("restore failure hidden: %s", m.View())
+	}
+}
+
+func TestBackgroundFailureVisibleAfterNavigationWithoutDismissingDialog(t *testing.T) {
+	m, _ := fixture(t)
+	m.options.Invoke = func(_ context.Context, name string, _ any) (json.RawMessage, error) {
+		if name == "layout.inspect" {
+			return json.RawMessage(`{"workspace_id":"ws_one","revision":1}`), nil
+		}
+		return nil, fmt.Errorf("background start failed")
+	}
+	m, action := key(m, runeKey("s"))
+	m, inspect := key(m, runeKey("S"))
+	next, _ := m.Update(inspect())
+	m = next.(Model)
+	if m.mode != "confirm" {
+		t.Fatal("expected newer dialog")
+	}
+	next, _ = m.Update(action())
+	m = next.(Model)
+	if m.mode != "confirm" || m.pendingName != "layout.capture" || !strings.Contains(m.View(), "background start failed") {
+		t.Fatalf("lost failure or dialog: %s", m.View())
+	}
+}
+
+func TestRestoreFailureVisibleAlongsideEarlierBackgroundFailure(t *testing.T) {
+	m, _ := fixture(t)
+	m.notice = "process.start failed: earlier failure"
+	m.options.Invoke = func(_ context.Context, name string, _ any) (json.RawMessage, error) {
+		if name == "layout.live" {
+			return json.RawMessage(`{"workspace_id":"ws_one","process_id":"proc_one","window_id":"@1","revision":3,"expected_layout":"token"}`), nil
+		}
+		return nil, fmt.Errorf("partial_failure: inspect tmux")
+	}
+	m, cmd := key(m, runeKey("R"))
+	next, _ := m.Update(cmd())
+	m = next.(Model)
+	m, cmd = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(cmd())
+	m = next.(Model)
+	if !strings.Contains(m.View(), "partial_failure") || !strings.Contains(m.View(), "earlier failure") {
+		t.Fatal("one of the failures is hidden")
+	}
+}
