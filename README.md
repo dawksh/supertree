@@ -515,6 +515,17 @@ command palette; its entries and JSON argument models come from the core registr
 Use `?` for help and `q` to close the TUI. Closing it leaves the core and terminals
 running. Detach from an attached tmux terminal to return to the control client.
 
+Uppercase `S` explicitly saves the selected workspace's live layout; uppercase
+`R` asks for confirmation before restoring its saved layout. Escape cancels
+the confirmation. Both inspect the saved revision first, and conflicts or other
+daemon errors are shown in the status line; retry only after reviewing the state.
+These controls do not automatically register, adopt, or stop terminals. They
+require a daemon providing `layout.capture` and `layout.restore` with
+`workspace_id` and `expected_revision` arguments. The current baseline daemon
+only provides `layout.inspect` and metadata-only `layout.save`, so these controls
+report an error until compatible capture/restore commands are available. They
+are optional and do not change the normal shell workflow.
+
 The TUI subscribes to changes, reconnects with a fresh snapshot when required,
 and never repeats a mutation on reconnect. Background process actions preserve
 focus. If the terminal is too small, enlarge it to at least 60 columns × 16 rows.

@@ -41,6 +41,13 @@ type actionMsg struct {
 	Data json.RawMessage
 	Err  error
 }
+type layoutInspectMsg struct {
+	WorkspaceID string
+	Action      string
+	Revision    *int64
+	Err         error
+	Request     int64
+}
 type presentMsg struct {
 	View       workspace.View
 	Err        error
@@ -75,6 +82,7 @@ type Model struct {
 	agentID                             string
 	contextIDs                          []string
 	collabIndex                         int
+	layoutRequest                       int64
 }
 
 func New(options Options) Model {
@@ -128,6 +136,27 @@ func (m Model) invoke(name string, args any) tea.Cmd {
 		ctx := command.WithOrigin(m.options.Context, command.Origin{Actor: "human:tui", RequestID: process.ID("request")})
 		data, err := m.options.Invoke(ctx, name, args)
 		return actionMsg{name, data, err}
+	}
+}
+func (m Model) inspectLayout(action string) tea.Cmd {
+	id := m.workspaceID
+	request := m.layoutRequest
+	return func() tea.Msg {
+		msg := layoutInspectMsg{WorkspaceID: id, Action: action, Request: request}
+		data, err := m.options.Invoke(m.options.Context, "layout.inspect", core.InspectArgs{WorkspaceID: id})
+		if err == nil {
+			var result struct {
+				WorkspaceID string `json:"workspace_id"`
+				Revision    *int64 `json:"revision"`
+			}
+			err = json.Unmarshal(data, &result)
+			if err == nil && (result.WorkspaceID != id || result.Revision == nil || *result.Revision < 0) {
+				err = fmt.Errorf("layout.inspect returned an invalid workspace or revision")
+			}
+			msg.Revision = result.Revision
+		}
+		msg.Err = err
+		return msg
 	}
 }
 func (m Model) processes() []workspace.Process {
@@ -255,6 +284,21 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.preview = msg.Text
 		}
 		return m, nil
+	case layoutInspectMsg:
+		if m.mode != "working" || m.pendingName != msg.Action || m.workspaceID != msg.WorkspaceID || m.layoutRequest != msg.Request {
+			return m, nil
+		}
+		if msg.Err != nil || msg.Revision == nil {
+			m.mode, m.pendingName = "browse", ""
+			m.message = fmt.Sprintf("layout.inspect failed: %v", msg.Err)
+			return m, nil
+		}
+		m.pendingArgs = map[string]any{"workspace_id": msg.WorkspaceID, "expected_revision": *msg.Revision}
+		if msg.Action == "layout.restore" {
+			m.mode = "confirm"
+			return m, m.present()
+		}
+		return m, m.invoke(msg.Action, m.pendingArgs)
 	case actionMsg:
 		m.mode = "browse"
 		m.pendingName = ""
@@ -348,6 +392,18 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.fields = []string{"", "", "terminal"}
 			m.field = 0
 			m.pendingName = "process.start"
+		case "S", "R":
+			if m.workspaceID == "" {
+				m.message = "Open a Git checkout first"
+				break
+			}
+			m.layoutRequest++
+			m.pendingName = "layout.capture"
+			if msg.String() == "R" {
+				m.pendingName = "layout.restore"
+			}
+			m.mode = "working"
+			return m, m.inspectLayout(m.pendingName)
 		case "s":
 			if m.workspaceID == "" {
 				m.message = "Open a Git checkout first"
@@ -471,6 +527,7 @@ func (m Model) prefill(d command.Definition) string {
 }
 func (m Model) edit(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.String() == "esc" {
+		m.layoutRequest++
 		m.mode = "browse"
 		m.pendingName = ""
 		return m, m.present()
@@ -720,9 +777,9 @@ func (m Model) View() string {
 	if m.mode != "browse" {
 		body = m.overlay(rightWidth+leftWidth-1, boxHeight+2)
 	}
-	footer := m.theme.Muted.Render(line("q close · c pairing · p commands · Tab switch · ↑↓/jk navigate · Enter attach · s shell · n new · x stop · r restart · m move · ? help", m.width))
+	footer := m.theme.Muted.Render(line("q close · ? help · S save layout · R restore layout · c pairing · p commands · Tab switch · ↑↓ navigate · Enter attach · s shell · n new · x stop · r restart · m move", m.width))
 	if m.panel == "collaboration" {
-		footer = m.theme.Muted.Render(line("q close · c terminals · ↑↓ select · Space mark · Enter open · i share · I interrupt · t goal · p commands", m.width))
+		footer = m.theme.Muted.Render(line("q close · ? help · S save layout · R restore layout · c terminals · ↑↓ select · Space mark · Enter open · i share · I interrupt · t goal · p commands", m.width))
 	}
 	return strings.Join([]string{header, body, line(m.message, m.width), footer}, "\n")
 }
@@ -771,7 +828,11 @@ func (m Model) overlay(width, height int) string {
 		rows = append(rows, m.theme.Accent.Render(m.pendingName), "Edit JSON arguments. Enter validates; Esc cancels. Ctrl-U clears.", "", line(m.input, width-6))
 	case "confirm":
 		data, _ := json.Marshal(m.pendingArgs)
-		rows = append(rows, m.theme.Input.Render("? "+m.pendingName), "", line(string(data), width-6), "", m.theme.Warning.Render("Enter confirms · Esc cancels (default)"))
+		title := "? " + m.pendingName
+		if m.pendingName == "layout.restore" {
+			title = "? Restore saved layout (may rearrange terminals)"
+		}
+		rows = append(rows, m.theme.Input.Render(title), "", line(string(data), width-6), "", m.theme.Warning.Render("Enter confirms · Esc cancels (default)"))
 	case "working":
 		rows = append(rows, m.theme.Accent.Render("RUNNING "+m.pendingName), "Commands run once. Reconnection never repeats a mutation.")
 	case "move":
@@ -790,7 +851,7 @@ func (m Model) overlay(width, height int) string {
 			rows = append(rows, prefix+name)
 		}
 	case "help":
-		rows = append(rows, m.theme.Accent.Render("Work together"), "s shell · n named program · Enter attach · x stop · m move", "c opens pairing · t shared goal · u marks goal done", "a selects this tree's agent · i shares marked context · I interrupts", "f saved file lines · d tracked diff · o process output · N note", "Space marks context · r recaptures · Enter answers a question", "st share --file path --message '...' works from the usual shell", "SupertreeAsk shares a saved selection from the usual Vim tab", "p commands · agents use the same semantic actions", "", "Esc returns · q closes controls; terminals keep running")
+		rows = append(rows, m.theme.Accent.Render("Work together"), "S save layout · R restore layout (confirmation required)", "s shell · n named program · Enter attach · x stop · m move", "c opens pairing · t shared goal · u marks goal done", "a selects this tree's agent · i shares marked context · I interrupts", "f saved file lines · d tracked diff · o process output · N note", "Space marks context · r recaptures · Enter answers a question", "st share --file path --message '...' works from the usual shell", "SupertreeAsk shares a saved selection from the usual Vim tab", "p commands · agents use the same semantic actions", "", "Esc returns · q closes controls; terminals keep running")
 	}
 	return m.theme.Frame(true).Width(width).Height(height - 2).MaxHeight(height).Render(strings.Join(rows, "\n"))
 }
