@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Every first-parent commit after the latest published release gets a release.
+# Each eligible first-parent commit after the latest published release gets a release.
+# A release:skip commit is folded into the next eligible release.
 # The first run begins at the commit that introduced this workflow, so older
 # unreleased commits are included in that first release instead of backfilled.
 # A commit that fails its checks is folded into the next release, unless it is
@@ -87,6 +88,12 @@ main() {
     fi
     labels=$(gh api "repos/$repo/commits/$sha/pulls" \
       --jq '.[] | select(.merged_at != null) | .labels[].name')
+    # Skip only this commit; retain bump requests for the next release.
+    if grep -qxF 'release:skip' <<<"$labels"; then
+      printf 'Skipping %s: release:skip; its changes ship with the next release.\n' "$sha"
+      carried+="$(printf '%s\n' "$labels" | grep -xE 'release:(major|minor)' || true)"$'\n'
+      continue
+    fi
     labels=$carried$labels
     bump=$(choose_bump "$labels")
     next=$(next_version "$base" "$bump")
