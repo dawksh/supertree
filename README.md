@@ -121,6 +121,15 @@ Each merged pull request gets a patch version by default. Add the
 version bump. If both are present, major takes precedence. Use squash or merge
 commits, so each pull request produces one commit on the first-parent history
 of `main`.
+
+Add `release:skip` before merging to defer that commit's release; its changes
+ship with the next non-skipped release. Consecutive skipped merges accumulate,
+and a skipped latest commit remains unreleased on retries or manual workflow
+runs. Any `release:minor` or `release:major` on a skipped merge carries forward
+(with major taking precedence), but `release:skip` applies only to that merge.
+Keep these labels on merged pull requests until their changes are released,
+since the catch-up job reads them again on each run.
+
 The release job catches up on any merges that happen while a prior release is
 running. The first automated release includes changes since the last manual
 release.
@@ -128,9 +137,9 @@ release.
 In GitHub repository settings, require pull requests and the `Shell tests
 (ubuntu-latest)` and `Shell tests (macos-latest)` checks for `main`. Disable
 direct pushes and rebase merging to preserve one release per merged pull
-request. Create the optional `release:minor` and `release:major` labels in the
-repository. The release workflow uses the repository's `GITHUB_TOKEN`; no
-separate release token is needed.
+request. Create the optional `release:minor`, `release:major`, and
+`release:skip` labels in the repository. The release workflow uses the
+repository's `GITHUB_TOKEN`; no separate release token is needed.
 
 ### Update
 
