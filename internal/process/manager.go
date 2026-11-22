@@ -289,7 +289,7 @@ func (m *Manager) launch(ctx context.Context, item *saved) error {
 		err = m.save(ctx, item)
 	}
 	if err == nil {
-		_, err = m.client.Run(ctx, "respawn-pane", "-k", "-t", pane, "-c", dir, tmux.ShellCommand(p.Command, item.Environment))
+		err = m.respawn(ctx, pane, dir, p.Command, item.Environment)
 	}
 	if err == nil {
 		_, _ = m.client.Run(ctx, "rename-window", "-t", pane, p.Name)
@@ -313,6 +313,47 @@ func (m *Manager) launch(ctx context.Context, item *saved) error {
 	}
 	return saveErr
 }
+
+// respawn hands the shell a private, one-shot script rather than putting the
+// launch definition in tmux's argv or its persistent pane_start_command.
+func (m *Manager) respawn(ctx context.Context, pane, dir string, argv []string, environment map[string]string) error {
+	file, err := os.CreateTemp("", "st-launch-*")
+	if err != nil {
+		return err
+	}
+	path := file.Name()
+	defer os.Remove(path)
+	_, err = fmt.Fprintln(file, "/bin/rm -f -- \"$0\" || exit 1\n"+tmux.ShellCommand(argv, environment))
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	_, err = m.client.Run(ctx, "respawn-pane", "-k", "-t", pane, "-c", dir, tmux.ShellCommand([]string{"/bin/sh", path}, nil))
+	if err != nil {
+		return err
+	}
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("timed out waiting for process launch")
+		case <-tick.C:
+		}
+	}
+}
+
 func apply(p *workspace.Process, live tmux.Pane) {
 	p.PaneID, p.WindowID, p.SessionID = live.ID, live.WindowID, live.SessionID
 	p.State, p.ExitCode, p.Error = "running", -1, ""

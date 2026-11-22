@@ -13,6 +13,7 @@ import (
 	"github.com/dawksh/supertree/internal/command"
 	"github.com/dawksh/supertree/internal/core"
 	"github.com/dawksh/supertree/internal/process"
+	"github.com/dawksh/supertree/internal/store"
 	"github.com/dawksh/supertree/internal/tmux"
 	"github.com/dawksh/supertree/internal/workspace"
 )
@@ -194,4 +195,57 @@ func mustJSON(value any) json.RawMessage {
 		panic(err)
 	}
 	return data
+}
+
+func TestLaunchSecretsExcludedFromTmux(t *testing.T) {
+	realTmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux unavailable")
+	}
+	base := t.TempDir()
+	log := filepath.Join(base, "tmux-args")
+	bin := filepath.Join(base, "bin")
+	if err := os.Mkdir(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	// ShellCommand includes exec/env; use simple quoted paths for this test wrapper.
+	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
+	wrapper := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> " + quote(log) + "\nexec " + quote(realTmux) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(wrapper), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// The socket must fit the Unix socket path limit.
+	sockets, err := os.MkdirTemp("", "st-secret-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(sockets)
+	client := tmux.Client{Socket: filepath.Join(sockets, "socket")}
+	ctx := context.Background()
+	defer client.Run(ctx, "kill-server")
+	st, err := store.Open(filepath.Join(base, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m := process.New(st, client, func(string) (workspace.Workspace, error) {
+		return workspace.Workspace{ID: "ws", Path: base, State: "available"}, nil
+	})
+	secret := "st-secret-do-not-expose-7391"
+	p, err := m.Start(ctx, process.StartArgs{WorkspaceID: "ws", Name: "private", Command: []string{"/bin/sh", "-c", "sleep 120", "sh", secret}, Environment: map[string]string{"ST_SECRET": secret}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := client.Run(ctx, "display-message", "-p", "-t", p.PaneID, "#{pane_start_command}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(metadata, secret) || strings.Contains(string(args), secret) {
+		t.Fatal("secret exposed in tmux arguments or pane metadata")
+	}
 }
