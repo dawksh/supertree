@@ -491,6 +491,15 @@ capture are rejected. Capture saves metadata only: it does not restore a layout,
 and cannot capture multiple windows in one tree. Registering an existing pane is
 an explicit management action with the consequences described above.
 
+Saved workspace layouts are desired metadata, and saving never changes tmux.
+The explicit `layout.restore` registry/RPC action can apply a saved pane/split tree
+in a single existing managed window after checking both the saved revision and a
+caller-supplied live tmux layout token. It refuses unrelated panes, unsupported
+pane order, zoomed windows, cross-window layouts and layouts that do not fit;
+it never starts, stops or adopts terminals. Failures after application may require
+inspecting tmux before retrying. See [layout status](WORKSPACE_LAYOUT_STATUS.md)
+for arguments, concurrency limits and unsupported cases.
+
 ### Go workspace TUI
 
 ```sh
