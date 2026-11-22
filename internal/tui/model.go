@@ -451,6 +451,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(commands...)
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+e" && len(m.criticalNotices) > 0 {
+			if !m.hasRoomForControls() {
+				return m, nil
+			}
 			m.criticalNotices = m.criticalNotices[1:]
 			return m, nil
 		}
@@ -785,8 +788,10 @@ func clean(s string) string {
 func line(s string, width int) string {
 	return ansi.Truncate(strings.ReplaceAll(clean(s), "\n", " "), max(1, width), "…")
 }
+func (m Model) hasRoomForControls() bool { return m.width >= 60 && m.height >= 16 }
+
 func (m Model) View() string {
-	if m.width < 60 || m.height < 16 {
+	if !m.hasRoomForControls() {
 		return fmt.Sprintf("Supertree — enlarge terminal to 60×16 (currently %d×%d). q quits.\n", m.width, m.height)
 	}
 	status := "connecting"

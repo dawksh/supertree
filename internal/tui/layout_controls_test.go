@@ -432,3 +432,29 @@ func TestPartialFailureWarningsQueueAndAcknowledgeInOrder(t *testing.T) {
 		t.Fatal("queue not acknowledged")
 	}
 }
+
+func TestPartialFailureCannotBeAcknowledgedWhileTerminalTooSmall(t *testing.T) {
+	m, _ := fixture(t)
+	next, _ := m.Update(actionMsg{Name: "layout.restore", Err: &command.Error{Code: "partial_failure", Message: "inspect tmux before retry"}})
+	m = next.(Model)
+	for _, size := range []tea.WindowSizeMsg{{Width: 59, Height: 30}, {Width: 100, Height: 15}} {
+		next, _ = m.Update(size)
+		m = next.(Model)
+		if strings.Contains(m.View(), "inspect tmux before retry") {
+			t.Fatal("test requires warning to be hidden")
+		}
+		m, _ = key(m, tea.KeyMsg{Type: tea.KeyCtrlE})
+		if len(m.criticalNotices) != 1 {
+			t.Fatal("hidden warning was acknowledged")
+		}
+	}
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+	if !strings.Contains(m.View(), "inspect tmux before retry") {
+		t.Fatal("warning missing after resize")
+	}
+	m, _ = key(m, tea.KeyMsg{Type: tea.KeyCtrlE})
+	if len(m.criticalNotices) != 0 {
+		t.Fatal("visible warning could not be acknowledged")
+	}
+}
