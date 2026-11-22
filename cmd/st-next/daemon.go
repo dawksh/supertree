@@ -147,23 +147,45 @@ func daemonStatus(ctx context.Context, options workspace.Options, socket string)
 }
 
 func startDaemon(ctx context.Context, options workspace.Options, socket string) (rpc.Status, error) {
-	status, err := daemonStatus(ctx, options, socket)
+	// Serialize the check and launch across CLI processes. The daemon's own
+	// lock alone does not prevent a losing child from exiting before the winner
+	// is ready to answer status requests.
+	dir := filepath.Join(options.StateDir, "next")
+	if err := rpc.PrivateDir(dir); err != nil {
+		return rpc.Status{}, err
+	}
+	fd, err := unix.Open(filepath.Join(dir, "startup.lock"), unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
+	if err != nil {
+		return rpc.Status{}, err
+	}
+	lock := os.NewFile(uintptr(fd), "startup.lock")
+	defer lock.Close()
+	deadline, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	for {
+		err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EAGAIN) {
+			return rpc.Status{}, err
+		}
+		if err := pause(deadline); err != nil {
+			return rpc.Status{}, fmt.Errorf("waiting for daemon startup lock: %w", err)
+		}
+	}
+	status, err := daemonStatus(deadline, options, socket)
 	if err == nil && status.Running {
 		if status.WorktreeRoot != options.WorktreeRoot || status.TmuxSocket != options.TmuxSocket {
 			return status, &command.Error{Code: "configuration_mismatch", Message: "daemon uses different workspace or tmux settings; stop it before starting with this configuration"}
 		}
 		return status, nil
 	}
-	// Starting twice concurrently is safe: the child must acquire the state lock.
 	if err != nil && !rpc.IsUnavailable(err) {
 		return status, err
 	}
-	dir := filepath.Join(options.StateDir, "next")
-	if err := rpc.PrivateDir(dir); err != nil {
-		return status, err
-	}
 	logPath := filepath.Join(dir, "daemon.log")
-	fd, err := unix.Open(logPath, unix.O_CREAT|unix.O_APPEND|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
+	fd, err = unix.Open(logPath, unix.O_CREAT|unix.O_APPEND|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
 	if err != nil {
 		return status, err
 	}
@@ -181,8 +203,6 @@ func startDaemon(ctx context.Context, options workspace.Options, socket string) 
 	}
 	exited := make(chan error, 1)
 	go func() { exited <- child.Wait() }()
-	deadline, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
 	for {
 		probe, done := context.WithTimeout(deadline, 200*time.Millisecond)
 		data, err := rpc.Call(probe, socket, "daemon.status", json.RawMessage(`{}`), clientMeta(options))
