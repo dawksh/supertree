@@ -93,6 +93,9 @@ func (c *Core) RegisterLayouts(r *command.Registry) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.registerCapture(r); err != nil {
+		return err
+	}
 	return command.Register(r, command.Definition{Name: "layout.save", Version: 1, Description: "Save a desired layout; does not alter tmux.", Effects: []string{"layout.save"}}, func(ctx context.Context, args LayoutSave) (Layout, error) {
 		c.refresh.Lock()
 		defer c.refresh.Unlock()

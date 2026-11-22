@@ -6,6 +6,7 @@ import (
 	"github.com/dawksh/supertree/internal/process"
 	"github.com/dawksh/supertree/internal/tmux"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/dawksh/supertree/internal/core"
@@ -127,5 +128,108 @@ func TestLayoutSavesRegisteredProcessesAndRejectsInvalidTrees(t *testing.T) {
 	json.Unmarshal(data, &got)
 	if got.Root["type"] != "split" {
 		t.Fatalf("saved root lost: %s", data)
+	}
+}
+
+func TestCaptureLiveLayoutAndRejectForeignPane(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux unavailable")
+	}
+	options, repo := fixture(t)
+	ctx := context.Background()
+	client := tmux.Client{Socket: options.TmuxSocket}
+	defer client.Run(ctx, "kill-server")
+	c, err := core.Open(ctx, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	r, _ := core.Registry(func(context.Context, core.InspectArgs) (workspace.Snapshot, error) { return c.Snapshot("") })
+	if err = c.RegisterProcesses(r); err != nil {
+		t.Fatal(err)
+	}
+	if err = c.RegisterLayouts(r); err != nil {
+		t.Fatal(err)
+	}
+	call := func(name string, args any) (any, error) {
+		raw, _ := json.Marshal(args)
+		return r.Invoke(ctx, name, raw)
+	}
+	snap, _ := c.Snapshot("")
+	id := snap.Workspaces[0].ID
+	v, err := call("process.start", process.StartArgs{WorkspaceID: id, Name: "one", Command: []string{"sleep", "120"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := v.(workspace.Process)
+	args := map[string]any{"workspace_id": id, "process_id": p.ID, "expected_revision": 0}
+	before, err := client.Run(ctx, "display-message", "-p", "-t", p.PaneID, "#{pane_pid} #{window_layout}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := call("layout.capture", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	layout := got.(core.Layout)
+	if layout.Revision != 1 || layout.Root["resource_id"] != p.ID {
+		t.Fatalf("capture: %+v", layout)
+	}
+	after, _ := client.Run(ctx, "display-message", "-p", "-t", p.PaneID, "#{pane_pid} #{window_layout}")
+	if before != after {
+		t.Fatal("capture changed pane")
+	}
+	if _, err = call("layout.capture", args); err == nil {
+		t.Fatal("stale revision accepted")
+	}
+	foreign, err := client.Run(ctx, "split-window", "-d", "-P", "-F", "#{pane_id}", "-t", p.PaneID, "-c", repo, "exec sleep 120")
+	if err != nil {
+		t.Fatal(err)
+	}
+	args["expected_revision"] = 1
+	if _, err = call("layout.capture", args); err == nil {
+		t.Fatal("foreign pane accepted")
+	}
+	v, err = call("process.register", process.RegisterArgs{WorkspaceID: id, Name: "second", PaneID: foreign})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := v.(workspace.Process)
+	third, err := client.Run(ctx, "split-window", "-d", "-v", "-P", "-F", "#{pane_id}", "-t", foreign, "-c", repo, "exec sleep 120")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err = call("process.register", process.RegisterArgs{WorkspaceID: id, Name: "third", PaneID: third})
+	if err != nil {
+		t.Fatal(err)
+	}
+	thirdProcess := v.(workspace.Process)
+	got, err = call("layout.capture", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	layout = got.(core.Layout)
+	if layout.Revision != 2 {
+		t.Fatalf("revision: %+v", layout)
+	}
+	data, _ := json.Marshal(layout.Root)
+	for _, want := range []string{p.ID, second.ID, thirdProcess.ID} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("missing %s in %s", want, data)
+		}
+	}
+	if _, err = client.Run(ctx, "resize-pane", "-Z", "-t", p.PaneID); err != nil {
+		t.Fatal(err)
+	}
+	args["expected_revision"] = 2
+	if _, err = call("layout.capture", args); err == nil {
+		t.Fatal("zoomed layout accepted")
+	}
+	if _, err = client.Run(ctx, "resize-pane", "-Z", "-t", p.PaneID); err != nil {
+		t.Fatal(err)
+	}
+	got, err = call("layout.inspect", map[string]any{"workspace_id": id})
+	if err != nil || got.(core.Layout).Revision != 2 {
+		t.Fatalf("inspect: %+v %v", got, err)
 	}
 }

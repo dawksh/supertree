@@ -462,6 +462,35 @@ with the same actor/request ID returns the previous launch; changing its argumen
 with that request ID is rejected. A different request ID never implicitly restarts
 an existing named process.
 
+### Capturing a live window layout
+
+The daemon's `layout.capture` command saves **one tmux window** from the
+worktree's existing workspace; it does not create another workspace, change
+focus, resize panes, or stop or restart programs. Choose a managed or explicitly
+registered process in the window as the anchor:
+
+```sh
+./dev next invoke layout.inspect '{"workspace_id":"<workspace-id>"}'
+./dev next invoke layout.capture '{"workspace_id":"<workspace-id>","process_id":"<anchor-process-id>","expected_revision":0}'
+```
+
+All three capture arguments are required. `expected_revision` is the saved
+layout revision from `layout.inspect` (0 when none exists); a stale revision
+fails without saving. The result has `workspace_id`, `revision`, and `root`.
+A root is either `{"type":"pane","resource_id":"<process-id>"}` or
+`{"type":"split","direction":"horizontal|vertical","ratio":0.5,"children":[<node>,<node>]}`.
+Horizontal means side-by-side; vertical means top-to-bottom. Ratios describe
+the first child's share of pane cells, excluding its divider. Nested and
+multi-pane slicing layouts are represented as binary splits.
+
+Every pane in the selected window must already be managed or explicitly
+registered to this workspace; observed-only, foreign, duplicate/ambiguous, or
+missing panes are rejected rather than omitted. Zoomed windows, layouts with
+unsupported geometry or ratios outside 0.05–0.95, and layouts changing during
+capture are rejected. Capture saves metadata only: it does not restore a layout,
+and cannot capture multiple windows in one tree. Registering an existing pane is
+an explicit management action with the consequences described above.
+
 ### Go workspace TUI
 
 ```sh
