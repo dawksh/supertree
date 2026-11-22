@@ -50,6 +50,11 @@ type server struct {
 // Serve owns only the daemon socket, database and client connections. Shutdown
 // never signals tmux or the terminal programs it hosts.
 func Serve(ctx context.Context, options workspace.Options, socket string, log io.Writer) error {
+	return ServeReady(ctx, options, socket, log, nil)
+}
+
+// ServeReady calls ready after initialization, before accepting queued clients.
+func ServeReady(ctx context.Context, options workspace.Options, socket string, log io.Writer, ready func()) error {
 	options.ControlSocket = socket
 	endpoint, err := Listen(options.StateDir, socket)
 	if err != nil {
@@ -121,6 +126,9 @@ func Serve(ctx context.Context, options workspace.Options, socket string, log io
 		endpoint.Close()
 		c.Close()
 		return err
+	}
+	if ready != nil {
+		ready()
 	}
 	var clients sync.WaitGroup
 	clients.Add(1)

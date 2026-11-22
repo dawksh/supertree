@@ -83,6 +83,13 @@ func runtimeCommand(ctx context.Context, args []string, stdout io.Writer, asJSON
 	var result rpc.Status
 	switch args[1] {
 	case "serve":
+		if os.Getenv("ST_NEXT_STARTUP_LOCK") == "1" {
+			os.Unsetenv("ST_NEXT_STARTUP_LOCK")
+			unix.CloseOnExec(3)
+			lock := os.NewFile(3, "startup.lock")
+			defer lock.Close()
+			return rpc.ServeReady(ctx, options, socket, os.Stderr, func() { lock.Close() })
+		}
 		return rpc.Serve(ctx, options, socket, os.Stderr)
 	case "start":
 		result, err = startDaemon(ctx, options, socket)
@@ -197,6 +204,10 @@ func startDaemon(ctx context.Context, options workspace.Options, socket string) 
 	}
 	child := exec.Command(executable, "daemon", "serve")
 	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// The same flock must outlive the initiating CLI, including on SIGKILL.
+	// The child releases its copy only once it can answer status requests.
+	child.ExtraFiles = []*os.File{lock}
+	child.Env = append(os.Environ(), "ST_NEXT_STARTUP_LOCK=1")
 	child.Stdout, child.Stderr = log, log
 	if err := child.Start(); err != nil {
 		return status, err
