@@ -15,6 +15,7 @@ with tempfile.TemporaryDirectory() as d:
     git('config', 'user.email', 'test@example.invalid'); git('config', 'user.name', 'Test')
     (repo/'scripts').mkdir(); (repo/'.github/workflows').mkdir(parents=True)
     shutil.copy(root/'scripts/release.sh', repo/'scripts/release.sh')
+    shutil.copy(root/'scripts/package-release.sh', repo/'scripts/package-release.sh')
     (repo/'bin/st-lib').mkdir(parents=True); (repo/'tmux').mkdir()
     (repo/'bin/st').write_text("ST_VERSION='dev'\n")
     (repo/'bin/st-lib/core.sh').write_text('true\n')
