@@ -96,6 +96,9 @@ func (c *Core) RegisterLayouts(r *command.Registry) error {
 	if err := c.registerCapture(r); err != nil {
 		return err
 	}
+	if err := c.registerLayoutLive(r); err != nil {
+		return err
+	}
 	if err := c.registerLayoutRestore(r); err != nil {
 		return err
 	}

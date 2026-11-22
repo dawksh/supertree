@@ -14,8 +14,7 @@ Process IDs must already be known in the selected workspace, including processes
 
 `layout.restore` is opt-in; saving remains metadata-only. Invoke it with
 `{"workspace_id":"<id>","expected_revision":1,"expected_layout":"<tmux window_layout>"}`.
-Obtain the current layout with `tmux display-message -p -t <window-id> '#{window_layout}'`
-on the same tmux socket. The live value is an explicit compare-and-apply token,
+Obtain the token using `layout.live` with `{"workspace_id":"<id>","process_id":"<anchor>"}`; it requires a running managed process in the saved tree and returns `revision`, `window_id`, and `expected_layout`. Alternatively inspect tmux on the same socket. The live value is an explicit compare-and-apply token,
 not the desired layout. The command rejects a stale saved revision or live token;
 it does not silently overwrite a layout changed since the caller inspected it.
 The returned `observed_layout` is the verified tmux layout and can be used as the
@@ -40,4 +39,4 @@ macOS and SSH have not been acceptance-tested.
 
 ## Still needed
 
-This is not the interactive MVP or full workspace-buffer specification. A normal attached tmux client and workspace switcher, split/move/resize/focus/close interactions, resource roles and explicit close behavior, general reconciliation and recovery, layout events/snapshot integration, and focus persistence remain to be implemented. Process launch security and daemon startup are separate stabilization work.
+The TUI offers explicit capture and restore controls, but this is not the full workspace-buffer specification. A normal attached tmux client and workspace switcher, split/move/resize/focus/close interactions, resource roles and explicit close behavior, general reconciliation and recovery, layout events/snapshot integration, and focus persistence remain to be implemented. Process launch security and daemon startup are separate stabilization work.

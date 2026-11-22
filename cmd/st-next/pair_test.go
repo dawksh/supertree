@@ -29,7 +29,7 @@ func TestPairingLivesInNormalAgentTabAndResumesExactConversation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(sockets)
+	t.Cleanup(func() { os.RemoveAll(sockets) })
 	tools := filepath.Join(base, "bin")
 	os.MkdirAll(tools, 0700)
 	binary := filepath.Join(tools, "st-next")

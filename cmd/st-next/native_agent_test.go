@@ -129,7 +129,7 @@ func TestNativePairingDeliveryQuestionsInterruptAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(sockets)
+	t.Cleanup(func() { os.RemoveAll(sockets) })
 	binary := filepath.Join(base, "st-next")
 	if out, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %s %v", out, err)

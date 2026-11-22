@@ -162,6 +162,9 @@ func TestCaptureLiveLayoutAndRejectForeignPane(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := v.(workspace.Process)
+	if _, err := call("layout.capture", map[string]any{"workspace_id": id, "process_id": p.ID}); err == nil {
+		t.Fatal("capture accepted missing revision")
+	}
 	args := map[string]any{"workspace_id": id, "process_id": p.ID, "expected_revision": 0}
 	before, err := client.Run(ctx, "display-message", "-p", "-t", p.PaneID, "#{pane_pid} #{window_layout}")
 	if err != nil {

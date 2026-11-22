@@ -45,6 +45,9 @@ type layoutInspectMsg struct {
 	WorkspaceID string
 	Action      string
 	Revision    *int64
+	ProcessID   string
+	WindowID    string
+	Layout      string
 	Err         error
 	Request     int64
 }
@@ -140,19 +143,33 @@ func (m Model) invoke(name string, args any) tea.Cmd {
 }
 func (m Model) inspectLayout(action string) tea.Cmd {
 	id := m.workspaceID
+	anchor := m.processID
 	request := m.layoutRequest
 	return func() tea.Msg {
-		msg := layoutInspectMsg{WorkspaceID: id, Action: action, Request: request}
-		data, err := m.options.Invoke(m.options.Context, "layout.inspect", core.InspectArgs{WorkspaceID: id})
+		msg := layoutInspectMsg{WorkspaceID: id, ProcessID: anchor, Action: action, Request: request}
+		name := "layout.inspect"
+		var args any = core.InspectArgs{WorkspaceID: id}
+		if action == "layout.restore" {
+			name = "layout.live"
+			args = map[string]any{"workspace_id": id, "process_id": anchor}
+		}
+		data, err := m.options.Invoke(m.options.Context, name, args)
 		if err == nil {
 			var result struct {
 				WorkspaceID string `json:"workspace_id"`
 				Revision    *int64 `json:"revision"`
+				ProcessID   string `json:"process_id"`
+				WindowID    string `json:"window_id"`
+				Layout      string `json:"expected_layout"`
 			}
 			err = json.Unmarshal(data, &result)
 			if err == nil && (result.WorkspaceID != id || result.Revision == nil || *result.Revision < 0) {
 				err = fmt.Errorf("layout.inspect returned an invalid workspace or revision")
 			}
+			if err == nil && action == "layout.restore" && (result.ProcessID != anchor || result.WindowID == "" || result.Layout == "" || *result.Revision == 0) {
+				err = fmt.Errorf("layout.live returned invalid anchor or token")
+			}
+			msg.WindowID, msg.Layout = result.WindowID, result.Layout
 			msg.Revision = result.Revision
 		}
 		msg.Err = err
@@ -290,15 +307,22 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.Err != nil || msg.Revision == nil {
 			m.mode, m.pendingName = "browse", ""
-			m.message = fmt.Sprintf("layout.inspect failed: %v", msg.Err)
+			name := "layout.inspect"
+			if msg.Action == "layout.restore" {
+				name = "layout.live"
+			}
+			m.message = fmt.Sprintf("%s failed: %v", name, msg.Err)
 			return m, nil
 		}
 		m.pendingArgs = map[string]any{"workspace_id": msg.WorkspaceID, "expected_revision": *msg.Revision}
 		if msg.Action == "layout.restore" {
-			m.mode = "confirm"
-			return m, m.present()
+			m.pendingArgs.(map[string]any)["expected_layout"] = msg.Layout
+		} else {
+			m.pendingArgs.(map[string]any)["process_id"] = msg.ProcessID
 		}
-		return m, m.invoke(msg.Action, m.pendingArgs)
+		m.message = fmt.Sprintf("Selected anchor %s %s", msg.ProcessID, msg.WindowID)
+		m.mode = "confirm"
+		return m, m.present()
 	case actionMsg:
 		m.mode = "browse"
 		m.pendingName = ""
@@ -395,6 +419,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case "S", "R":
 			if m.workspaceID == "" {
 				m.message = "Open a Git checkout first"
+				break
+			}
+			p, ok := m.selected()
+			if !ok || p.Source == "observed" || p.State != "running" {
+				m.message = "Select a running managed or registered process as layout anchor"
 				break
 			}
 			m.layoutRequest++
@@ -829,10 +858,13 @@ func (m Model) overlay(width, height int) string {
 	case "confirm":
 		data, _ := json.Marshal(m.pendingArgs)
 		title := "? " + m.pendingName
+		if m.pendingName == "layout.capture" {
+			title = "? Capture selected managed window layout"
+		}
 		if m.pendingName == "layout.restore" {
 			title = "? Restore saved layout (may rearrange terminals)"
 		}
-		rows = append(rows, m.theme.Input.Render(title), "", line(string(data), width-6), "", m.theme.Warning.Render("Enter confirms · Esc cancels (default)"))
+		rows = append(rows, m.theme.Input.Render(title), line(m.message, width-6), line(string(data), width-6), "", m.theme.Warning.Render("Enter confirms · Esc cancels (default)"))
 	case "working":
 		rows = append(rows, m.theme.Accent.Render("RUNNING "+m.pendingName), "Commands run once. Reconnection never repeats a mutation.")
 	case "move":

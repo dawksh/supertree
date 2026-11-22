@@ -9,6 +9,33 @@ import (
 	"testing"
 )
 
+func TestCaptureRequiresAnchorConfirmation(t *testing.T) {
+	m, _ := fixture(t)
+	var calls []string
+	m.options.Invoke = func(_ context.Context, name string, value any) (json.RawMessage, error) {
+		calls = append(calls, name)
+		if name == "layout.inspect" {
+			return json.RawMessage(`{"workspace_id":"ws_one","revision":7}`), nil
+		}
+		data, _ := json.Marshal(value)
+		if !strings.Contains(string(data), `"process_id":"proc_one"`) {
+			t.Errorf("missing anchor: %s", data)
+		}
+		return json.RawMessage(`{}`), nil
+	}
+	m, cmd := key(m, runeKey("S"))
+	next, cmd := m.Update(cmd())
+	m = next.(Model)
+	if m.mode != "confirm" || len(calls) != 1 {
+		t.Fatalf("capture must confirm anchor, mode=%s calls=%v", m.mode, calls)
+	}
+	m, cmd = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("no capture")
+	}
+	cmd()
+}
+
 func TestLayoutCaptureUsesInspectedRevision(t *testing.T) {
 	m, _ := fixture(t)
 	var names []string
@@ -34,8 +61,9 @@ func TestLayoutCaptureUsesInspectedRevision(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("save did not schedule capture")
 	}
+	m, cmd = key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	cmd()
-	if len(names) != 2 || names[0] != "layout.inspect" || names[1] != "layout.capture" || args[1]["workspace_id"] != "ws_one" || args[1]["expected_revision"] != float64(7) {
+	if len(names) != 2 || names[0] != "layout.inspect" || names[1] != "layout.capture" || args[1]["process_id"] != "proc_one" || args[1]["workspace_id"] != "ws_one" || args[1]["expected_revision"] != float64(7) {
 		t.Fatalf("unexpected calls: %v %#v", names, args)
 	}
 }
@@ -45,12 +73,12 @@ func TestLayoutRestoreRequiresConfirmationAndShowsIntent(t *testing.T) {
 	var calls []string
 	m.options.Invoke = func(_ context.Context, name string, value any) (json.RawMessage, error) {
 		calls = append(calls, name)
-		if name == "layout.inspect" {
-			return json.RawMessage(`{"workspace_id":"ws_one","revision":3}`), nil
+		if name == "layout.live" {
+			return json.RawMessage(`{"workspace_id":"ws_one","process_id":"proc_one","window_id":"@1","revision":3,"expected_layout":"token"}`), nil
 		}
 		if name == "layout.restore" {
 			data, _ := json.Marshal(value)
-			if string(data) != `{"expected_revision":3,"workspace_id":"ws_one"}` {
+			if string(data) != `{"expected_layout":"token","expected_revision":3,"workspace_id":"ws_one"}` {
 				t.Errorf("wrong restore args: %s", data)
 			}
 		}
@@ -116,5 +144,23 @@ func TestLayoutErrorsAreVisibleAndDoNotMutate(t *testing.T) {
 	next, _ := m.Update(actionMsg{Name: "layout.restore", Err: fmt.Errorf("revision conflict")})
 	if !strings.Contains(next.(Model).View(), "revision conflict") {
 		t.Fatal("restore failure hidden")
+	}
+}
+
+func TestLayoutRejectsUnmanagedAnchorAndInvalidLiveToken(t *testing.T) {
+	m, _ := fixture(t)
+	m.state.Processes[0].Source = "observed"
+	if next, _ := key(m, runeKey("S")); !strings.Contains(next.message, "managed") || next.mode != "browse" {
+		t.Fatal("observed anchor accepted")
+	}
+	m, _ = fixture(t)
+	m.options.Invoke = func(_ context.Context, _ string, _ any) (json.RawMessage, error) {
+		return json.RawMessage(`{"workspace_id":"ws_one","process_id":"proc_one","window_id":"@1","revision":3}`), nil
+	}
+	m, cmd := key(m, runeKey("R"))
+	next, cmd := m.Update(cmd())
+	m = next.(Model)
+	if cmd != nil || m.mode != "browse" {
+		t.Fatal("restore accepted missing token")
 	}
 }

@@ -24,6 +24,104 @@ type restoreResult struct {
 	Layout      string `json:"observed_layout"`
 }
 
+type layoutLiveArgs struct {
+	WorkspaceID string `json:"workspace_id"`
+	ProcessID   string `json:"process_id"`
+}
+type layoutLiveResult struct {
+	WorkspaceID string `json:"workspace_id"`
+	ProcessID   string `json:"process_id"`
+	Revision    int64  `json:"revision"`
+	WindowID    string `json:"window_id"`
+	Layout      string `json:"expected_layout"`
+}
+
+func (c *Core) registerLayoutLive(r *command.Registry) error {
+	return command.Register(r, command.Definition{Name: "layout.live", Version: 1, Description: "Inspect the live window containing a saved managed process.", Effects: []string{"read"}, Repeatable: true}, func(ctx context.Context, a layoutLiveArgs) (layoutLiveResult, error) {
+		c.refresh.Lock()
+		defer c.refresh.Unlock()
+		fail := func(s string) (layoutLiveResult, error) {
+			return layoutLiveResult{}, &command.Error{Code: "conflict", Message: s}
+		}
+		if a.WorkspaceID == "" || a.ProcessID == "" {
+			return fail("workspace and anchor process are required")
+		}
+		if _, err := c.workspace(a.WorkspaceID); err != nil {
+			return layoutLiveResult{}, err
+		}
+		docs, err := c.store.Documents(ctx, "layout")
+		if err != nil {
+			return layoutLiveResult{}, err
+		}
+		var root layoutNode
+		var rev int64
+		for _, doc := range docs {
+			if doc.ID == a.WorkspaceID {
+				rev = doc.Revision
+				if err = json.Unmarshal(doc.Data, &root); err != nil {
+					return layoutLiveResult{}, err
+				}
+				break
+			}
+		}
+		var contains func(layoutNode) bool
+		contains = func(n layoutNode) bool {
+			if n.Type == "pane" && n.ResourceID == a.ProcessID {
+				return true
+			}
+			for _, ch := range n.Children {
+				if contains(ch) {
+					return true
+				}
+			}
+			return false
+		}
+		if rev == 0 || !contains(root) {
+			return fail("selected process is not in the saved layout")
+		}
+		snap, err := c.Snapshot(a.WorkspaceID)
+		if err != nil {
+			return layoutLiveResult{}, err
+		}
+		paneID := ""
+		for _, p := range snap.Processes {
+			if p.ID == a.ProcessID && p.WorkspaceID == a.WorkspaceID && p.Source != "observed" && p.State == "running" {
+				paneID = p.PaneID
+			}
+		}
+		if paneID == "" {
+			return fail("anchor must be a running managed process")
+		}
+		client := tmux.Client{Socket: c.options.TmuxSocket}
+		panes, err := client.Panes(ctx)
+		if err != nil {
+			return layoutLiveResult{}, err
+		}
+		window := ""
+		count := 0
+		for _, p := range panes {
+			if p.ProcessID == a.ProcessID {
+				count++
+				if p.ID == paneID && !p.Dead {
+					window = p.WindowID
+				}
+			}
+		}
+		if count != 1 || window == "" {
+			return fail("anchor pane identity changed")
+		}
+		live, err := client.Run(ctx, "display-message", "-p", "-t", paneID, "#{window_id}\t#{window_zoomed_flag}\t#{window_layout}")
+		if err != nil {
+			return layoutLiveResult{}, err
+		}
+		parts := strings.Split(live, "\t")
+		if len(parts) != 3 || parts[0] != window || parts[1] != "0" || parts[2] == "" {
+			return fail("anchor window is zoomed or changed")
+		}
+		return layoutLiveResult{a.WorkspaceID, a.ProcessID, rev, window, parts[2]}, nil
+	})
+}
+
 func (c *Core) registerLayoutRestore(r *command.Registry) error {
 	return command.Register(r, command.Definition{Name: "layout.restore", Version: 1, Description: "Explicitly restore a saved layout in its current tmux window.", Effects: []string{"layout.restore"}}, func(ctx context.Context, args restoreArgs) (restoreResult, error) {
 		c.refresh.Lock()
