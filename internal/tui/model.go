@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -81,6 +82,7 @@ type Model struct {
 	pendingArgs                         any
 	message, preview, result            string
 	notice                              string
+	criticalNotices                     []string
 	layoutSubmitted                     bool
 	connected, loading, dirty           bool
 	lastPresent                         time.Time
@@ -299,7 +301,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.view = msg.View
 		}
 		m.normalize()
-		if (m.mode == "working" || m.mode == "confirm") && m.layoutWorkspace != "" && m.workspaceID != m.layoutWorkspace {
+		if (m.mode == "working" || m.mode == "confirm") && m.layoutWorkspace != "" && m.workspaceID != m.layoutWorkspace && !(m.mode == "working" && m.pendingName == "layout.restore" && m.layoutSubmitted) {
 			m.layoutRequest++
 			m.actionRequest++
 			m.mode = "browse"
@@ -371,6 +373,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = "confirm"
 		return m, m.present()
 	case actionMsg:
+		var coded *command.Error
+		if msg.Name == "layout.restore" && errors.As(msg.Err, &coded) && coded.Code == "partial_failure" {
+			// Keep every unacknowledged warning independently of transient status.
+			m.criticalNotices = append(append([]string(nil), m.criticalNotices...), coded.Message)
+		}
 		if msg.Request != m.actionRequest || msg.Generation != m.generation {
 			if msg.Err != nil {
 				m.notice = fmt.Sprintf("%s failed: %v", msg.Name, msg.Err)
@@ -443,6 +450,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		commands = append(commands, m.output())
 		return m, tea.Batch(commands...)
 	case tea.KeyMsg:
+		if msg.String() == "ctrl+e" && len(m.criticalNotices) > 0 {
+			m.criticalNotices = m.criticalNotices[1:]
+			return m, nil
+		}
 		if msg.String() == "esc" && m.mode == "working" && m.pendingName == "layout.restore" && m.layoutSubmitted {
 			return m, nil
 		}
@@ -869,6 +880,9 @@ func (m Model) View() string {
 	if m.notice != "" {
 		boxHeight--
 	}
+	if len(m.criticalNotices) > 0 {
+		boxHeight -= 2
+	}
 	body := lipgloss.JoinHorizontal(lipgloss.Top, m.theme.Frame(m.panel == "workspaces").Width(leftWidth-2).Height(boxHeight).MaxHeight(boxHeight+2).Render(strings.Join(left, "\n")), " ", m.theme.Frame(m.panel != "workspaces").Width(rightWidth).Height(boxHeight).MaxHeight(boxHeight+2).Render(strings.Join(right, "\n")))
 	if m.mode != "browse" {
 		body = m.overlay(rightWidth+leftWidth-1, boxHeight+2)
@@ -878,6 +892,9 @@ func (m Model) View() string {
 		footer = m.theme.Muted.Render(line("q close · ? help · S save layout · R restore layout · c terminals · ↑↓ select · Space mark · Enter open · i share · I interrupt · t goal · p commands", m.width))
 	}
 	rows := []string{header, body}
+	if len(m.criticalNotices) > 0 {
+		rows = append(rows, m.theme.Warning.Render(line(fmt.Sprintf("RESTORE PARTIAL FAILURE (%d pending) · Ctrl-E acknowledge", len(m.criticalNotices)), m.width)), line(m.criticalNotices[0], m.width))
+	}
 	if m.notice != "" {
 		rows = append(rows, line(m.notice, m.width))
 	}

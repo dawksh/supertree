@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/dawksh/supertree/internal/command"
 	"strings"
 	"testing"
 	"time"
@@ -344,5 +345,90 @@ func TestRestoreFailureVisibleAlongsideEarlierBackgroundFailure(t *testing.T) {
 	m = next.(Model)
 	if !strings.Contains(m.View(), "partial_failure") || !strings.Contains(m.View(), "earlier failure") {
 		t.Fatal("one of the failures is hidden")
+	}
+}
+
+func TestSubmittedRestoreSurvivesWorkspaceNormalization(t *testing.T) {
+	for _, failure := range []bool{false, true} {
+		t.Run(fmt.Sprint(failure), func(t *testing.T) {
+			m, _ := fixture(t)
+			m.options.Invoke = func(_ context.Context, name string, _ any) (json.RawMessage, error) {
+				if name == "layout.live" {
+					return json.RawMessage(`{"workspace_id":"ws_one","process_id":"proc_one","window_id":"@1","revision":3,"expected_layout":"token"}`), nil
+				}
+				if failure {
+					return nil, &command.Error{Code: "partial_failure", Message: "inspect live tmux before retry"}
+				}
+				return json.RawMessage(`{"revision":3}`), nil
+			}
+			m, cmd := key(m, runeKey("R"))
+			next, _ := m.Update(cmd())
+			m = next.(Model)
+			m, action := key(m, tea.KeyMsg{Type: tea.KeyEnter})
+			state := m.state
+			state.Workspaces = nil
+			state.Processes = nil
+			next, _ = m.Update(stateMsg{State: state})
+			m = next.(Model)
+			if m.mode != "working" || strings.Contains(m.message, "canceled") {
+				t.Fatalf("in-flight restore falsely canceled: %s %s", m.mode, m.message)
+			}
+			m, _ = key(m, tea.KeyMsg{Type: tea.KeyEsc})
+			if m.mode != "working" {
+				t.Fatal("escape dismissed submitted restore after workspace changed")
+			}
+			next, _ = m.Update(action())
+			m = next.(Model)
+			if m.mode != "browse" {
+				t.Fatalf("restore not completed: %s", m.mode)
+			}
+			if failure {
+				if !strings.Contains(m.View(), "inspect live tmux") {
+					t.Fatal("partial failure hidden")
+				}
+			} else if !strings.Contains(m.View(), "layout.restore completed") {
+				t.Fatal("restore success lost")
+			}
+		})
+	}
+}
+func TestPartialFailureRetainedUntilExplicitAcknowledgement(t *testing.T) {
+	m, _ := fixture(t)
+	next, _ := m.Update(actionMsg{Name: "layout.restore", Err: &command.Error{Code: "partial_failure", Message: "inspect tmux before retry"}})
+	m = next.(Model)
+	// A later ordinary background error, status update, and navigation cannot hide it.
+	next, _ = m.Update(actionMsg{Name: "process.start", Request: 999, Err: fmt.Errorf("background failed")})
+	m = next.(Model)
+	next, _ = m.Update(connectionMsg{Message: "reconnected"})
+	m = next.(Model)
+	m, _ = key(m, runeKey("?"))
+	if !strings.Contains(m.View(), "inspect tmux before retry") || !strings.Contains(m.View(), "background failed") {
+		t.Fatalf("lost warning or error: %s", m.View())
+	}
+	m, _ = key(m, tea.KeyMsg{Type: tea.KeyCtrlE})
+	if strings.Contains(m.View(), "inspect tmux before retry") {
+		t.Fatal("acknowledgement did not dismiss warning")
+	}
+	if !strings.Contains(m.View(), "background failed") {
+		t.Fatal("acknowledgement dismissed unrelated error")
+	}
+}
+
+func TestPartialFailureWarningsQueueAndAcknowledgeInOrder(t *testing.T) {
+	m, _ := fixture(t)
+	for _, text := range []string{"first inspect tmux", "second inspect tmux"} {
+		next, _ := m.Update(actionMsg{Name: "layout.restore", Request: 999, Err: fmt.Errorf("wrapped: %w", &command.Error{Code: "partial_failure", Message: text})})
+		m = next.(Model)
+	}
+	if !strings.Contains(m.View(), "first inspect tmux") || !strings.Contains(m.View(), "2 pending") {
+		t.Fatal("first warning or count missing")
+	}
+	m, _ = key(m, tea.KeyMsg{Type: tea.KeyCtrlE})
+	if !strings.Contains(m.View(), "second inspect tmux") || !strings.Contains(m.View(), "1 pending") {
+		t.Fatal("second warning lost")
+	}
+	m, _ = key(m, tea.KeyMsg{Type: tea.KeyCtrlE})
+	if strings.Contains(m.View(), "RESTORE PARTIAL FAILURE") {
+		t.Fatal("queue not acknowledged")
 	}
 }
