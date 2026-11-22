@@ -28,6 +28,24 @@ type layoutNode struct {
 	Children   []layoutNode `json:"children,omitempty"`
 }
 
+// UnmarshalJSON enforces exact field names at every level. The standard decoder
+// otherwise matches names case-insensitively even with DisallowUnknownFields.
+func (n *layoutNode) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for name := range fields {
+		switch name {
+		case "type", "resource_id", "direction", "ratio", "children":
+		default:
+			return fmt.Errorf("unknown layout field %q", name)
+		}
+	}
+	type node layoutNode
+	return json.Unmarshal(data, (*node)(n))
+}
+
 func (c *Core) RegisterLayouts(r *command.Registry) error {
 	if err := command.Register(r, command.Definition{Name: "layout.inspect", Version: 1, Description: "Inspect the saved desired layout (not the live tmux layout).", Effects: []string{"read"}, Repeatable: true}, func(ctx context.Context, args InspectArgs) (Layout, error) {
 		if args.WorkspaceID == "" {
