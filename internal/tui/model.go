@@ -37,9 +37,11 @@ type stateMsg struct {
 	Err      error
 }
 type actionMsg struct {
-	Name string
-	Data json.RawMessage
-	Err  error
+	Name       string
+	Data       json.RawMessage
+	Err        error
+	Request    int64
+	Generation int64
 }
 type layoutInspectMsg struct {
 	WorkspaceID string
@@ -86,6 +88,8 @@ type Model struct {
 	contextIDs                          []string
 	collabIndex                         int
 	layoutRequest                       int64
+	actionRequest                       int64
+	layoutWorkspace                     string
 }
 
 func New(options Options) Model {
@@ -134,11 +138,22 @@ func (m Model) load() tea.Cmd {
 		return msg
 	}
 }
-func (m Model) invoke(name string, args any) tea.Cmd {
+func (m *Model) requestLoad() tea.Cmd {
+	if m.loading {
+		m.dirty = true
+		return nil
+	}
+	m.loading = true
+	m.dirty = false
+	return m.load()
+}
+func (m *Model) invoke(name string, args any) tea.Cmd {
+	m.actionRequest++
+	request, generation := m.actionRequest, m.generation
 	return func() tea.Msg {
 		ctx := command.WithOrigin(m.options.Context, command.Origin{Actor: "human:tui", RequestID: process.ID("request")})
 		data, err := m.options.Invoke(ctx, name, args)
-		return actionMsg{name, data, err}
+		return actionMsg{Name: name, Data: data, Err: err, Request: request, Generation: generation}
 	}
 }
 func (m Model) inspectLayout(action string) tea.Cmd {
@@ -254,13 +269,24 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 	case stateMsg:
+		reload := m.dirty
 		m.loading = false
+		m.dirty = false
+		if reload {
+			m.loading = true
+		}
 		if msg.Err != nil {
 			m.connected = false
 			m.message = msg.Err.Error()
+			if reload {
+				return m, m.load()
+			}
 			return m, nil
 		}
 		if m.state.Epoch == msg.State.Epoch && msg.State.Sequence < m.state.Sequence {
+			if reload {
+				return m, m.load()
+			}
 			return m, nil
 		}
 		m.state, m.commands, m.connected = msg.State, msg.Commands, true
@@ -271,6 +297,17 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.view = msg.View
 		}
 		m.normalize()
+		if (m.mode == "working" || m.mode == "confirm") && m.layoutWorkspace != "" && m.workspaceID != m.layoutWorkspace {
+			m.layoutRequest++
+			m.actionRequest++
+			m.mode = "browse"
+			m.pendingName = ""
+			m.layoutWorkspace = ""
+			m.message = "Layout request canceled: workspace changed"
+		}
+		if reload {
+			return m, tea.Batch(m.load(), m.output(), m.present())
+		}
 		return m, tea.Batch(m.output(), m.present())
 	case invalidateMsg:
 		if m.loading {
@@ -287,7 +324,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.localSelection = false
 		}
 		if msg.Err != nil {
-			return m, m.load()
+			return m, m.requestLoad()
 		}
 		return m, nil
 	case connectionMsg:
@@ -302,11 +339,19 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case layoutInspectMsg:
-		if m.mode != "working" || m.pendingName != msg.Action || m.workspaceID != msg.WorkspaceID || m.layoutRequest != msg.Request {
+		if m.mode != "working" || m.pendingName != msg.Action || m.layoutRequest != msg.Request {
+			return m, nil
+		}
+		if m.workspaceID != msg.WorkspaceID {
+			m.mode = "browse"
+			m.pendingName = ""
+			m.layoutWorkspace = ""
+			m.message = "Layout request canceled: workspace changed"
 			return m, nil
 		}
 		if msg.Err != nil || msg.Revision == nil {
 			m.mode, m.pendingName = "browse", ""
+			m.layoutWorkspace = ""
 			name := "layout.inspect"
 			if msg.Action == "layout.restore" {
 				name = "layout.live"
@@ -324,11 +369,16 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = "confirm"
 		return m, m.present()
 	case actionMsg:
+		if msg.Request != m.actionRequest || msg.Generation != m.generation {
+			m.dirty = true
+			return m, nil
+		}
+		m.layoutWorkspace = ""
 		m.mode = "browse"
 		m.pendingName = ""
 		if msg.Err != nil {
 			m.message = msg.Err.Error()
-			return m, tea.Batch(m.load(), m.present())
+			return m, tea.Batch(m.requestLoad(), m.present())
 		}
 		m.message = msg.Name + " completed"
 		m.result = string(msg.Data)
@@ -341,7 +391,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.message = "Delivery " + delivery.Status + " · " + delivery.ID
 			}
 			m.mode, m.index = "result", 0
-			return m, tea.Batch(m.load(), m.present())
+			return m, tea.Batch(m.requestLoad(), m.present())
 		}
 		if msg.Name == "context.share" {
 			var result agent.ShareResult
@@ -365,17 +415,17 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.present()
 			}
 		}
-		return m, m.load()
+		return m, m.requestLoad()
 	case attachMsg:
 		if msg.Err != nil {
 			m.message = msg.Err.Error()
 		}
-		return m, m.load()
+		return m, m.requestLoad()
 	case tickMsg:
 		commands := []tea.Cmd{tick()}
 		if !m.connected || m.dirty {
-			m.dirty = false
 			if !m.loading {
+				m.dirty = false
 				m.loading = true
 				commands = append(commands, m.load())
 			}
@@ -387,7 +437,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		commands = append(commands, m.output())
 		return m, tea.Batch(commands...)
 	case tea.KeyMsg:
-		m.generation++
+		if m.mode != "working" || msg.String() == "esc" {
+			m.generation++
+		}
 		m.localSelection = true
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
@@ -427,6 +479,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			m.layoutRequest++
+			m.layoutWorkspace = m.workspaceID
 			m.pendingName = "layout.capture"
 			if msg.String() == "R" {
 				m.pendingName = "layout.restore"
@@ -557,6 +610,7 @@ func (m Model) prefill(d command.Definition) string {
 func (m Model) edit(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.String() == "esc" {
 		m.layoutRequest++
+		m.layoutWorkspace = ""
 		m.mode = "browse"
 		m.pendingName = ""
 		return m, m.present()

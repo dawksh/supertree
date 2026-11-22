@@ -3,7 +3,9 @@ package core_test
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -64,6 +66,49 @@ func TestRestoreSavedTwoPaneLayoutWithoutRestartingProcesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	live := run("display-message", "-p", "-t", a.PaneID, "#{window_layout}")
+	// A refresh must not adopt another pane merely because it has the right tag.
+	run("set-option", "-p", "-t", a.PaneID, "@st_next_process", b.ID)
+	run("set-option", "-p", "-t", b.PaneID, "@st_next_process", a.ID)
+	if err := c.Refresh(ctx, options.Directory, core.Origin{Actor: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ = c.Snapshot(ws)
+	for _, p := range snap.Processes {
+		if p.ID == a.ID && p.PaneID != a.PaneID {
+			t.Fatal("refresh reassigned recorded pane based on spoofed tag")
+		}
+	}
+	if _, err := call("layout.restore", map[string]any{"workspace_id": ws, "expected_revision": 1, "expected_layout": live}); err == nil {
+		t.Fatal("restore accepted swapped process tags")
+	}
+	run("set-option", "-p", "-t", a.PaneID, "@st_next_process", a.ID)
+	run("set-option", "-p", "-t", b.PaneID, "@st_next_process", b.ID)
+	if err := c.Refresh(ctx, options.Directory, core.Origin{Actor: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	// Change a tag immediately before tmux evaluates the final guard.
+	real, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "tmux")
+	script := "#!/bin/sh\ncase \"$*\" in *if-shell*) \"$REAL_TMUX\" -S \"$2\" set-option -p -t \"$SPOOF_PANE\" @st_next_process spoof >/dev/null;; esac\nexec \"$REAL_TMUX\" \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	originalPath := os.Getenv("PATH")
+	t.Setenv("REAL_TMUX", real)
+	t.Setenv("SPOOF_PANE", a.PaneID)
+	t.Setenv("PATH", dir+":"+originalPath)
+	if _, err := call("layout.restore", map[string]any{"workspace_id": ws, "expected_revision": 1, "expected_layout": live}); err == nil {
+		t.Fatal("restore accepted tag changed at final guard")
+	}
+	t.Setenv("PATH", originalPath)
+	if got := run("display-message", "-p", "-t", a.PaneID, "#{window_layout}"); got != live {
+		t.Fatal("guard failure changed layout")
+	}
+	run("set-option", "-p", "-t", a.PaneID, "@st_next_process", a.ID)
 	if _, err := call("layout.restore", map[string]any{"workspace_id": ws, "expected_revision": 1, "expected_layout": live}); err != nil {
 		t.Fatalf("restore: %v", err)
 	}

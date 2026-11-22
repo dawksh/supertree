@@ -160,10 +160,10 @@ func (c *Core) registerLayoutRestore(r *command.Registry) error {
 		if err != nil {
 			return restoreResult{}, err
 		}
-		allowed := map[string]bool{}
+		allowed := map[string]string{}
 		for _, p := range snapshot.Processes {
 			if p.WorkspaceID == args.WorkspaceID && p.Source != "observed" && p.State == "running" {
-				allowed[p.ID] = true
+				allowed[p.ID] = p.PaneID
 			}
 		}
 		var ids []string
@@ -172,7 +172,7 @@ func (c *Core) registerLayoutRestore(r *command.Registry) error {
 		collect = func(n layoutNode) error {
 			switch n.Type {
 			case "pane":
-				if !allowed[n.ResourceID] || seen[n.ResourceID] {
+				if allowed[n.ResourceID] == "" || seen[n.ResourceID] {
 					return fmt.Errorf("resource must be a unique managed process in this workspace")
 				}
 				seen[n.ResourceID] = true
@@ -208,7 +208,7 @@ func (c *Core) registerLayoutRestore(r *command.Registry) error {
 					count++
 				}
 			}
-			if count != 1 || found[i].Dead || (i > 0 && found[i].WindowID != found[0].WindowID) {
+			if count != 1 || found[i].ID != allowed[id] || found[i].Dead || (i > 0 && found[i].WindowID != found[0].WindowID) {
 				return fail("resources must be live, uniquely tagged panes in the same window")
 			}
 		}
@@ -314,17 +314,32 @@ func (c *Core) registerLayoutRestore(r *command.Registry) error {
 		if order != strings.Join(expectedOrder, "\n") {
 			return fail("unsupported pane order; restore does not reorder panes")
 		}
-		// Compare and apply inside one tmux command queue, so an external layout
-		// change between preflight and application is not overwritten.
-		escaped := strings.NewReplacer(",", "#,", "}", "#}").Replace(current)
-		condition := "#{&&:#{==:#{window_layout}," + escaped + "},#{==:#{window_zoomed_flag},0}}"
+		// The pane loop is evaluated inside the same tmux command queue as
+		// select-layout. Include order, IDs, tags, liveness and pane PIDs.
+		// Restrict tag characters so no tag can inject tmux format syntax or
+		// impersonate a different tuple using the separator.
+		var tuples strings.Builder
+		for i, p := range found {
+			for _, ch := range ids[i] {
+				if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '_' || ch == '-') {
+					return fail("unsupported process identifier")
+				}
+			}
+			if _, e := strconv.ParseUint(p.PID, 10, 64); e != nil {
+				return fail("invalid pane pid")
+			}
+			fmt.Fprintf(&tuples, "%s|%s|0|%s;", p.ID, ids[i], p.PID)
+		}
+		escaped := strings.NewReplacer("#", "##", ",", "#,", "}", "#}").Replace(current)
+		panesCondition := "#{==:#{P:#{pane_id}|#{@st_next_process}|#{pane_dead}|#{pane_pid};}," + tuples.String() + "}"
+		condition := "#{&&:#{&&:#{==:#{window_layout}," + escaped + "},#{==:#{window_zoomed_flag},0}}," + panesCondition + "}"
 		apply := "select-layout -t " + window + " '" + layout + "' ; display-message -p ST_LAYOUT_APPLIED"
 		status, err := client.Run(ctx, "if-shell", "-F", "-t", window, condition, apply, "display-message -p ST_LAYOUT_CHANGED")
 		if err != nil {
 			return restoreResult{}, &command.Error{Code: "partial_failure", Message: "layout restore may have changed tmux; inspect before retrying: " + err.Error()}
 		}
 		if status == "ST_LAYOUT_CHANGED" {
-			return fail("live tmux layout changed during restore")
+			return fail("live tmux layout or pane identity changed during restore")
 		}
 		if status != "ST_LAYOUT_APPLIED" {
 			return restoreResult{}, &command.Error{Code: "partial_failure", Message: "layout restore status unknown; inspect tmux before retrying"}

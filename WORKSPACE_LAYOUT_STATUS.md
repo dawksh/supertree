@@ -30,9 +30,15 @@ and refused. Restore does not change the saved revision or deliberately focus a
 pane. Tmux assigns layout geometry by pane order, so pane IDs alone cannot make
 reordering safe.
 
-Tmux and the core are not a single transaction. The final layout check and apply
-are submitted together to tmux, but external clients can still change pane tags,
-processes, focus or layout concurrently. An error with code `partial_failure`
+Tmux and the core are not a single transaction. The final check and apply run in
+the same tmux command queue. The check compares layout, zoom, and the complete
+ordered window pane IDs, process tags, dead flags, and pane PIDs against preflight;
+a changed value refuses the apply. Preflight also requires each pane ID to match
+the process record, not just its tag. The guard accepts process IDs containing
+only ASCII letters, digits, underscores and hyphens; tmux must support pane-loop
+formats (unsupported formats fail closed). External clients may still
+change state before or after the guarded operation, including tags in other windows,
+focus and the programs running inside a pane. An error with code `partial_failure`
 means an apply or its verification may have occurred: inspect actual tmux state
 before retrying. No rollback is attempted. Interactive focus, multiple clients,
 macOS and SSH have not been acceptance-tested.

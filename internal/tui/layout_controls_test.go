@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCaptureRequiresAnchorConfirmation(t *testing.T) {
@@ -162,5 +163,121 @@ func TestLayoutRejectsUnmanagedAnchorAndInvalidLiveToken(t *testing.T) {
 	m = next.(Model)
 	if cmd != nil || m.mode != "browse" {
 		t.Fatal("restore accepted missing token")
+	}
+}
+
+func TestOldLayoutCompletionDoesNotDismissNewConfirmation(t *testing.T) {
+	m, _ := fixture(t)
+	m.options.Invoke = func(_ context.Context, name string, _ any) (json.RawMessage, error) {
+		if name == "layout.inspect" {
+			return json.RawMessage(`{"workspace_id":"ws_one","revision":1}`), nil
+		}
+		return json.RawMessage(`{}`), nil
+	}
+	m, cmd := key(m, runeKey("S"))
+	next, _ := m.Update(cmd())
+	m = next.(Model)
+	m, old := key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = key(m, tea.KeyMsg{Type: tea.KeyEsc})
+	m, cmd = key(m, runeKey("S"))
+	next, _ = m.Update(cmd())
+	m = next.(Model)
+	next, _ = m.Update(old())
+	m = next.(Model)
+	if m.mode != "confirm" || m.pendingName != "layout.capture" {
+		t.Fatalf("old response dismissed new dialog: %s %s", m.mode, m.pendingName)
+	}
+}
+func TestLayoutInspectionWorkspaceChangedExitsWorking(t *testing.T) {
+	m, _ := fixture(t)
+	m.options.Invoke = func(context.Context, string, any) (json.RawMessage, error) {
+		return json.RawMessage(`{"workspace_id":"ws_one","revision":1}`), nil
+	}
+	m, cmd := key(m, runeKey("S"))
+	m.workspaceID = "other"
+	next, _ := m.Update(cmd())
+	m = next.(Model)
+	if m.mode == "working" || !strings.Contains(m.message, "workspace") {
+		t.Fatalf("stranded or missing error: %s %q", m.mode, m.message)
+	}
+}
+func TestInvalidationWhileLoadingSurvivesTick(t *testing.T) {
+	m, _ := fixture(t)
+	m.loading = true
+	next, _ := m.Update(invalidateMsg{})
+	m = next.(Model)
+	next, _ = m.Update(tickMsg(time.Now()))
+	m = next.(Model)
+	if !m.dirty {
+		t.Fatal("tick discarded invalidation during load")
+	}
+	next, cmd := m.Update(stateMsg{State: m.state})
+	m = next.(Model)
+	if !m.loading || cmd == nil {
+		t.Fatal("pending invalidation did not trigger reload")
+	}
+}
+
+func TestWorkingKeyDoesNotAbandonAction(t *testing.T) {
+	m, _ := fixture(t)
+	m.options.Invoke = func(_ context.Context, name string, _ any) (json.RawMessage, error) {
+		if name == "layout.inspect" {
+			return json.RawMessage(`{"workspace_id":"ws_one","revision":1}`), nil
+		}
+		return json.RawMessage(`{}`), nil
+	}
+	m, cmd := key(m, runeKey("S"))
+	next, _ := m.Update(cmd())
+	m = next.(Model)
+	m, cmd = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = key(m, runeKey("z"))
+	next, _ = m.Update(cmd())
+	m = next.(Model)
+	if m.mode == "working" {
+		t.Fatal("ignored key stranded completed action")
+	}
+}
+
+func TestWorkspaceNormalizationCancelsInFlightLayout(t *testing.T) {
+	m, _ := fixture(t)
+	m.options.Invoke = func(context.Context, string, any) (json.RawMessage, error) {
+		return json.RawMessage(`{"workspace_id":"ws_one","revision":1}`), nil
+	}
+	m, inspect := key(m, runeKey("S"))
+	newState := m.state
+	newState.Workspaces = nil
+	newState.Processes = nil
+	next, _ := m.Update(stateMsg{State: newState})
+	m = next.(Model)
+	if m.mode == "working" || !strings.Contains(m.message, "workspace") {
+		t.Fatalf("normalization stranded action: %s %q", m.mode, m.message)
+	}
+	next, cmd := m.Update(inspect())
+	if cmd != nil || next.(Model).mode == "confirm" {
+		t.Fatal("stale inspect reopened confirmation")
+	}
+}
+
+func TestWorkspaceNormalizationIgnoresInFlightActionCompletion(t *testing.T) {
+	m, _ := fixture(t)
+	m.options.Invoke = func(_ context.Context, name string, _ any) (json.RawMessage, error) {
+		if name == "layout.inspect" {
+			return json.RawMessage(`{"workspace_id":"ws_one","revision":1}`), nil
+		}
+		return json.RawMessage(`{}`), nil
+	}
+	m, cmd := key(m, runeKey("S"))
+	next, _ := m.Update(cmd())
+	m = next.(Model)
+	m, action := key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	state := m.state
+	state.Workspaces = nil
+	state.Processes = nil
+	next, _ = m.Update(stateMsg{State: state})
+	m = next.(Model)
+	next, _ = m.Update(action())
+	m = next.(Model)
+	if !strings.Contains(m.message, "workspace") {
+		t.Fatalf("late completion hid cancellation: %q", m.message)
 	}
 }

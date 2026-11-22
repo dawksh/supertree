@@ -417,7 +417,7 @@ func (m *Manager) Snapshot(ctx context.Context, workspaces ...workspace.Workspac
 					break
 				}
 			}
-		} else if live, ok := byID[item.Process.ID]; ok {
+		} else if live, ok := byID[item.Process.ID]; ok && live.ID == item.Process.PaneID {
 			reconcile(item, live)
 		} else if !slices.Contains([]string{"stopped", "failed", "missing"}, item.Process.State) {
 			item.Process.State = "missing"
