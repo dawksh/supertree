@@ -207,8 +207,9 @@ tree_index() {
   local repo=$1 slug=$2 old_repo=$3 f="$ST_STATE/idx/$1/$2" lock="$ST_STATE/idx/.lock" n tries=0
   if [ -f "$f" ]; then cat "$f"; return; fi
   mkdir -p "$ST_STATE/idx/$repo"
-  # mkdir is atomic, so two concurrent 'st new' runs cannot take the same index.
-  until mkdir "$lock" 2>/dev/null; do
+  # Bash noclobber creates the file exclusively. Some mkdir implementations
+  # incorrectly report success to multiple contenders creating a directory.
+  until ( set -o noclobber; : > "$lock" ) 2>/dev/null; do
     tries=$((tries + 1))
     [ "$tries" -lt 50 ] || die "index lock is held; remove $lock if no other st is running"
     sleep 0.1
@@ -217,9 +218,9 @@ tree_index() {
     # Only whole numbers count: anything else would abort the arithmetic with the lock held.
     n=$(cat "$ST_STATE/idx/$repo"/* "$ST_STATE/idx/$old_repo"/* 2>/dev/null |
       awk '/^[0-9]+$/ && $1 + 0 > max { max = $1 + 0 } END { print max + 0 }' || true)
-    printf '%s\n' "$(( ${n:-0} + 1 ))" > "$f" || { rmdir "$lock"; die "cannot write $f"; }
+    printf '%s\n' "$(( ${n:-0} + 1 ))" > "$f" || { rm -f "$lock"; die "cannot write $f"; }
   fi
-  rmdir "$lock"
+  rm -f "$lock"
   cat "$f"
 }
 

@@ -138,7 +138,22 @@ wait
 indexes=$(cat "$TEST_ROOT/idx-out"/* | sort -n)
 [ "$(printf '%s\n' "$indexes" | tr '\n' ' ')" = '1 2 3 4 5 6 7 8 9 10 ' ] ||
   fail "concurrent tree_index gave duplicate or missing indexes: $(printf '%s' "$indexes" | tr '\n' ' ')"
-[ ! -e "$ST_STATE/idx/.lock" ] || fail 'tree_index left its lock dir behind'
+[ ! -e "$ST_STATE/idx/.lock" ] || fail 'tree_index left its lock behind'
+
+# A held lock, including a directory left by older versions, must never be
+# removed or bypassed by a contender that times out.
+for kind in file directory; do
+  if [ "$kind" = file ]; then : > "$ST_STATE/idx/.lock"; else mkdir "$ST_STATE/idx/.lock"; fi
+  if bash -c 'set -euo pipefail
+    sleep() { :; }
+    . "$1/bin/st-lib/00-core.sh"; . "$1/bin/st-lib/20-repository.sh"
+    tree_index heldrepo first missing-old' _ "$ROOT" > "$TEST_ROOT/held-output" 2>&1; then
+    fail "tree_index bypassed a held $kind lock"
+  fi
+  [ -e "$ST_STATE/idx/.lock" ] || fail "tree_index removed a held $kind lock"
+  [ ! -e "$ST_STATE/idx/heldrepo/first" ] || fail "tree_index allocated under a held $kind lock"
+  rm -rf "$ST_STATE/idx/.lock"
+done
 
 # An empty or junk-filled index folder must not abort under set -e with the lock held.
 mkdir -p "$ST_STATE/idx/emptyrepo" "$ST_STATE/idx/junkrepo"
