@@ -66,6 +66,17 @@ func TestRestoreSavedTwoPaneLayoutWithoutRestartingProcesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	live := run("display-message", "-p", "-t", a.PaneID, "#{window_layout}")
+	foreign := run("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", a.PaneID, "exec sleep 120")
+	foreignBefore := run("display-message", "-p", "-t", foreign, "#{pane_pid} #{@st_next_process} #{window_layout}")
+	foreignLive := run("display-message", "-p", "-t", a.PaneID, "#{window_layout}")
+	if _, err := call("layout.restore", map[string]any{"workspace_id": ws, "expected_revision": 1, "expected_layout": foreignLive}); err == nil || !strings.Contains(err.Error(), "inspect tmux") {
+		t.Fatalf("foreign pane restore diagnostic: %v", err)
+	}
+	if foreignBefore != run("display-message", "-p", "-t", foreign, "#{pane_pid} #{@st_next_process} #{window_layout}") {
+		t.Fatal("rejected restore changed foreign pane")
+	}
+	run("kill-pane", "-t", foreign)
+	live = run("display-message", "-p", "-t", a.PaneID, "#{window_layout}")
 	// A refresh must not adopt another pane merely because it has the right tag.
 	run("set-option", "-p", "-t", a.PaneID, "@st_next_process", b.ID)
 	run("set-option", "-p", "-t", b.PaneID, "@st_next_process", a.ID)

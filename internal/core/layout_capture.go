@@ -104,7 +104,7 @@ func (c *Core) registerCapture(r *command.Registry) error {
 				}
 			}
 			if n[2] < 1 || n[3] < 1 || f[5] == "" || byID[f[5]] != f[0] || seen[f[5]] || live[f[0]] != 1 || globalTags[f[5]] != 1 {
-				return fail("window contains a foreign or ambiguous pane; register it first")
+				return fail("window contains a foreign or ambiguous pane; inspect tmux before retrying")
 			}
 			seen[f[5]] = true
 			geometry = append(geometry, capturePane{f[0], f[5], n[0], n[1], n[2], n[3]})

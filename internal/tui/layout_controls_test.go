@@ -149,6 +149,22 @@ func TestLayoutErrorsAreVisibleAndDoNotMutate(t *testing.T) {
 	}
 }
 
+func TestLayoutPaneConflictFeedbackVisible(t *testing.T) {
+	for action, message := range map[string]string{
+		"layout.capture": "window contains a foreign or ambiguous pane; inspect tmux before retrying",
+		"layout.restore": "window contains other panes; inspect tmux before retrying",
+	} {
+		t.Run(action, func(t *testing.T) {
+			m, _ := fixture(t)
+			err := &command.Error{Code: "conflict", Message: message}
+			next, _ := m.Update(actionMsg{Name: action, Err: err})
+			if !strings.Contains(next.(Model).View(), "inspect tmux") {
+				t.Fatal("pane conflict guidance not visible")
+			}
+		})
+	}
+}
+
 func TestLayoutRejectsUnmanagedAnchorAndInvalidLiveToken(t *testing.T) {
 	m, _ := fixture(t)
 	m.state.Processes[0].Source = "observed"

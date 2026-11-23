@@ -492,6 +492,20 @@ capture are rejected. Capture saves metadata only: it does not restore a layout,
 and cannot capture multiple windows in one tree. Registering an existing pane is
 an explicit management action with the consequences described above.
 
+If capture reports a foreign or ambiguous pane, or restore reports other panes,
+inspect the affected window in tmux before retrying. From that window,
+`tmux list-panes -F '#{pane_id} #{pane_current_command} #{@st_next_process}'`
+lists pane IDs, current commands, and process tags without changing them; use
+the appropriate tmux socket if inspecting from outside that session. For
+duplicate tags elsewhere on that server, add `-a` to list panes in all windows. Compare
+with `./dev next process list --workspace <id>` and the saved layout. A blank
+tag or duplicate tag is not proof of ownership; inspect the actual terminals
+and do not register or close a pane merely to dismiss the error. Restore also
+requires the window to contain exactly the panes in the saved layout, so
+registering an extra pane alone cannot resolve that rejection. Registration's
+checks and tagging are not atomic with concurrent tmux changes; inspecting
+first does not guarantee that a later registration targets the same terminal.
+
 Saved workspace layouts are desired metadata, and saving never changes tmux.
 The explicit `layout.restore` registry/RPC action can apply a saved pane/split tree
 in a single existing managed window after checking both the saved revision and a

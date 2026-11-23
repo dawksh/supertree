@@ -220,7 +220,7 @@ func (c *Core) registerLayoutRestore(r *command.Registry) error {
 			}
 		}
 		if n != len(ids) {
-			return fail("window contains other panes; restore refused")
+			return fail("window contains other panes; inspect tmux before retrying")
 		}
 		size, err := client.Run(ctx, "display-message", "-p", "-t", window, "#{window_width} #{window_height} #{window_zoomed_flag}")
 		if err != nil {

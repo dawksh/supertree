@@ -213,8 +213,23 @@ func TestCaptureLiveLayoutAndRejectForeignPane(t *testing.T) {
 		t.Fatal(err)
 	}
 	args["expected_revision"] = 1
-	if _, err = call("layout.capture", args); err == nil {
-		t.Fatal("foreign pane accepted")
+	foreignBefore, err := client.Run(ctx, "display-message", "-p", "-t", foreign, "#{pane_pid} #{@st_next_process} #{window_layout}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = call("layout.capture", args); err == nil || !strings.Contains(err.Error(), "inspect tmux") || strings.Contains(err.Error(), "register it first") {
+		t.Fatalf("foreign pane diagnostic: %v", err)
+	}
+	foreignAfter, err := client.Run(ctx, "display-message", "-p", "-t", foreign, "#{pane_pid} #{@st_next_process} #{window_layout}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if foreignBefore != foreignAfter {
+		t.Fatal("rejected capture changed foreign pane")
+	}
+	inspected, err = call("layout.inspect", map[string]any{"workspace_id": id})
+	if err != nil || inspected.(core.Layout).Revision != 1 {
+		t.Fatalf("rejected capture changed saved layout: %v %v", inspected, err)
 	}
 	v, err = call("process.register", process.RegisterArgs{WorkspaceID: id, Name: "second", PaneID: foreign})
 	if err != nil {
