@@ -28,7 +28,8 @@ There is **no GUI**. Every screen is one of these surfaces:
 | **Inline prompts** | `[y/N]` confirmations and `branch: ` text input read from the keyboard | Same terminal, or inside a popup |
 | **fzf pickers** | Fuzzy-search list (fzf) with a search box, arrow-key selection | Full terminal, or inside a tmux popup |
 | **tmux popups** | Floating box drawn over the current tmux screen, 80% wide × 70% tall | Over whatever tree the user is in |
-| **tmux status bar** | One-line bar at the bottom of tmux; left side shows current tree | Always visible inside tmux |
+| **tmux status bar** | One-line tab strip at the top of each tree session | Always visible inside tmux |
+| **Pane bottom bar** | Bottom border of every pane: tree, branch, core, agent state, keys | Always visible inside tree sessions |
 | **tmux windows** | Tabs inside a session (agent / vim / shell) | Inside tmux |
 | **Keyboard shortcuts** | Global Alt/Option key bindings inside tmux | No visual, they trigger the above |
 | **Installer** | Styled, coloured, step-by-step script output | Terminal, once at install time |
@@ -368,18 +369,21 @@ This is where the user spends most time. supertree does not draw this screen; it
 ### 6.1 Session anatomy
 
 ```
-┌───────────────────────────────────────────────────────────────┐
-│                                                               │
-│   (active window content: the agent, nvim, or a shell)        │
-│                                                               │
-│                                                               │
-├───────────────────────────────────────────────────────────────┤
-│ webauth/feat-otp  0:claude* 1:vim 2:shell                     │  ← tmux status bar
-└───────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│ 1 agent  2 vim  3 shell                                                   │  ← tab strip (status bar)
+│                                                                           │
+│   (active window content: the agent, nvim, or a shell)                    │
+│                                                                           │
+│ webauth/feat-otp  feat-otp±  core on · 2 procs  ◆ needs input             │
+│                              PREFIX › worktrees  M-w worktrees  M-/ keys  │  ← pane bottom bar
+└───────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Status bar, left**: the tree label `repo/branch` (up to 60 chars). This is the only always-on "where am I" indicator. If not a st session, shows the plain tmux session name.
-- **Status bar, rest**: user's own tmux theme — st doesn't style it (no colour, no agent status, no other trees shown).
+- **Tab strip (top)**: tabs only. Other tmux sessions keep the user's own status bar.
+- **Pane bottom bar**: drawn as each pane's bottom border, so it appears under every pane; panes without focus show it dimmed. The sidebar pane has none. Sizes follow the pane width (below 100 cells the agent state and hint words collapse).
+  - Left: tree label `repo/branch`, the checked-out branch with `±` when tracked files changed, core state (`core on · N procs` / `core off`, only when st-next is installed), then `needs input` or `agent active`.
+  - Right: `PREFIX` or the active tmux key table, the last Supertree shortcut used (clears after 3 s), and the worktree / keys hints.
+  - Branch and core state refresh every 5 s (`status-interval`), run asynchronously by tmux.
 - **Windows** (tabs): configured by `ST_WINDOWS`, any order, 1–3 of:
 
 | Type | Window name | Runs | When the program exits |

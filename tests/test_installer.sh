@@ -132,12 +132,15 @@ fi
 
 # Every st binding except tree stepping runs in the background so tmux is not blocked while st works.
 # Tree stepping runs in the foreground so a fast double press cannot run two steps at once.
+# Each binding first records its label for the bottom bar; check the command after that.
+strip_key_recording() { sed -E "s/^(bind -n [^ ]+) set -g @st_last_key '[^']*' \\\\; run-shell -b -d 3 -C \"[^\"]*\" \\\\; /\\1 /" "$1"; }
+bindings=$(strip_key_recording "$ROOT/tmux/supertree.conf")
 for key in M-e M-Tab M-1 M-2 M-3 M-4 M-5 M-6 M-7 M-8 M-9 M-s M-B M-v M-q; do
-  grep -Eq "^bind -n $key run-shell -b " "$ROOT/tmux/supertree.conf" ||
+  printf '%s\n' "$bindings" | grep -Eq "^bind -n $key run-shell -b " ||
     fail "supertree.conf binding $key does not use run-shell -b"
 done
 for key in M-j M-k; do
-  grep -Eq "^bind -n $key run-shell \"" "$ROOT/tmux/supertree.conf" ||
+  printf '%s\n' "$bindings" | grep -Eq "^bind -n $key run-shell \"" ||
     fail "supertree.conf binding $key must use run-shell without -b"
 done
 
@@ -160,10 +163,10 @@ odd_conf="$TEST_ROOT/odd-config"
 install_into "$odd_prefix" "$odd_conf" > "$TEST_ROOT/odd.out" 2>&1 ||
   fail "install into an unusual prefix failed: $(cat "$TEST_ROOT/odd.out")"
 expected_word="'$TEST_ROOT/we ird'\\\\''\\\$HOME##x/st'"
-grep -qxF "bind -n M-1 run-shell -b \"$expected_word window 1\"" "$odd_conf/supertree.conf" ||
+strip_key_recording "$odd_conf/supertree.conf" | grep -qxF "bind -n M-1 run-shell -b \"$expected_word window 1\"" ||
   fail "unusual prefix was not quoted for tmux: $(grep 'M-1' "$odd_conf/supertree.conf")"
 grep -qxF "bind -n M-w run-shell -b -c '#{pane_current_path}' \"$expected_word go --popup '#{client_tty}'\"" \
-  "$odd_conf/supertree.conf" || fail 'unusual prefix broke the M-w binding'
+  <(strip_key_recording "$odd_conf/supertree.conf") || fail 'unusual prefix broke the M-w binding'
 
 # Let a real, isolated tmux server parse the rendered command and run it through sh.
 real_tmux=$(command -v tmux || true)
@@ -173,7 +176,7 @@ if [ -n "$real_tmux" ]; then
   sock_dir=$(mktemp -d /tmp/st-sock.XXXXXX)
   printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$*" > "$ST_TEST_LOG"' > "$odd_prefix/st"
   chmod +x "$odd_prefix/st"
-  sed -n 's/^bind -n M-1 run-shell -b /run-shell /p' "$odd_conf/supertree.conf" > "$TEST_ROOT/odd-run.conf"
+  sed -n 's/^bind -n M-1 run-shell -b /run-shell /p' <(strip_key_recording "$odd_conf/supertree.conf") > "$TEST_ROOT/odd-run.conf"
   TMUX_TMPDIR="$sock_dir" ST_TEST_LOG="$TEST_ROOT/odd-run.log" "$real_tmux" -L "$socket" -f /dev/null \
     new-session -d -s probe "sleep 30" \; source-file "$TEST_ROOT/odd-run.conf" >/dev/null 2>&1 || true
   for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$TEST_ROOT/odd-run.log" ] && break; sleep 0.2; done
@@ -192,35 +195,35 @@ printf '%s\n' 'ST_KEY_PICKER=M-o' 'ST_KEY_WINDOW_1=M-2' 'ST_KEY_WINDOW_2=M-1' 'S
 install_into "$keys_prefix" "$keys_conf" > "$TEST_ROOT/keys.out" 2>&1 ||
   fail "install with custom keys failed: $(cat "$TEST_ROOT/keys.out")"
 rendered="$keys_conf/supertree.conf"
-grep -q "^bind -n M-o run-shell -b -c .* go --popup" "$rendered" || fail 'ST_KEY_PICKER was not applied'
-grep -q '^bind -n M-w ' "$rendered" && fail 'M-w is still bound after ST_KEY_PICKER moved it'
-grep -q "^bind -n M-2 run-shell -b .* window 1\"$" "$rendered" || fail 'ST_KEY_WINDOW_1=M-2 was not applied'
-grep -q "^bind -n M-1 run-shell -b .* window 2\"$" "$rendered" || fail 'ST_KEY_WINDOW_2=M-1 was not applied'
-grep -qx 'bind -n C-x detach-client' "$rendered" || fail 'ST_KEY_DETACH was not applied'
-grep -q '^bind -n M-U run-shell -b .* split"$' "$rendered" || fail 'ST_KEY_SPLIT was not applied'
-grep -q '^bind -n M-V run-shell -b .* split --vertical"$' "$rendered" || fail 'ST_KEY_SPLIT_VERTICAL was not applied'
-grep -q '^bind -n F1 display-popup -EE .* keys --wait"$' "$rendered" || fail 'ST_KEY_HELP was not applied'
-grep -qx 'bind -n M-P previous-window' "$rendered" || fail 'ST_KEY_PREV_TAB was not applied'
-grep -Eq '^bind -n (M-v|M-/|M-p) ' "$rendered" && fail 'a rebound key kept its default binding'
+grep -q "^bind -n M-o run-shell -b -c .* go --popup" <(strip_key_recording "$rendered") || fail 'ST_KEY_PICKER was not applied'
+grep -q '^bind -n M-w ' <(strip_key_recording "$rendered") && fail 'M-w is still bound after ST_KEY_PICKER moved it'
+grep -q "^bind -n M-2 run-shell -b .* window 1\"$" <(strip_key_recording "$rendered") || fail 'ST_KEY_WINDOW_1=M-2 was not applied'
+grep -q "^bind -n M-1 run-shell -b .* window 2\"$" <(strip_key_recording "$rendered") || fail 'ST_KEY_WINDOW_2=M-1 was not applied'
+grep -qx 'bind -n C-x detach-client' <(strip_key_recording "$rendered") || fail 'ST_KEY_DETACH was not applied'
+grep -q '^bind -n M-U run-shell -b .* split"$' <(strip_key_recording "$rendered") || fail 'ST_KEY_SPLIT was not applied'
+grep -q '^bind -n M-V run-shell -b .* split --vertical"$' <(strip_key_recording "$rendered") || fail 'ST_KEY_SPLIT_VERTICAL was not applied'
+grep -q '^bind -n F1 display-popup -EE .* keys --wait"$' <(strip_key_recording "$rendered") || fail 'ST_KEY_HELP was not applied'
+grep -qx 'bind -n M-P previous-window' <(strip_key_recording "$rendered") || fail 'ST_KEY_PREV_TAB was not applied'
+grep -Eq '^bind -n (M-v|M-/|M-p) ' <(strip_key_recording "$rendered") && fail 'a rebound key kept its default binding'
 grep -q '@st@' "$rendered" && fail 'rewrite marker leaked into the rendered conf'
 for key in M-e M-Tab M-r M-3 M-q; do
-  grep -q "^bind -n $key run-shell" "$rendered" || fail "unset key $key lost its default"
+  grep -q "^bind -n $key run-shell" <(strip_key_recording "$rendered") || fail "unset key $key lost its default"
 done
 
 # Defaults: every key keeps its default binding when no ST_KEY_* is set.
 for key in M-w M-e M-Tab M-r M-1 M-2 M-3 M-q; do
-  grep -q "^bind -n $key run-shell" "$odd_conf/supertree.conf" || fail "default key $key missing"
+  grep -q "^bind -n $key run-shell" <(strip_key_recording "$odd_conf/supertree.conf") || fail "default key $key missing"
 done
-grep -qx 'bind -n M-Q detach-client' "$odd_conf/supertree.conf" || fail 'default M-Q missing'
-grep -q '^bind -n M-/ display-popup -EE ' "$odd_conf/supertree.conf" || fail 'default M-/ missing'
+grep -qx 'bind -n M-Q detach-client' <(strip_key_recording "$odd_conf/supertree.conf") || fail 'default M-Q missing'
+grep -q '^bind -n M-/ display-popup -EE ' <(strip_key_recording "$odd_conf/supertree.conf") || fail 'default M-/ missing'
 
 # Preserve a user's previous M-V split binding when adding the new direction.
 printf '%s\n' 'ST_KEY_SPLIT=M-V' > "$keys_conf/config"
 install_into "$keys_prefix" "$keys_conf" > "$TEST_ROOT/old-split-key.out" 2>&1 ||
   fail "install with an old M-V split key failed: $(cat "$TEST_ROOT/old-split-key.out")"
-grep -q '^bind -n M-V run-shell -b .* split"$' "$keys_conf/supertree.conf" ||
+grep -q '^bind -n M-V run-shell -b .* split"$' <(strip_key_recording "$keys_conf/supertree.conf") ||
   fail 'old M-V split key was replaced'
-grep -q '^bind -n M-U run-shell -b .* split --vertical"$' "$keys_conf/supertree.conf" ||
+grep -q '^bind -n M-U run-shell -b .* split --vertical"$' <(strip_key_recording "$keys_conf/supertree.conf") ||
   fail 'vertical split did not get a free fallback key'
 
 printf '%s\n' 'ST_KEY_TOGGLE="M-e;kill-server"' > "$keys_conf/config"

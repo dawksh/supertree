@@ -227,7 +227,9 @@ style_panes() {
     background=$UI_PANEL_T
     surface="fg=$UI_TEXT_T,bg=$background"
   fi
-  tmux set-option -w -t "$target" pane-border-status off
+  chrome_formats
+  tmux set-option -w -t "$target" pane-border-status bottom
+  tmux set-option -w -t "$target" pane-border-format "$CHROME_BOTTOM"
   tmux set-option -w -t "$target" pane-border-style "fg=$UI_BORDER_T,bg=$background"
   tmux set-option -w -t "$target" pane-active-border-style "fg=$UI_DIM_T,bg=$background"
   tmux set-option -w -t "$target" popup-style "fg=$UI_TEXT_T,bg=$UI_PANEL_T"
@@ -249,7 +251,7 @@ cmd_dev_style() {
   tmux set-option -g status-position top
   tmux set-option -g status-style "fg=$UI_TEXT_T,bg=$UI_BAR_T"
   tmux set-option -g message-style "fg=$UI_TEXT_T,bg=$UI_TAB_T"
-  tmux set-option -g status-right "#[fg=$UI_DIM_T]dev · M-/ keys "
+  tmux set-option -g status-right "#[fg=$UI_DIM_T]dev "
   tmux list-sessions -F '#{session_name}'$'\037''#{@supertree_label}'$'\037''#{session_path}' 2>/dev/null |
     while IFS=$'\037' read -r sess label path; do
       case $sess in st-next-*)

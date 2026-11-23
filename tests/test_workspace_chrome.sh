@@ -105,8 +105,11 @@ def draw(session, width, height):
         os.close(master)
 
 wide = draw('wide', 160, 48)
-assert all(word in wide for word in ('supertree/', 'fix-login', '1 agent', '2 vim', '3 shell', 'M-w')), repr(wide)
-assert '\x1b[H supertree/fix-login' in wide, 'strip did not start at the top edge'
+assert all(word in wide for word in ('supertree/', 'fix-login', '1 agent', '2 vim', '3 shell', 'M-w worktrees', 'M-/ keys')), repr(wide)
+assert '\x1b[H 1 agent' in wide, 'top strip did not start with the tabs'
+tmux('set-option', '-g', '@st_last_key', 'worktrees')
+assert 'worktrees M-w' in draw('wide', 160, 48), 'bottom bar did not show the last shortcut'
+tmux('set-option', '-gu', '@st_last_key')
 narrow = draw('narrow', 80, 24)
 assert 'fix-login' in narrow and '1 agent' not in narrow and 'M-w' in narrow, repr(narrow)
 

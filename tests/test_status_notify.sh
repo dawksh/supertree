@@ -39,18 +39,19 @@ if [ -n "$real_tmux" ]; then
 
   export ST_SIDEBAR_WIDTH=24
   style_session 'repo/main'
+  style_panes '=repo/main:'
   tmux set-option -t '=repo/main:' @supertree_label 'repo/main'
   tmux set-option -t '=repo/main:' @st_tree_state input
-  left=$(tmux show-options -v -t '=repo/main:' status-left)
-  rendered=$(tmux display-message -p -t '=repo/main:' -F "$left" | sed 's/#\[[^]]*\]//g')
-  case $rendered in *'repo/main'*) ;; *) fail 'status-left omitted tree';; esac
-  right=$(tmux show-options -v -t '=repo/main:' status-right)
-  rendered=$(tmux display-message -p -t '=repo/main:' -F "$right" | sed 's/#\[[^]]*\]//g')
+  # The top strip holds tabs only; the tree label and hints live in the pane bottom bar.
+  [ -z "$(tmux show-options -v -t '=repo/main:' status-left)" ] || fail 'status-left still shows tree chrome'
+  bottom=$(tmux show-options -wv -t '=repo/main:' pane-border-format)
+  rendered=$(tmux display-message -p -t '=repo/main:' -F "$bottom" | sed 's/#\[[^]]*\]//g')
+  case $rendered in *'repo/main'*) ;; *) fail 'bottom bar omitted tree';; esac
   # A detached 80-column session uses a compact hint; the picker carries detail.
-  case $rendered in *'M-w'*) ;; *) fail 'status-right omitted picker hint';; esac
+  case $rendered in *'M-w'*) ;; *) fail 'bottom bar omitted picker hint';; esac
 
   tmux set-option -t '=repo/main:' @supertree_label 'webauth/a-very-long-feature-branch-name'
-  rendered=$(tmux display-message -p -t '=repo/main:' -F "$left" | sed 's/#\[[^]]*\]//g')
+  rendered=$(tmux display-message -p -t '=repo/main:' -F "$bottom" | sed 's/#\[[^]]*\]//g')
   case $rendered in *'webauth/a-v…ranch-name'*) ;; *) fail "long tree label did not keep both ends: $rendered";; esac
 
   ST_SIDEBAR_WIDTH=30 style_session 'repo/main'
