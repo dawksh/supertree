@@ -399,6 +399,8 @@ cmd_sidebar_rm_run() {
 cmd_sidebar_attach() {
   local win=${1:-} dir
   [ -n "$win" ] || return 0
+  # st-next process windows (stp_*) must hold only managed panes for layout save/restore.
+  case $(tmux display-message -p -t "$win" '#{window_name}' 2>/dev/null) in stp_*) return 0;; esac
   dir=$(tmux display-message -p -t "$win" '#{@st_tree_dir}' 2>/dev/null) || return 0
   [ -n "$dir" ] || dir=$(tmux display-message -p -t "$win" '#{pane_current_path}')
   # Windows opened with prefix c get the same tab and card look; they have no slot number.
