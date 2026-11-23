@@ -275,7 +275,8 @@ from, Ctrl-B toggles a bare tree (no deps, env, or agent). Names are checked wit
 `git check-ref-format`.
 
 In the tree picker, press Enter to open a tree, Ctrl-N for a new tree, Ctrl-D to
-delete the selected worktree without leaving the picker, Ctrl-R to pick a repo,
+delete the selected worktree without leaving the picker, Tab to mark several
+trees for one Ctrl-D, Ctrl-R to pick a repo,
 Ctrl-/ to show or hide the preview, or Escape to close. The preview shows the
 tree's uncommitted files, unpushed commits, and the agent's last lines; it hides
 itself in narrow terminals. The picker needs fzf 0.45 or newer. With fzf 0.73 or
@@ -409,6 +410,7 @@ agent's tab mirrors its state: `●` running, `◆` waiting for your input.
 lands in the tab's program pane, never in the sidebar. In the sidebar, Enter
 switches to the highlighted tree (`j`/`k` move, `g`/`G` jump to the ends, `l` opens, `h` or `q` go back), `n` opens the new branch flow,
 `d` deletes the highlighted tree (same checks and y/n prompt as `st rm`, in a popup),
+`m` marks trees so one `d` deletes them all after a single prompt (trees with unsaved work are skipped),
 Escape returns to the tab, and Ctrl-R reloads by hand. `M-s` focuses the sidebar
 and moves its cursor back to the tree you are in. `M-B` hides or shows it
 everywhere; when it shows the sidebar it also focuses the one in the current
@@ -581,6 +583,8 @@ instead of `y`. In the `M-w` picker, highlight a tree and press Ctrl-D to run
 the same guarded removal; the picker stays open afterwards. If the tree has
 unsaved work, the picker lists it and offers Enter to open the tree, Ctrl-F to
 force delete, or Escape to go back. The main checkout cannot be deleted.
+Mark several trees with Tab and press Ctrl-D to delete them after one prompt;
+trees with unsaved work are skipped and stay for a one-at-a-time delete.
 
 **Clear the worktree root** — `st remove all` inventories Git checkouts at the
 root and one directory below it. It removes linked worktrees through Git and

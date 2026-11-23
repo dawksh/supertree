@@ -125,10 +125,10 @@ pick_tree() {
   fi
 
   local -a opts=(
-    --ansi --delimiter=$'\t' --with-nth=1 --height=100% --reverse --no-sort --sync
+    --ansi --multi --delimiter=$'\t' --with-nth=1 --height=100% --reverse --no-sort --sync
     --border=rounded --border-label="$label" --border-label-pos=3
     --prompt='Find tree › ' --info=inline-right
-    --header="$(ui_hints ⏎ open ^n new ^d delete ^r repos ^/ preview esc '')" --header-first
+    --header="$(ui_hints ⏎ open tab mark ^n new ^d delete ^r repos ^/ preview esc '')" --header-first
     --preview="$self _preview {3} {2}" --preview-window='right,45%,border-left,<40(hidden)'
     --expect=ctrl-n,ctrl-r
     --bind='esc:abort,ctrl-/:toggle-preview'
@@ -136,7 +136,7 @@ pick_tree() {
   fzf_gutter_init "$version"
   opts+=(${FZF_GUTTER[@]+"${FZF_GUTTER[@]}"})
   if [ "$refresh" = 0 ]; then
-    opts+=("--bind=ctrl-d:execute(ST_PICK_RESULT=$qresult $self _pick_rm {2} </dev/tty >/dev/tty 2>&1)+transform(cat $qresult)")
+    opts+=("--bind=ctrl-d:execute(ST_PICK_RESULT=$qresult $self _pick_rm {+2} </dev/tty >/dev/tty 2>&1)+deselect-all+transform(cat $qresult)")
     printf '%s\n' "$rows" | ui_fzf "${opts[@]}" || rc=$?
     rm -f "$result"
     return "$rc"
@@ -148,7 +148,7 @@ pick_tree() {
   local qcache
   qcache=$(printf '%q' "$cache")
   opts+=(
-    "--bind=ctrl-d:execute(ST_PICK_CACHE=$qcache ST_PICK_RESULT=$qresult $self _pick_rm {2} </dev/tty >/dev/tty 2>&1)+transform(cat $qresult)"
+    "--bind=ctrl-d:execute(ST_PICK_CACHE=$qcache ST_PICK_RESULT=$qresult $self _pick_rm {+2} </dev/tty >/dev/tty 2>&1)+deselect-all+transform(cat $qresult)"
     --track --id-nth=3 "--bind=every(2):reload:cat $qcache"
   )
   # First paint skips the per-tree git counts; this loop fills them in, starting at once.
@@ -351,6 +351,7 @@ cmd_go() {
     sel=$(pick_tree "$(picker_choices)") || return 0
     key=${sel%%$'\n'*}
     sel=${sel#*$'\n'}
+    sel=${sel%%$'\n'*}
     case $key in
       ctrl-n) pick_new; return;;
       ctrl-r) cmd_roots; return;;
@@ -440,6 +441,7 @@ cmd_preview() {
 # Work that exists only in the tree gets a choice instead of a dead end.
 cmd_pick_rm() {
   local dir=${1:-} rc=0
+  [ $# -le 1 ] || { pick_rm_many "$@"; return; }
   case $dir in ''|+new) return 0;; esac
   declare -F remove_tree_at >/dev/null || { info "remove module is unavailable"; ui_hold; return 1; }
   ( remove_tree_at "$dir" ) || rc=$?
@@ -452,6 +454,34 @@ cmd_pick_rm() {
     esac
   fi
   case $rc in 0) ;; 4) return 0;; *) ui_hold; return 1;; esac
+  pick_rm_refresh
+}
+
+# One confirmation for every marked tree. Trees with unsaved work are skipped:
+# forcing those needs the typed confirmation, so it stays one tree at a time.
+pick_rm_many() {
+  local dir failed=0
+  local -a clean=()
+  declare -F remove_tree_at >/dev/null || { info "remove module is unavailable"; ui_hold; return 1; }
+  ui_title "Delete marked trees"
+  for dir in "$@"; do
+    case $dir in ''|+new) continue;; esac
+    if [ ! -d "$dir" ]; then ui_warn skip "$(ui_path "$dir") is already gone"
+    elif [ "$dir" = "$(main_worktree "$dir")" ]; then ui_warn skip "$(ui_path "$dir") is a main checkout"
+    elif [ -n "$(tree_dirty_report "$dir")" ]; then ui_warn skip "$(ui_path "$dir") has unsaved work"
+    else clean+=("$dir"); ui_info delete "$(ui_path "$dir")"
+    fi
+  done
+  [ "${#clean[@]}" -gt 0 ] || { ui_hold; return 0; }
+  ui_ask "delete ${#clean[@]} tree$([ "${#clean[@]}" = 1 ] || printf s)?" n || return 0
+  for dir in "${clean[@]}"; do
+    ( remove_tree_at "$dir" --yes ) || failed=1
+  done
+  pick_rm_refresh
+  [ "$failed" = 0 ] || { ui_hold; return 1; }
+}
+
+pick_rm_refresh() {
   [ -z "${ST_PICK_CACHE:-}" ] || [ ! -f "$ST_PICK_CACHE" ] || {
     rm -f "$ST_PICK_CACHE.building"
     ui_colour_on

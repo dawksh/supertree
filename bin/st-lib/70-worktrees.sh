@@ -179,15 +179,16 @@ cmd_status() {
 }
 
 cmd_rm() {
-  local branch="" force=0 repo_arg=""
+  local branch="" force=0 yes=0 repo_arg=""
   while [ $# -gt 0 ]; do
     case $1 in
       --force|-f) force=1; shift;;
+      --yes|-y) yes=1; shift;;
       --repo) repo_arg=$2; shift 2;;
       *) branch=$1; shift;;
     esac
   done
-  [ -n "$branch" ] || die "usage: st rm <branch> [--force]"
+  [ -n "$branch" ] || die "usage: st rm <branch> [--force] [--yes]"
 
   local main repo slug dir sess report current old_sess current_sess='' label fate
   main=$(require_repo "${repo_arg:-.}")
@@ -232,12 +233,12 @@ cmd_rm() {
       show_unsaved_work "$dir"
       ui_warn lost "these changes and commits go away for good"
       ui_type_confirm "$branch" || ui_abort
-    else
+    elif [ "$yes" = 0 ]; then
       ui_ask 'proceed?' n || ui_abort
     fi
   else
     printf 'will remove:\n  tree      %s\n  session   close\n  checkout  remove\n  branch    %s\n' "$label" "$fate" >&2
-    ui_ask 'proceed?' n || die "aborted"
+    [ "$yes" = 1 ] || ui_ask 'proceed?' n || die "aborted"
   fi
 
   current=$(branch_worktree "$main" "$branch" || true)
@@ -265,7 +266,7 @@ git_op_in_progress() {
 }
 
 # Picker and sidebar rows carry a tree's path, not its branch.
-remove_tree_at() { # dir [--force]
+remove_tree_at() { # dir [--force] [--yes]
   local dir=$1 branch main
   [ -d "$dir" ] || ui_fail "already removed: $(ui_path "$dir")"
   main=$(main_worktree "$dir")
@@ -274,7 +275,7 @@ remove_tree_at() { # dir [--force]
     ui_fail "$(basename "$dir") is a detached checkout, not a tree st can delete" "git -C $(ui_path "$main") worktree remove $(ui_path "$dir")"
   [ "$dir" != "$main" ] ||
     ui_fail "$(basename "$main")/$branch $G_MAIN is the main checkout and can't be deleted" "st down $branch  to close its session"
-  cmd_rm "$branch" --repo "$main" ${2:+"$2"}
+  cmd_rm "$branch" --repo "$main" "${@:2}"
 }
 
 # Same test as `git branch -d`: merged into its upstream, or into HEAD when it
@@ -453,5 +454,5 @@ st_register_command 'new' cmd_new 'create a worktree and open its session' 'new 
 st_register_command 'trust' cmd_trust 'trust a reviewed .supertree config (--show: what changed)' 'trust [--show]'
 st_register_command 'ls' cmd_ls 'every tree grouped by repo, waiting ones first'
 st_register_command 'status' cmd_status 'show agent status' 'status [tree]'
-st_register_command 'rm' cmd_rm 'remove a worktree and its session' 'rm <branch> [--force]'
+st_register_command 'rm' cmd_rm 'remove a worktree and its session' 'rm <branch> [--force] [--yes]'
 st_register_command 'remove' cmd_remove 'remove Git checkouts under the worktree root' 'remove all [--force]'

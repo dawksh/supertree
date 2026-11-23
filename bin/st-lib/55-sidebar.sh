@@ -341,17 +341,17 @@ cmd_sidebar() {
     rows=$(sidebar_rows)
     start=$(printf '%s\n' "$rows" | awk -F '\t' '$4 == 1 { print NR; exit }')
     printf '%s\n' "$rows" |
-      ui_fzf --ansi --no-input --no-sort --reverse --info=hidden --no-scrollbar \
+      ui_fzf --ansi --multi --no-input --no-sort --reverse --info=hidden --no-scrollbar \
           --delimiter=$'\t' --with-nth=1 --track --id-nth=2 \
           ${listen[@]+"${listen[@]}"} --pointer='›' --gutter=' ' --ellipsis="$G_MORE" \
-          --header="$(ui_hints n new d remove)" \
+          --header="$(ui_hints n new m mark d remove)" \
           --bind="load:pos(${start:-1})+unbind(load)" \
-          --bind='j:down,k:up,g:first,G:last' \
+          --bind='j:down,k:up,g:first,G:last,m:toggle+down' \
           --bind="n:execute-silent:$self _sidebar-open +new" \
           --bind="enter:execute-silent:$self _sidebar-open {2} {3}" \
           --bind="l:execute-silent:$self _sidebar-open {2} {3}" \
           --bind="double-click:execute-silent:$self _sidebar-open {2} {3}" \
-          --bind="d:execute-silent:$self _sidebar-rm {2} {3}" \
+          --bind="d:execute-silent($self _sidebar-rm {+3})+deselect-all" \
           --bind='esc:execute-silent(tmux select-pane -R),h:execute-silent(tmux select-pane -R),q:execute-silent(tmux select-pane -R)' \
           --bind="ctrl-r:reload:$self _sidebar-rows" \
           --bind="resize:execute-silent:$self _sidebar-heal" || sleep 1
@@ -375,14 +375,21 @@ cmd_sidebar_open() {
 
 # A popup, not this pane: the y/n prompt needs more than the sidebar's width, and
 # removing the current tree kills this pane while the popup keeps running.
-cmd_sidebar_rm() {
-  local sess=${1:-} dir=${2:-} tty
-  case $sess in ''|'#'*|+new) return 0;; esac
+# Repo header rows have no path, so marking one adds nothing.
+cmd_sidebar_rm() { # dir...
+  local dir tty height
+  local -a dirs=()
+  for dir in "$@"; do [ -z "$dir" ] || dirs+=("$dir"); done
+  [ "${#dirs[@]}" -gt 0 ] || return 0
+  height=$((14 + ${#dirs[@]}))
+  [ "$height" -le 30 ] || height=30
   tty=$(tmux display-message -p -t "$TMUX_PANE" '#{client_tty}')
-  tmux display-popup -c "$tty" -E -w 64 -h 14 -T ' Remove tree ' "${UI_POPUP[@]}" "$(st_self)" _sidebar-rm-run "$dir"
+  tmux display-popup -c "$tty" -E -w 64 -h "$height" -T ' Remove tree ' "${UI_POPUP[@]}" \
+    "$(st_self)" _sidebar-rm-run "${dirs[@]}"
 }
 
 cmd_sidebar_rm_run() {
+  [ $# -le 1 ] || { pick_rm_many "$@"; return 0; }
   # die exits; a subshell keeps the popup open long enough to read why.
   ( remove_tree_at "${1:-}" ) && return 0
   printf 'press enter to close ' >&2
