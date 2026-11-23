@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -345,9 +346,25 @@ func (c *Core) registerLayoutRestore(r *command.Registry) error {
 			return restoreResult{}, &command.Error{Code: "partial_failure", Message: "layout restore status unknown; inspect tmux before retrying"}
 		}
 		observed, err := client.Run(ctx, "display-message", "-p", "-t", window, "#{window_layout}")
-		if err != nil || observed != layout {
+		if err != nil || !sameLayout(observed, layout) {
 			return restoreResult{}, &command.Error{Code: "partial_failure", Message: "layout restore could not be verified; inspect tmux before retrying"}
 		}
 		return restoreResult{args.WorkspaceID, revision, window, observed}, nil
+	})
+}
+
+// Compares pane order, IDs and geometry, since tmux 3.8 reads back JSON for a
+// layout applied in the older string format.
+func sameLayout(observed, applied string) bool {
+	a, err := parseWindowLayout(observed)
+	if err != nil {
+		return false
+	}
+	b, err := parseWindowLayout(applied)
+	if err != nil {
+		return false
+	}
+	return slices.EqualFunc(a.leaves(nil), b.leaves(nil), func(x, y layoutCell) bool {
+		return x.paneID == y.paneID && x.w == y.w && x.h == y.h && x.x == y.x && x.y == y.y
 	})
 }
