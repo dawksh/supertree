@@ -34,10 +34,16 @@ jobs:
           fi
       - name: Check formatting
         run: test -z "$(gofmt -l cmd internal)"
-      - name: Vet and test
+      - name: Test CI diagnostics
+        run: python3 -m unittest discover -s tests -p test_ci_diagnostics.py -v
+      - name: Go vet
         run: |
-          bash scripts/test-local.sh -- go vet ./...
-          bash scripts/test-local.sh -- go test -race ./...
+          if ! bash scripts/test-local.sh -- go vet ./...; then
+            echo '::error::Go vet failed; see step logs for details'
+            exit 1
+          fi
+      - name: Go race tests
+        run: bash scripts/go-test-ci.sh bash scripts/test-local.sh -- go test -json -race ./...
       - name: Build experimental client
         run: CGO_ENABLED=0 go build -o bin/st-next ./cmd/st-next
       - name: Check release assets
