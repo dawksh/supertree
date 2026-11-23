@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,59 @@ import (
 	"github.com/dawksh/supertree/internal/tmux"
 	"github.com/dawksh/supertree/internal/workspace"
 )
+
+func TestTmuxServerReplacement(t *testing.T) {
+	if os.Getenv("SUPERTREE_TEST_SANDBOX") == "" {
+		t.Skip("requires scripts/test-local.sh")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is unavailable")
+	}
+	ctx := context.Background()
+	client := tmux.Client{Socket: filepath.Join(t.TempDir(), "tmux")}
+	t.Cleanup(func() { _, _ = client.Run(ctx, "kill-server") })
+	for i := 0; i < 10; i++ {
+		if _, err := client.Run(ctx, "new-session", "-d", "-s", "test", "exec sleep 120"); err != nil {
+			t.Fatalf("start server iteration %d: %v", i, err)
+		}
+		stopTestTmuxServer(t, client)
+	}
+}
+
+// Wait for this test's server to exit before reusing its socket. kill-server
+// acknowledges the request before the server has necessarily exited.
+func stopTestTmuxServer(t *testing.T, client tmux.Client) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	serverPID, err := client.Run(ctx, "display-message", "-p", "#{pid}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pid, err := strconv.Atoi(serverPID); err != nil || pid <= 0 {
+		t.Fatalf("invalid tmux server PID %q", serverPID)
+	}
+	if _, err := client.Run(ctx, "kill-server"); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		// A zombie has exited even if the host's init has not reaped it.
+		state, err := exec.CommandContext(ctx, "ps", "-p", serverPID, "-o", "stat=").CombinedOutput()
+		if err == nil && strings.HasPrefix(strings.TrimSpace(string(state)), "Z") {
+			return
+		}
+		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 && len(state) == 0 {
+			return // ps found no such process.
+		}
+		if err != nil {
+			t.Fatalf("checking tmux server %s: %v", serverPID, err)
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("tmux server %s did not exit after kill-server (state %q)", serverPID, state)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 func TestRealNamedTerminalsLifecycleIsolationAndRecovery(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
@@ -173,7 +227,7 @@ func TestRealNamedTerminalsLifecycleIsolationAndRecovery(t *testing.T) {
 	if _, err := r.Invoke(ctx, "process.restart", mustJSON(process.Target{ProcessID: registered.ID})); err == nil {
 		t.Fatal("registered human process was relaunched")
 	}
-	client.Run(ctx, "kill-server")
+	stopTestTmuxServer(t, client)
 	newPane, err := client.Run(ctx, "-f", "/dev/null", "new-session", "-d", "-s", "unrelated", "-c", repo+"/", "-P", "-F", "#{pane_id}", "exec sleep 120")
 	if err != nil {
 		t.Fatal(err)
