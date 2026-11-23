@@ -37,11 +37,7 @@ jobs:
       - name: Test CI diagnostics
         run: python3 -m unittest discover -s tests -p test_ci_diagnostics.py -v
       - name: Go vet
-        run: |
-          if ! bash scripts/test-local.sh -- go vet ./...; then
-            echo '::error::Go vet failed; see step logs for details'
-            exit 1
-          fi
+        run: bash scripts/go-test-ci.sh --vet bash scripts/test-local.sh -- go vet ./...
       - name: Go race tests
         run: bash scripts/go-test-ci.sh bash scripts/test-local.sh -- go test -json -race ./...
       - name: Build experimental client
