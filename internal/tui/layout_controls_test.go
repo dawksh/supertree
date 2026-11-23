@@ -183,28 +183,29 @@ func TestLayoutRejectsUnmanagedAnchorAndInvalidLiveToken(t *testing.T) {
 	}
 }
 
-func TestOldLayoutCompletionDoesNotDismissNewConfirmation(t *testing.T) {
+func TestCaptureEscapeAfterSubmissionKeepsResult(t *testing.T) {
 	m, _ := fixture(t)
 	m.options.Invoke = func(_ context.Context, name string, _ any) (json.RawMessage, error) {
 		if name == "layout.inspect" {
 			return json.RawMessage(`{"workspace_id":"ws_one","revision":1}`), nil
 		}
-		return json.RawMessage(`{}`), nil
+		return json.RawMessage(`{"workspace_id":"ws_one","revision":2}`), nil
 	}
 	m, cmd := key(m, runeKey("S"))
 	next, _ := m.Update(cmd())
 	m = next.(Model)
-	m, old := key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, action := key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = key(m, tea.KeyMsg{Type: tea.KeyEsc})
-	m, cmd = key(m, runeKey("S"))
-	next, _ = m.Update(cmd())
+	if m.mode != "working" || m.pendingName != "layout.capture" {
+		t.Fatalf("escape dismissed submitted capture: %s %s", m.mode, m.pendingName)
+	}
+	next, _ = m.Update(action())
 	m = next.(Model)
-	next, _ = m.Update(old())
-	m = next.(Model)
-	if m.mode != "confirm" || m.pendingName != "layout.capture" {
-		t.Fatalf("old response dismissed new dialog: %s %s", m.mode, m.pendingName)
+	if m.mode != "browse" || strings.Contains(m.message, "canceled") {
+		t.Fatalf("submitted capture result dropped: %s %q", m.mode, m.message)
 	}
 }
+
 func TestLayoutInspectionWorkspaceChangedExitsWorking(t *testing.T) {
 	m, _ := fixture(t)
 	m.options.Invoke = func(context.Context, string, any) (json.RawMessage, error) {
@@ -275,7 +276,7 @@ func TestWorkspaceNormalizationCancelsInFlightLayout(t *testing.T) {
 	}
 }
 
-func TestWorkspaceNormalizationIgnoresInFlightActionCompletion(t *testing.T) {
+func TestSubmittedCaptureSurvivesWorkspaceNormalization(t *testing.T) {
 	m, _ := fixture(t)
 	m.options.Invoke = func(_ context.Context, name string, _ any) (json.RawMessage, error) {
 		if name == "layout.inspect" {
@@ -294,8 +295,8 @@ func TestWorkspaceNormalizationIgnoresInFlightActionCompletion(t *testing.T) {
 	m = next.(Model)
 	next, _ = m.Update(action())
 	m = next.(Model)
-	if !strings.Contains(m.message, "workspace") {
-		t.Fatalf("late completion hid cancellation: %q", m.message)
+	if m.mode != "browse" || !strings.Contains(m.message, "layout.capture completed") {
+		t.Fatalf("submitted capture result dropped: %s %q", m.mode, m.message)
 	}
 }
 

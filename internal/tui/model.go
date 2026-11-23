@@ -301,7 +301,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.view = msg.View
 		}
 		m.normalize()
-		if (m.mode == "working" || m.mode == "confirm") && m.layoutWorkspace != "" && m.workspaceID != m.layoutWorkspace && !(m.mode == "working" && m.pendingName == "layout.restore" && m.layoutSubmitted) {
+		if (m.mode == "working" || m.mode == "confirm") && m.layoutWorkspace != "" && m.workspaceID != m.layoutWorkspace && !(m.mode == "working" && m.layoutSubmitted) {
 			m.layoutRequest++
 			m.actionRequest++
 			m.mode = "browse"
@@ -457,7 +457,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.criticalNotices = m.criticalNotices[1:]
 			return m, nil
 		}
-		if msg.String() == "esc" && m.mode == "working" && m.pendingName == "layout.restore" && m.layoutSubmitted {
+		if msg.String() == "esc" && m.mode == "working" && m.layoutSubmitted {
 			return m, nil
 		}
 		if m.mode != "working" || msg.String() == "esc" {
@@ -657,7 +657,7 @@ func (m Model) edit(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.present()
 	case "confirm":
 		if key.String() == "enter" {
-			m.layoutSubmitted = m.pendingName == "layout.restore"
+			m.layoutSubmitted = m.pendingName == "layout.restore" || m.pendingName == "layout.capture"
 			m.mode = "working"
 			return m, m.invoke(m.pendingName, m.pendingArgs)
 		}
