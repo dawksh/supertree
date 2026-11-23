@@ -245,7 +245,7 @@ func TestRealHarnessMCPSharedWorkspaceRoundTrip(t *testing.T) {
 			}
 		} else {
 			var config map[string]map[string]map[string]any
-			if launch.Args[0] != "--mcp-config" || json.Unmarshal([]byte(launch.Args[1]), &config) != nil || config["mcpServers"]["supertree"]["command"] != binary || config["mcpServers"]["supertree"]["env"].(map[string]any)["TMUX_PANE"] != "%fixture" {
+			if !strings.HasPrefix(launch.Args[0], "--mcp-config=") || json.Unmarshal([]byte(strings.TrimPrefix(launch.Args[0], "--mcp-config=")), &config) != nil || config["mcpServers"]["supertree"]["command"] != binary || config["mcpServers"]["supertree"]["env"].(map[string]any)["TMUX_PANE"] != "%fixture" {
 				t.Fatalf("missing launch-scoped Claude override: %#v", launch)
 			}
 		}

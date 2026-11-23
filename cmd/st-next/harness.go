@@ -98,7 +98,9 @@ func harnessCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 		config, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{"supertree": map[string]any{
 			"command": executable, "args": serverArgs, "env": env,
 		}}})
-		argv = append([]string{"--mcp-config", string(config)}, argv...)
+		// --mcp-config is variadic; the = form takes one value, so a prompt after
+		// it stays a prompt (verified: `claude -p --mcp-config=<json> "prompt"`).
+		argv = append([]string{"--mcp-config=" + string(config)}, argv...)
 	}
 	child := exec.CommandContext(ctx, provider, argv...)
 	child.Dir = options.Directory
