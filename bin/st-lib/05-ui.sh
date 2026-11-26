@@ -42,9 +42,9 @@ ui_tone() { # name dark-hex dark-256 light-hex light-256 16-colour-index [bold]
   printf -v "$1_C" '%s' "$value"
 }
 
-# Exact colours, so a terminal's own theme can't repaint them. The 16-colour indexes are
-# the fallback and ST_THEME=ansi. Dim is lighter than the design's: rows are also drawn
-# on the user's own background, and must stay readable on mid-dark ones.
+# Exact colours, so a terminal's own theme can't repaint them. Dark neutral roles
+# match their 256-colour entries exactly, avoiding a tint change on RGB terminals.
+# The 16-colour indexes are the fallback and ST_THEME=ansi.
 ui_tones() {
   ui_tone UI_A      5ccfe6 80  0b6680 24  6
   ui_tone UI_IN     ffb454 215 9a4a08 94  3 bold
@@ -52,14 +52,14 @@ ui_tones() {
   ui_tone UI_RUN    73b8ff 75  1d4ed8 26  4
   ui_tone UI_OK     9fdc7c 150 126c34 22  2
   ui_tone UI_ERR    ff7a7a 210 b91c1c 124 1
-  ui_tone UI_DIM    8b94a6 246 566170 59  8
+  ui_tone UI_DIM    949494 246 566170 59  8
   ui_tone UI_REPO   d2a6ff 183 7e22ce 92  5
-  ui_tone UI_TEXT   d4d8e0 253 1f2733 235 -1
-  ui_tone UI_PANEL  0f131b 233 f6f7f9 231 -1
-  ui_tone UI_SEL    1c2433 235 e3e8f0 254 -1
-  ui_tone UI_BAR    151a24 234 e9ecf1 255 -1
-  ui_tone UI_TAB    232b3a 236 d5dbe5 253 -1
-  ui_tone UI_BORDER 3a4458 238 9aa4b2 248 8
+  ui_tone UI_TEXT   dadada 253 1f2733 235 -1
+  ui_tone UI_PANEL  121212 233 f6f7f9 231 -1
+  ui_tone UI_SEL    262626 235 e3e8f0 254 -1
+  ui_tone UI_BAR    1c1c1c 234 e9ecf1 255 -1
+  ui_tone UI_TAB    303030 236 d5dbe5 253 -1
+  ui_tone UI_BORDER 444444 238 9aa4b2 248 8
 }
 ui_tones
 # For popups opened over a session st did not style; tree windows set the same as options.
