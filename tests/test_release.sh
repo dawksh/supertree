@@ -25,6 +25,9 @@ assert_equal "$(choose_bump $'docs\nrelease:minor')" minor
 assert_equal "$(choose_bump $'release:major\nfix')" major
 assert_equal "$(choose_bump $'release:minor\nrelease:major')" major
 
+# Run the release palette gate on the real checkout in PR CI as well.
+installer_colours_match "$ROOT" || exit 1
+
 src=$(mktemp -d)
 trap 'rm -rf "$src"' EXIT
 mkdir -p "$src/bin/st-lib" "$src/tests" "$src/scripts"
@@ -40,6 +43,15 @@ fi
 printf 'if then\n' > "$src/tests/test_broken.sh"
 if check_source "$src" 2>/dev/null; then
   printf 'accepted a source tree with a syntax error\n' >&2
+  exit 1
+fi
+
+cp "$ROOT/bin/st-lib/05-ui.sh" "$src/bin/st-lib/05-ui.sh"
+cp "$ROOT/install.sh" "$src/install.sh"
+installer_colours_match "$src" || exit 1
+printf '\ntone DRIFT 010203 233 f6f7f9 231 -1\n' >> "$src/install.sh"
+if installer_colours_match "$src" 2>/dev/null; then
+  printf 'accepted an installer colour absent from the UI palette\n' >&2
   exit 1
 fi
 

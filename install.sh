@@ -76,7 +76,7 @@ if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   tone GRN 9fdc7c 150 126c34 22  2
   tone YLW ffb454 215 9a4a08 94  3
   tone RED ff7a7a 210 b91c1c 124 1
-  tone D   8b94a6 246 566170 59  8
+  tone D   949494 246 566170 59  8
 fi
 
 WIDTH=56
