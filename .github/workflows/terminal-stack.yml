@@ -41,6 +41,8 @@ jobs:
           test -z "$(gofmt -l experiments/terminal-stack)"
           bash scripts/test-local.sh -- go -C experiments/terminal-stack vet ./...
           bash scripts/test-local.sh -- go -C experiments/terminal-stack test -race -timeout 180s -v ./...
+      - name: Verify live-harness input guards and PTY draining without model calls
+        run: bash scripts/test-local.sh -- env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s experiments/terminal-stack -p verify_harness_test.py -v
       - name: Report dependency probes (separate from driver correctness)
         run: bash scripts/test-local.sh -- go -C experiments/terminal-stack run ./cmd/spike probe
       - name: Verify the explicit Unicode repair trial

@@ -22,7 +22,7 @@ func TestOptionalPlainSSHDisconnectAndReattach(t *testing.T) {
 	if !strings.HasPrefix(dir, "/tmp/st-terminal-stack.") || !strings.HasPrefix(binary, "/tmp/st-terminal-stack.") {
 		t.Fatal("SSH proof requires an explicitly prepared /tmp/st-terminal-stack.* namespace")
 	}
-	sshArgs := []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=yes", "-o", "UpdateHostKeys=no", "-S", "none"}
+	sshArgs := []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=yes", "-o", "UpdateHostKeys=no", "-o", "ForwardAgent=no", "-S", "none"}
 	inspect := func() Response {
 		t.Helper()
 		args := append(append([]string{}, sshArgs...), "--", target, shellQuote(binary)+" inspect -state "+shellQuote(dir))

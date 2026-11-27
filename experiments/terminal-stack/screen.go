@@ -33,6 +33,7 @@ type Frame struct {
 	Scrollback                int
 	OutputBytes, DroppedInput uint64
 	InputError                string
+	GraphemeOverflows         uint64 `json:",omitempty"`
 }
 
 func rgb(c color.Color) *color.RGBA {
@@ -53,6 +54,10 @@ func (t *Terminal) Snapshot() Frame {
 		DroppedInput: t.dropped.Load(), InputError: t.inputError}
 	shape, blink := t.vt.CursorStyle()
 	f.CursorShape, f.CursorBlink = int(shape), blink
+	// The published dependency lacks this optional repair-trial accessor.
+	if stats, ok := any(t.vt).(interface{ GraphemeOverflowCount() uint64 }); ok {
+		f.GraphemeOverflows = stats.GraphemeOverflowCount()
+	}
 	select {
 	case <-t.exited:
 		f.Exited = true

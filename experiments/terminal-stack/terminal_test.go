@@ -82,6 +82,13 @@ func TestPTYChild(t *testing.T) {
 			t.Fatal(err)
 		}
 		fmt.Printf("KEY:%s\r\n", hex.EncodeToString(buf))
+	case "linekeys":
+		fmt.Print("LINEKEYS-READY\r\n")
+		buf := make([]byte, 2)
+		if _, err := io.ReadFull(os.Stdin, buf); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Printf("LINEKEYS:%s\r\n", hex.EncodeToString(buf))
 	case "no-reader":
 		// Query flooding must not trap the output reader on vt's reply pipe.
 		for i := 0; i < 10000; i++ {
@@ -99,6 +106,8 @@ func TestPTYChild(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+	case "hostile-unicode":
+		fmt.Print("a" + strings.Repeat("\u0301", 20_000) + "\r\nAFTER-HOSTILE-PTY")
 	}
 }
 func childCommand(mode string) *exec.Cmd {
@@ -108,6 +117,19 @@ func childCommand(mode string) *exec.Cmd {
 }
 
 func TestHiddenQueryPasteAndModeAwareKeys(t *testing.T) {
+	t.Run("Ctrl-j stays distinct from Enter", func(t *testing.T) {
+		tm := startTest(t, childCommand("linekeys"), 80, 24)
+		waitFrame(t, tm, func(f Frame) bool { return strings.Contains(f.Text(), "LINEKEYS-READY") })
+		var decoder uv.EventDecoder
+		for _, raw := range []string{"\n", "\r"} {
+			_, event := decoder.Decode([]byte(raw))
+			key := event.(uv.KeyPressEvent).Key()
+			if err := tm.Input(&key, "", false); err != nil {
+				t.Fatal(err)
+			}
+		}
+		waitFrame(t, tm, func(f Frame) bool { return strings.Contains(f.Text(), "LINEKEYS:0a0d") })
+	})
 	t.Run("query with no client", func(t *testing.T) {
 		tm := startTest(t, childCommand("query"), 80, 24)
 		<-tm.exited // No snapshot or attached client is needed for the reply.
@@ -152,6 +174,47 @@ func TestRealZshJobControlAndResize(t *testing.T) {
 		t.Skip("stock Zsh unavailable; Oh My Zsh remains a manual acceptance case")
 	}
 	testShellJobControl(t, path, "-f", "-i")
+}
+
+func TestOptionalOhMyZshThemeAndGitPlugin(t *testing.T) {
+	root := os.Getenv("ST_STACK_OMZ_ROOT")
+	if root == "" {
+		t.Skip("explicit installed Oh My Zsh path required; never source user dotfiles")
+	}
+	if _, err := os.Stat(root + "/oh-my-zsh.sh"); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	rc := "export ZSH=" + shellQuote(root) + "\nexport ZSH_CACHE_DIR=" + shellQuote(home+"/cache") + "\nexport ZSH_COMPDUMP=" + shellQuote(home+"/.zcompdump") + "\nzstyle ':omz:update' mode disabled\nDISABLE_AUTO_UPDATE=true\nZSH_DISABLE_COMPFIX=true\nZSH_THEME=amuse\nplugins=(git)\nsource \"$ZSH/oh-my-zsh.sh\"\nprintf 'FRAMEWORK:%s:%s\\n' \"${+functions[git_prompt_info]}\" \"${+aliases[gst]}\"\n"
+	if err := os.WriteFile(home+"/.zshrc", []byte(rc), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("zsh", "-i")
+	cmd.Dir = home
+	cmd.Env = []string{"HOME=" + home, "ZDOTDIR=" + home, "HISTFILE=" + home + "/history"}
+	tm := startTest(t, cmd, 100, 30)
+	waitFrame(t, tm, func(f Frame) bool { return strings.Contains(f.Text(), "FRAMEWORK:1:1") })
+	if err := tm.Input(nil, "printf '%s\\n' 'OMZ-界-e\u0301-👩\u200d💻'", true); err != nil {
+		t.Fatal(err)
+	}
+	inputText(t, tm, "\r")
+	waitFrame(t, tm, func(f Frame) bool { return strings.Count(f.Text(), "OMZ-界-e\u0301-👩\u200d💻") >= 2 })
+	inputText(t, tm, "sleep 120\r")
+	time.Sleep(100 * time.Millisecond)
+	inputText(t, tm, "\x1a")
+	waitFrame(t, tm, func(f Frame) bool { return strings.Contains(strings.ToLower(f.Text()), "suspended") })
+	inputText(t, tm, "fg\r")
+	time.Sleep(100 * time.Millisecond)
+	inputText(t, tm, "\x03")
+	inputText(t, tm, "printf 'OMZ-RC:%s\\n' \"$?\"\r")
+	waitFrame(t, tm, func(f Frame) bool { return strings.Contains(f.Text(), "OMZ-RC:130") })
+	if err := tm.Resize(110, 32); err != nil {
+		t.Fatal(err)
+	}
+	inputText(t, tm, "printf 'OMZ-SIZE:'; stty size\r")
+	waitFrame(t, tm, func(f Frame) bool { return strings.Contains(f.Text(), "OMZ-SIZE:32 110") })
+	inputText(t, tm, "exit 0\r")
+	waitFrame(t, tm, func(f Frame) bool { return f.Exited && f.ExitCode == 0 })
 }
 
 func testShellJobControl(t *testing.T, executable string, args ...string) {

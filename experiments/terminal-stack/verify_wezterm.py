@@ -5,13 +5,13 @@ import json, os, pathlib, shutil, subprocess, tempfile, time, unicodedata
 if not os.environ.get('SUPERTREE_TEST_SANDBOX'):
     raise SystemExit('Run through bash scripts/test-local.sh -- python3 experiments/terminal-stack/verify_wezterm.py')
 root = pathlib.Path(__file__).resolve().parents[2]
-spike = str(root / '.dev/terminal-stack/unicode-spike')
+spike = str(root / '.dev/terminal-stack/spike')
 wez = shutil.which('wezterm')
 if not wez:
     raise SystemExit('WezTerm is not installed; this optional desktop probe does not install it.')
 gui_bin = str(pathlib.Path(wez).resolve().with_name('wezterm-gui'))
 if not pathlib.Path(gui_bin).is_file() or not pathlib.Path(spike).is_file():
-    raise SystemExit('Build .dev/terminal-stack/unicode-spike first and use a WezTerm install with wezterm-gui beside wezterm.')
+    raise SystemExit('Run experiments/terminal-stack/run probe first and use a WezTerm install with wezterm-gui beside wezterm.')
 namespace = pathlib.Path(tempfile.mkdtemp(prefix='st-stack-wezterm-', dir='/tmp'))
 (namespace/'host').mkdir(mode=0o700)
 env = os.environ.copy()
