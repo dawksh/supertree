@@ -202,7 +202,7 @@ func TestLaunchSecretsExcludedFromTmux(t *testing.T) {
 	if err != nil {
 		t.Skip("tmux unavailable")
 	}
-	base := t.TempDir()
+	base := workspace.CanonicalPath(t.TempDir())
 	log := filepath.Join(base, "tmux-args")
 	bin := filepath.Join(base, "bin")
 	if err := os.Mkdir(bin, 0700); err != nil {

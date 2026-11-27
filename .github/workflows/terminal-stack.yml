@@ -1,0 +1,52 @@
+name: Terminal stack experiment
+
+on:
+  pull_request:
+    paths:
+      - 'experiments/terminal-stack/**'
+      - 'scripts/test-local.sh'
+      - '.github/workflows/terminal-stack.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  terminal-stack:
+    name: PTY proof (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: experiments/terminal-stack/go.mod
+          cache: false
+      - name: Install the real editor used by the proof
+        run: |
+          if ! command -v nvim >/dev/null; then
+            if [ "$RUNNER_OS" = macOS ]; then
+              brew install neovim
+            else
+              sudo apt-get update
+              sudo apt-get install -y neovim
+            fi
+          fi
+      - name: Verify the isolated module
+        run: |
+          bash -n experiments/terminal-stack/run
+          test -z "$(gofmt -l experiments/terminal-stack)"
+          bash scripts/test-local.sh -- go -C experiments/terminal-stack vet ./...
+          bash scripts/test-local.sh -- go -C experiments/terminal-stack test -race -timeout 180s -v ./...
+      - name: Report dependency probes (separate from driver correctness)
+        run: bash scripts/test-local.sh -- go -C experiments/terminal-stack run ./cmd/spike probe
+      - name: Verify the explicit Unicode repair trial
+        run: |
+          bash -n experiments/terminal-stack/trial
+          bash scripts/test-local.sh -- experiments/terminal-stack/trial upstream-test -race -timeout 180s
+          bash scripts/test-local.sh -- experiments/terminal-stack/trial vet ./...
+          bash scripts/test-local.sh -- experiments/terminal-stack/trial test -race -timeout 180s ./...
+          bash scripts/test-local.sh -- experiments/terminal-stack/trial run ./cmd/spike probe

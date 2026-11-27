@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -12,9 +13,15 @@ import (
 )
 
 type Client struct{ Socket string }
+
+// ErrPaneMissing means a successful inspection found no matching owned pane.
+// An inspection failure must never be treated as permission to launch a copy.
+var ErrPaneMissing = errors.New("process terminal is missing or belongs to another process")
+
 type Pane struct {
 	ID, WindowID, SessionID, ProcessID, Directory, WindowName string
 	PID, ServerPID, TreeDirectory, Role, AgentWindow, Label   string
+	HomePane, HomeSession, HomeWindow, LentPane, SessionName  string
 	Sidebar                                                   bool
 	Dead                                                      bool
 	ExitCode                                                  int
@@ -41,7 +48,7 @@ func (c Client) Run(ctx context.Context, args ...string) (string, error) {
 }
 
 func (c Client) Panes(ctx context.Context) ([]Pane, error) {
-	data, err := c.Run(ctx, "-N", "list-panes", "-a", "-F", "#{pane_id}\t#{window_id}\t#{session_id}\t#{@st_next_process}\t#{pane_dead}\t#{pane_dead_status}\t#{window_name}\t#{pane_pid}\t#{pid}\t#{@st_role}\t#{@st_agent_window}\t#{@supertree_label}\t#{@st_sidebar}\t#{@st_tree_dir}\t#{pane_current_path}")
+	data, err := c.Run(ctx, "-N", "list-panes", "-a", "-F", "#{pane_id}\t#{window_id}\t#{session_id}\t#{@st_next_process}\t#{pane_dead}\t#{pane_dead_status}\t#{window_name}\t#{pane_pid}\t#{pid}\t#{@st_role}\t#{@st_agent_window}\t#{@supertree_label}\t#{@st_sidebar}\t#{@st_tree_dir}\t#{@st_home_pane}\t#{@st_home_session}\t#{@st_home_window}\t#{@st_lent_pane}\t#{session_name}\t#{pane_current_path}")
 	if err != nil {
 		_, status, _ := Inspect(ctx, c.Socket)
 		if status == "stopped" || status == "unavailable" {
@@ -54,15 +61,15 @@ func (c Client) Panes(ctx context.Context) ([]Pane, error) {
 		if line == "" {
 			continue
 		}
-		fields := strings.SplitN(line, "\t", 15)
-		if len(fields) != 15 || !strings.HasPrefix(fields[0], "%") {
+		fields := strings.SplitN(line, "\t", 20)
+		if len(fields) != 20 || !strings.HasPrefix(fields[0], "%") {
 			return nil, fmt.Errorf("unexpected tmux pane record")
 		}
 		exit := -1
 		if fields[5] != "" {
 			exit, _ = strconv.Atoi(fields[5])
 		}
-		result = append(result, Pane{ID: fields[0], WindowID: fields[1], SessionID: fields[2], ProcessID: fields[3], Dead: fields[4] == "1", ExitCode: exit, WindowName: fields[6], PID: fields[7], ServerPID: fields[8], Role: fields[9], AgentWindow: fields[10], Label: fields[11], Sidebar: fields[12] == "1", TreeDirectory: fields[13], Directory: fields[14]})
+		result = append(result, Pane{ID: fields[0], WindowID: fields[1], SessionID: fields[2], ProcessID: fields[3], Dead: fields[4] == "1", ExitCode: exit, WindowName: fields[6], PID: fields[7], ServerPID: fields[8], Role: fields[9], AgentWindow: fields[10], Label: fields[11], Sidebar: fields[12] == "1", TreeDirectory: fields[13], HomePane: fields[14], HomeSession: fields[15], HomeWindow: fields[16], LentPane: fields[17], SessionName: fields[18], Directory: fields[19]})
 	}
 	return result, nil
 }
@@ -77,7 +84,7 @@ func (c Client) Tagged(ctx context.Context, paneID, processID string) (Pane, err
 			return pane, nil
 		}
 	}
-	return Pane{}, fmt.Errorf("process terminal is missing or belongs to another process")
+	return Pane{}, ErrPaneMissing
 }
 
 // ShellCommand quotes every argument once for the terminal's shell. Passing

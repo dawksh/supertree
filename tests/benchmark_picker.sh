@@ -71,6 +71,7 @@ done > "$ST_STATE/sidebar/rows"
 python3 - "${ST_BENCH_BIN:-$ROOT/bin/st}" "$BENCH_REPOS" "$BENCH_BRANCHES" <<'PY'
 import math
 import os
+import platform
 import statistics
 import subprocess
 import sys
@@ -80,6 +81,13 @@ st = sys.argv[1]
 repos, branches = map(int, sys.argv[2:4])
 cwd = os.path.join(os.environ["ST_WORKTREE_ROOT"], "repo1", "branch1")
 print('Command overhead with fixture tmux/fzf; excludes terminal attach, drawing, and provider startup.')
+print(f'Host: {platform.platform()}; architecture: {platform.machine()}; logical CPUs: {os.cpu_count()}')
+for tool in (["git", "--version"], ["bash", "--version"], ["python3", "--version"]):
+    version = subprocess.check_output(tool, text=True).splitlines()[0]
+    print(version)
+print('tmux/fzf: deterministic fixtures, not real terminal sessions.')
+print('State: fresh fixture per invocation; initialized repo/sidebar caches; eight fresh CLI processes per case.')
+print('No cold-OS-cache eviction; home-new/layout-upgrade exercise simulated branches; p95 is the maximum of eight samples.')
 cases = (
     ("home existing", [], {"ST_BENCH_HOME_MODE": "existing"}),
     ("home new", [], {"ST_BENCH_HOME_MODE": "new"}),

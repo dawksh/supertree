@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -66,11 +67,12 @@ type Output struct {
 	CapturedAt string `json:"captured_at"`
 }
 type saved struct {
-	Process      workspace.Process `json:"process"`
-	Environment  map[string]string `json:"environment"`
-	RequestKey   string            `json:"request_key"`
-	RequestHash  string            `json:"request_hash"`
-	PaneIdentity string            `json:"pane_identity,omitempty"`
+	Process       workspace.Process `json:"process"`
+	Environment   map[string]string `json:"environment"`
+	RequestKey    string            `json:"request_key"`
+	RequestHash   string            `json:"request_hash"`
+	PaneIdentity  string            `json:"pane_identity,omitempty"`
+	LaunchPending bool              `json:"launch_pending,omitempty"`
 }
 type Manager struct {
 	mu       sync.Mutex
@@ -221,6 +223,9 @@ func (m *Manager) Start(ctx context.Context, args StartArgs) (workspace.Process,
 				if item.RequestHash != hash {
 					return workspace.Process{}, conflict("request ID was already used with different process arguments")
 				}
+				if item.LaunchPending || item.Process.State == "starting" {
+					item.Process.Error = "launch outcome is unknown; inspect the terminal before stopping or restarting"
+				}
 				return item.Process, nil
 			}
 		}
@@ -233,7 +238,7 @@ func (m *Manager) Start(ctx context.Context, args StartArgs) (workspace.Process,
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	item := saved{Process: workspace.Process{ID: ID("proc"), WorkspaceID: w.ID, Name: args.Name, Kind: args.Kind, Command: args.Command, EnvironmentKeys: keys, Directory: args.Directory, State: "starting", ExitCode: -1, Owned: true, CreatedAt: now()}, Environment: args.Environment, RequestKey: key, RequestHash: hash}
+	item := saved{Process: workspace.Process{ID: ID("proc"), WorkspaceID: w.ID, Name: args.Name, Kind: args.Kind, Command: args.Command, EnvironmentKeys: keys, Directory: args.Directory, State: "starting", ExitCode: -1, Owned: true, CreatedAt: now()}, Environment: args.Environment, RequestKey: key, RequestHash: hash, LaunchPending: true}
 	if err := m.save(ctx, &item); err != nil {
 		return item.Process, err
 	}
@@ -298,13 +303,18 @@ func (m *Manager) launch(ctx context.Context, item *saved) error {
 			err = lookup
 		} else {
 			apply(p, live)
+			item.LaunchPending = false
 		}
 	}
 	if err != nil {
 		p.State, p.Error = "failed", err.Error()
 		// This pane was created by this launch, never an adopted human pane.
 		if pane != "" {
-			_, _ = m.client.Run(context.WithoutCancel(ctx), "kill-pane", "-t", pane)
+			if _, cleanupErr := m.client.Run(context.WithoutCancel(ctx), "kill-pane", "-t", pane); cleanupErr == nil {
+				item.LaunchPending = false
+			}
+		} else {
+			item.LaunchPending = false
 		}
 	}
 	saveErr := m.save(context.WithoutCancel(ctx), item)
@@ -362,6 +372,18 @@ func apply(p *workspace.Process, live tmux.Pane) {
 	}
 }
 
+// A tagged pane may still be the launch placeholder, or a real program whose
+// acknowledgement was lost. Keep both intact and report the uncertainty.
+func reconcile(item *saved, live tmux.Pane) {
+	pending := item.LaunchPending || item.Process.State == "starting"
+	apply(&item.Process, live)
+	if pending {
+		item.LaunchPending = true
+		item.Process.State, item.Process.ExitCode = "starting", -1
+		item.Process.Error = "launch outcome is unknown; inspect the terminal before stopping or restarting"
+	}
+}
+
 func (m *Manager) Snapshot(ctx context.Context, workspaces ...workspace.Workspace) ([]workspace.Process, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -390,13 +412,13 @@ func (m *Manager) Snapshot(ctx context.Context, workspaces ...workspace.Workspac
 		if item.Process.Source == "observed" {
 			item.Process.State = "missing"
 			for _, pane := range panes {
-				if pane.ProcessID == "" && paneIdentity(m.client.Socket, pane) == item.PaneIdentity {
+				if pane.ProcessID == "" && pane.LentPane == "" && paneIdentity(m.client.Socket, pane) == item.PaneIdentity {
 					apply(&item.Process, pane)
 					break
 				}
 			}
 		} else if live, ok := byID[item.Process.ID]; ok {
-			apply(&item.Process, live)
+			reconcile(item, live)
 		} else if !slices.Contains([]string{"stopped", "failed", "missing"}, item.Process.State) {
 			item.Process.State = "missing"
 			item.Process.Error = "terminal no longer exists; restart explicitly"
@@ -445,6 +467,9 @@ func (m *Manager) Register(ctx context.Context, args RegisterArgs) (workspace.Pr
 	}
 	for _, pane := range panes {
 		if pane.ID == args.PaneID {
+			if pane.LentPane != "" {
+				return workspace.Process{}, conflict("pane is a borrowed-terminal placeholder")
+			}
 			if pane.ProcessID != "" {
 				return workspace.Process{}, conflict("pane is already registered")
 			}
@@ -506,6 +531,7 @@ func (m *Manager) Stop(ctx context.Context, args Target) (workspace.Process, err
 		return item.Process, err
 	}
 	item.Process.State, item.Process.Error = "stopped", ""
+	item.LaunchPending = false
 	err = m.save(context.WithoutCancel(ctx), &item)
 	return item.Process, err
 }
@@ -523,7 +549,11 @@ func (m *Manager) Restart(ctx context.Context, args Target) (workspace.Process, 
 	if !item.Process.Owned || len(item.Process.Command) == 0 {
 		return item.Process, conflict("registered external panes have no restart definition")
 	}
-	if pane, err := m.client.Tagged(ctx, item.Process.PaneID, item.Process.ID); err == nil {
+	pane, err := m.client.Tagged(ctx, item.Process.PaneID, item.Process.ID)
+	if err != nil && !errors.Is(err, tmux.ErrPaneMissing) {
+		return item.Process, err
+	}
+	if err == nil {
 		if !pane.Dead {
 			return item.Process, conflict("stop the running process before restarting")
 		}
@@ -535,6 +565,7 @@ func (m *Manager) Restart(ctx context.Context, args Target) (workspace.Process, 
 		return item.Process, err
 	}
 	item.Process.State, item.Process.Error = "starting", ""
+	item.LaunchPending = true
 	if err := m.save(ctx, &item); err != nil {
 		return item.Process, err
 	}
@@ -609,7 +640,7 @@ func (m *Manager) Move(ctx context.Context, args MoveArgs) (workspace.Process, e
 	if err != nil {
 		return item.Process, err
 	}
-	apply(&item.Process, live)
+	reconcile(&item, live)
 	err = m.save(ctx, &item)
 	return item.Process, err
 }

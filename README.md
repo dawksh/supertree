@@ -82,6 +82,12 @@ platforms and with releases that predate the Go assets.
 
 ### From source
 
+The separate [native terminal-stack experiment](experiments/terminal-stack/README.md)
+tests the feasibility of a native Go terminal multiplexer.
+It has its own Go module and explicit launcher; ordinary `st` and `./dev open`
+continue using the released workflow below. Its dependency and terminal acceptance
+gates remain separate from passing the existing product tests.
+
 Try this checkout through the usual worktree, agent, Neovim, and shell workflow.
 The Go controls are an optional addition to that workspace.
 
@@ -420,6 +426,11 @@ the background. `attach` changes focus only as an explicit terminal action;
 Exiting the core or UI leaves programs running. Restarting the daemon reconciles
 existing tagged panes and never automatically relaunches missing programs.
 Exited owned terminals retain their output and exit status until stopped/restarted.
+If a launch is interrupted before its outcome is saved, reconciliation keeps the
+terminal intact and reports `starting` with an uncertainty message. Inspect it
+with `attach` or `output`; explicitly stop it before restarting a live terminal.
+Retrying the same start request does not launch another copy. A failed tmux
+inspection also prevents restart until the core can confirm the terminal's state.
 
 ```sh
 ./dev next process move --process <id> --target <other-id> --direction vertical
@@ -433,6 +444,9 @@ options and enables attachment/output only. Stop and move require explicit
 registration; restart requires a known launch definition. IDs track the tmux
 server and pane process, so a reused pane number cannot target an older terminal.
 The controls label these existing terminals as read-only.
+Borrowed terminals retain their source workspace, tab name, and identity while
+attachment and output follow their current location. Source placeholders are
+navigation aids and do not appear as programs or accept process registration.
 
 Registration explicitly enables management of an existing terminal. Its original
 launch definition is unknown, so it cannot be restarted by the core.

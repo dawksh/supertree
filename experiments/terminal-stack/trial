@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Explicit, disposable upstream repair trial. Never changes either go.mod.
+set -euo pipefail
+experiment_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+trial_dir=$(mktemp -d /tmp/st-stack-unicode.XXXXXX)
+trap 'rm -rf -- "$trial_dir"' EXIT
+go -C "$experiment_dir" mod download github.com/charmbracelet/x/vt@v0.1.0
+upstream_dir=$(go -C "$experiment_dir" list -m -f '{{.Dir}}' github.com/charmbracelet/x/vt@v0.1.0)
+mkdir "$trial_dir/vt"
+cp -R "$upstream_dir/." "$trial_dir/vt"
+chmod -R u+w "$trial_dir/vt"
+patch -s -f -p1 -d "$trial_dir/vt" -i "$experiment_dir/patches/x-vt-unicode.patch"
+if [ "${1:-}" = upstream-test ]; then
+  shift
+  GOFLAGS= go -C "$trial_dir/vt" test "$@" ./...
+else
+  cp "$experiment_dir/go.mod" "$trial_dir/trial.mod"
+  cp "$experiment_dir/go.sum" "$trial_dir/trial.sum"
+  go -C "$experiment_dir" mod edit -modfile "$trial_dir/trial.mod" \
+    -replace "github.com/charmbracelet/x/vt=$trial_dir/vt"
+  export GOFLAGS="${GOFLAGS:-} -modfile=$trial_dir/trial.mod"
+  export ST_STACK_UNICODE_TRIAL=1
+  go -C "$experiment_dir" "$@"
+fi

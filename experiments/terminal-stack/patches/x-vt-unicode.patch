@@ -1,0 +1,115 @@
+--- a/emulator.go
++++ b/emulator.go
+@@ -45,6 +45,8 @@
+ 	// runes, so the segmenter can read the buffer without a conversion on
+ 	// every character.
+ 	grapheme []byte
++	// tail can be extended across Write boundaries until terminal state changes.
++	tail graphemeTail
+ 
+ 	// The ANSI parser to use.
+ 	parser *ansi.Parser
+@@ -155,6 +157,7 @@
+ 
+ // SetCell sets the current focused screen cell at the given x, y position.
+ func (e *Emulator) SetCell(x, y int, c *uv.Cell) {
++	e.tail = graphemeTail{}
+ 	e.scr.SetCell(x, y, c)
+ }
+ 
+@@ -228,6 +231,7 @@
+ 
+ // Resize resizes the terminal.
+ func (e *Emulator) Resize(width int, height int) {
++	e.tail = graphemeTail{}
+ 	x, y := e.scr.CursorPosition()
+ 	if e.atPhantom {
+ 		if x < width-1 {
+@@ -286,7 +290,12 @@
+ 	}
+ 
+ 	for i := range p {
+-		e.parser.Advance(p[i])
++		action := e.parser.Advance(p[i])
++		// A terminal operation is a hard boundary; UTF-8 continuation bytes
++		// are not. Do not undo cursor, erase, style or screen operations.
++		if action != parser.PrintAction && !(action == parser.CollectAction && e.parser.State() == parser.Utf8State) {
++			e.tail = graphemeTail{}
++		}
+ 		// Flush the last cluster once the whole slice is written. Every
+ 		// sequence handler flushes on its own way in, so a cluster only has to
+ 		// survive until either the next printable character extends it or the
+@@ -295,6 +304,9 @@
+ 			e.flushGrapheme()
+ 		}
+ 	}
++	if state := e.parser.State(); state != parser.GroundState && state != parser.Utf8State {
++		e.tail = graphemeTail{}
++	}
+ 	return len(p), nil
+ }
+ 
+--- a/utf8.go
++++ b/utf8.go
+@@ -16,6 +16,19 @@
+ 	return r >= ansi.SP && r < ansi.DEL
+ }
+ 
++// graphemeTail remembers only the last visible cluster and its write position.
++// It never defers display: callers can inspect the last cell after every Write.
++type graphemeTail struct {
++	valid    bool
++	content  string
++	screen   *Screen
++	cursor   Cursor
++	end      uv.Position
++	phantom  bool
++	single   int
++	lastChar rune
++}
++
+ // handlePrint handles printable characters.
+ //
+ // A character is held back rather than printed straight away, because the one
+@@ -24,6 +37,23 @@
+ // leaves the mark to become a zero-width cell of its own, which the next write
+ // or erase then destroys.
+ func (e *Emulator) handlePrint(r rune) {
++	if len(e.grapheme) == 0 && e.tail.valid {
++		tail := e.tail
++		e.tail = graphemeTail{}
++		if !printableASCII(r) && tail.screen == e.scr && tail.end == e.scr.cur.Position && tail.phantom == e.atPhantom {
++			joined := tail.content + string(r)
++			cluster, _ := ansi.FirstGraphemeCluster(joined, ansi.GraphemeWidth)
++			if len(cluster) == len(joined) {
++				// Repaint at the actual previous cell, not the advanced or
++				// phantom cursor. Any wrap/scroll already happened once.
++				e.scr.cur = tail.cursor
++				e.atPhantom = false
++				e.gsingle, e.lastChar = tail.single, tail.lastChar
++				e.grapheme = append(e.grapheme[:0], joined...)
++				return
++			}
++		}
++	}
+ 	// No ASCII character can extend the cluster before it: none of them is
+ 	// Extend, ZWJ, SpacingMark, Prepend, a regional indicator, or part of an
+ 	// Indic conjunct. So an ASCII character arriving is proof that whatever is
+@@ -90,6 +120,10 @@
+ 		x = 0
+ 	}
+ 
++	start := e.scr.cur
++	start.Position = uv.Pos(x, y)
++	tail := graphemeTail{valid: true, content: content, screen: e.scr, cursor: start, single: e.gsingle, lastChar: e.lastChar}
++
+ 	// A single shift applies to the next character, whatever that character
+ 	// turns out to be. Take it now, so it cannot leak onto the one after this
+ 	// when this is a cluster no charset has a mapping for.
+@@ -130,4 +164,6 @@
+ 
+ 	// NOTE: We don't reset the phantom state here, we handle it up above.
+ 	e.scr.setCursor(x, y, false)
++	tail.end, tail.phantom = e.scr.cur.Position, e.atPhantom
++	e.tail = tail
+ }
