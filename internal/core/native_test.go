@@ -90,7 +90,7 @@ func TestNativeCoreHasNoLegacyRuntimeObservationOrCommands(t *testing.T) {
 	defer c.Close()
 	r := nativeRegistry(t, c)
 	for _, definition := range r.Definitions() {
-		if !strings.HasPrefix(definition.Name, "buffer.") && definition.Name != "workspace.inspect" && definition.Name != "command.list" {
+		if !strings.HasPrefix(definition.Name, "buffer.") && !strings.HasPrefix(definition.Name, "terminal.") && definition.Name != "workspace.inspect" && definition.Name != "command.list" {
 			t.Fatalf("unexpected native command %s", definition.Name)
 		}
 	}

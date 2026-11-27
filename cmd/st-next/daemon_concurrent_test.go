@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dawksh/supertree/internal/rpc"
+	"github.com/dawksh/supertree/internal/terminal"
 	"github.com/dawksh/supertree/internal/workspace"
 	"golang.org/x/sys/unix"
 )
@@ -76,6 +77,42 @@ func TestConcurrentDaemonStartsConverge(t *testing.T) {
 
 // TestMain provides a controllable detached child for the parent-death regression.
 func TestMain(m *testing.M) {
+	if len(os.Args) == 3 && os.Args[1] == "_terminal-host" {
+		dir := os.Args[2]
+		unix.CloseOnExec(3)
+		lock := os.NewFile(3, "test-terminal-startup.lock")
+		defer lock.Close()
+		f, err := os.OpenFile(filepath.Join(dir, "started-count"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			os.Exit(2)
+		}
+		_, _ = f.WriteString("x")
+		f.Close()
+		if err = os.WriteFile(filepath.Join(dir, "child-ready"), nil, 0600); err != nil {
+			os.Exit(2)
+		}
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			if _, err = os.Stat(filepath.Join(dir, "release-start")); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				os.Exit(2)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if err = terminal.ServeReady(context.Background(), dir, func() { lock.Close() }); err != nil {
+			os.Exit(2)
+		}
+		os.Exit(0)
+	}
+	if os.Getenv("ST_TEST_TERMINAL_PARENT") == "1" {
+		_, err := terminal.StartHost(context.Background(), os.Getenv("ST_TEST_TERMINAL_STATE"), os.Args[0])
+		if err != nil {
+			os.Exit(2)
+		}
+		os.Exit(0)
+	}
 	if os.Getenv("ST_TEST_START_PARENT") == "1" {
 		base := os.Getenv("ST_TEST_START_BASE")
 		os.Unsetenv("ST_TEST_START_PARENT")

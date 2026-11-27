@@ -10,7 +10,16 @@ mkdir "$trial_dir/vt"
 cp -R "$upstream_dir/." "$trial_dir/vt"
 chmod -R u+w "$trial_dir/vt"
 patch -s -f -p1 -d "$trial_dir/vt" -i "$experiment_dir/patches/x-vt-unicode.patch"
-if [ "${1:-}" = upstream-test ]; then
+if [ "${1:-}" = verify-source ]; then
+  maintained_dir="$experiment_dir/../../third_party/x-vt"
+  for source in "$trial_dir/vt/"*.go "$trial_dir/vt/go.mod" "$trial_dir/vt/go.sum" "$trial_dir/vt/LICENSE"; do
+    case $source in *_test.go) continue;; esac
+    cmp "$source" "$maintained_dir/${source##*/}"
+  done
+  for source in "$maintained_dir/"*.go; do
+    cmp "$source" "$trial_dir/vt/${source##*/}"
+  done
+elif [ "${1:-}" = upstream-test ]; then
   shift
   GOFLAGS= go -C "$trial_dir/vt" test "$@" ./...
 else

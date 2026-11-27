@@ -53,6 +53,8 @@ const usage = `st next — experimental workspace core
   st next commands [--json]
   st next invoke <command> [<JSON object>]
   st next daemon <start|serve|status|stop> [--json]
+  st next terminal host <start|serve|status|stop> --state <private-dir>
+  st next terminal <ensure|inventory|inspect|screen|stop|restart> --state <private-dir>
   st next events [--workspace <id>] [--epoch <epoch> --after <sequence>] [--json]
   st next process <list|start|register|stop|restart|attach|move|output> [args]
   st next tui [--workspace <id>]
@@ -109,6 +111,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		return 1
+	}
+	if args[0] == "_terminal-host" || args[0] == "terminal" {
+		if offline {
+			return fail(&command.Error{Code: "invalid_arguments", Message: "native terminal operations require their explicit host namespace"})
+		}
+		var err error
+		if args[0] == "_terminal-host" {
+			err = terminalHostRole(ctx, args[1:])
+		} else {
+			err = terminalCommand(ctx, args[1:], os.Stdin, stdout)
+		}
+		if err != nil {
+			return fail(err)
+		}
+		return 0
 	}
 	if args[0] == "_agent" {
 		if err := agentWorkerCommand(ctx, args[1:]); err != nil {

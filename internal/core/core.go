@@ -131,8 +131,8 @@ func Open(ctx context.Context, options workspace.Options) (*Core, error) {
 	return open(ctx, options, false)
 }
 
-// OpenNative assembles only Git discovery, durable metadata, and subscriptions.
-// It does not construct legacy process, collaboration, or harness managers.
+// OpenNative assembles Git discovery, native commands, metadata and subscriptions.
+// It starts no host/program and constructs no legacy process or harness managers.
 func OpenNative(ctx context.Context, options workspace.Options) (*Core, error) {
 	return open(ctx, options, true)
 }

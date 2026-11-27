@@ -59,7 +59,7 @@ func ServeReady(ctx context.Context, options workspace.Options, socket string, l
 	return serveReady(ctx, options, socket, log, ready, false)
 }
 
-// ServeNative exposes the engine-independent native metadata assembly. Callers
+// ServeNative exposes the explicit native workspace assembly. Callers
 // must select a separate private state/socket namespace from the legacy daemon.
 // No installed CLI entrypoint is enabled by this internal assembly function.
 func ServeNative(ctx context.Context, options workspace.Options, socket string, log io.Writer) error {
@@ -171,7 +171,7 @@ func (s *server) status() Status {
 	tmuxSocket := s.options.TmuxSocket
 	if s.native {
 		tmuxSocket = ""
-		capabilities = append(capabilities, "native-workspace-metadata", "native-buffer-layouts-v1")
+		capabilities = append(capabilities, "native-workspace-metadata", "native-buffer-layouts-v1", "native-terminal-intents-v1")
 	}
 	return Status{command.SchemaVersion, true, os.Getpid(), s.socket, s.options.StateDir,
 		s.options.WorktreeRoot, tmuxSocket, snapshot.Epoch, snapshot.Sequence, capabilities}

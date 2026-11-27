@@ -96,8 +96,50 @@ revision and commit atomically; they never launch, stop or resize programs.
 Layouts use explicit node IDs, `columns`/`rows` axes and integer percentage ratios
 from 5 to 95, bounded to 64 KiB, 255 nodes and 32 levels per tree buffer. Focus,
 zoom and narrow-terminal fallback are computed without changing the saved layout.
-There is no native product entrypoint yet; normal launches retain their existing
-runtime and command set.
+The native terminal host is also opt-in. It owns PTYs, screens and bounded
+history in its own process; closing a client or restarting the workspace core
+does not stop its programs. Normal launches retain their existing runtime.
+
+Build the checkout with `./dev build`, then explicitly manage a private host:
+
+```sh
+bin/st-next terminal host start --state "$PWD/.dev/native-host"
+bin/st-next terminal inventory --state "$PWD/.dev/native-host"
+bin/st-next terminal host stop --state "$PWD/.dev/native-host" --force
+```
+
+The final command explicitly stops that host's programs, including unsaved
+editors. There is no native interactive attachment yet. Low-level `terminal
+ensure`, `inspect`, `screen`, `stop` and `restart` consume a single JSON request
+on stdin, with the host's current `epoch` and a `launch` or `target` object.
+`launch` contains `request_id`, `terminal_id`, `generation` and `definition`;
+`target` contains `terminal_id` and `generation`. Definitions contain
+`workspace_id`, an absolute `executable`, an `args` array, absolute `directory`,
+the complete `environment` map, `columns` and `rows`. Launch payloads travel over
+stdin/the socket and private state; inventory and host command lines omit argv
+and environment values.
+Repeat the same request ID/definition to reconcile a lost launch reply. A changed
+request conflicts; restart explicitly uses a fresh request ID, the same known
+definition and the next generation, after its old session has stopped.
+
+`core.OpenNative` exposes `terminal.launch`, `terminal.inspect`, `terminal.stop`
+and `terminal.restart`, using `StateDir/native-host`. Launch/restart first persist
+a controller intent, then reconcile the independent host's durable receipt.
+Neither core startup nor these inspections automatically starts a host. A new
+host epoch reports old active receipts as `lost` and never replays them; host
+crash/reboot does not preserve PTYs. Stop inventories the owned job-control
+session, including background groups; jobs that deliberately create another
+session are outside that scope. Stubborn jobs require explicit force.
+
+Initial host limits are eight retained terminal identities, 128 launch/restart
+receipts, 2–240 columns × 2–100 rows, 256 history lines, and 256 UTF-8 bytes per
+grapheme. Admission reserves 64 MiB per retained emulator (512 MiB per namespace);
+this is a conservative reservation, not a hard process-RSS or child-memory cap.
+Inspection returns at most 16 screen rows per request. The maintained emulator
+under `third_party/x-vt` is exactly the pinned upstream source plus the verified
+Unicode patch; its MIT notice is retained. `experiments/terminal-stack/trial
+verify-source` checks that provenance. The core now requires Go 1.24.2+; its
+legacy Bubble Tea UI retains v1, with cellbuf v0.0.14 for ANSI compatibility.
 
 Try this checkout through the usual worktree, agent, Neovim, and shell workflow.
 The Go controls are an optional addition to that workspace.

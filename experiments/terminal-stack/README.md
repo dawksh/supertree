@@ -241,8 +241,11 @@ Neither onboarding startup nor a model stub is evidence for this acceptance gate
 The selected Stage 4 stack is **creack/pty + the pinned x/vt with the bounded
 repair + matching Ultraviolet**. Keep the repair as a small versioned patch over
 the checksummed upstream source, retain its license, and rerun both upstream and
-driver suites on every update. The experimental launcher now uses this repair;
-the main Go module and installed product have not adopted it. Stage 2's live
+driver suites on every update. The experimental launcher uses this repair;
+Stage 4 now also builds the maintained source under `third_party/x-vt` into the
+explicit native host. `trial verify-source` compares every maintained source file,
+module file and license against this patched upstream copy. Ordinary `st` still
+uses its existing runtime, and installed releases are unchanged. Stage 2's live
 functional acceptance completed on November 28, 2026 (IST). Production host,
 recovery, compatibility completion and release gates remain in later stages.
 The bounded patch's SHA-256 is
@@ -328,9 +331,11 @@ bash scripts/test-local.sh -- env ST_STACK_OMZ_ROOT="$HOME/.oh-my-zsh" \
 | Ultraviolet | `v0.0.0-20260303162955-0b88c25f3fff` | MIT; Go 1.24.2; matches the emulator's dependency |
 | `x/sys`, `x/term` | `v0.41.0`, `v0.36.0` | BSD-3-Clause |
 
-`go.mod`/`go.sum` freeze the complete graph. The trial does not upgrade the main
-module's Go or Charm dependencies. Latest Ultraviolet was inspected separately;
-its newer toolchain requirement does not justify changing the main project.
+The nested `go.mod`/`go.sum` freeze the experiment graph independently. The trial
+does not edit the main module. Stage 4's explicit adoption raises the main Go
+minimum to 1.24.2 and uses cellbuf v0.0.14 to keep its Bubble Tea v1 UI compatible
+with ANSI v0.11.7. Latest Ultraviolet was inspected separately; its newer toolchain
+requirement does not justify adopting it.
 
 Known bounds: at most 3 displayed terminals; 2–240 columns by 2–100 rows per
 child; 8 MiB wire-message limit; 30 Hz full-snapshot polling; 64 KiB per text

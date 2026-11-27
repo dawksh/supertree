@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'experiments/terminal-stack/**'
+      - 'third_party/x-vt/**'
       - 'scripts/test-local.sh'
       - '.github/workflows/terminal-stack.yml'
   workflow_dispatch:
@@ -48,6 +49,7 @@ jobs:
       - name: Verify the explicit Unicode repair trial
         run: |
           bash -n experiments/terminal-stack/trial
+          bash scripts/test-local.sh -- experiments/terminal-stack/trial verify-source
           bash scripts/test-local.sh -- experiments/terminal-stack/trial upstream-test -race -timeout 180s
           bash scripts/test-local.sh -- experiments/terminal-stack/trial vet ./...
           bash scripts/test-local.sh -- experiments/terminal-stack/trial test -race -timeout 180s ./...

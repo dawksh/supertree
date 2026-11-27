@@ -16,6 +16,9 @@ func (c *Core) Registry(inspect func(context.Context, InspectArgs) (workspace.Sn
 	}
 	if c.native {
 		err = c.registerBuffers(r)
+		if err == nil {
+			err = c.registerTerminals(r)
+		}
 	} else {
 		for _, register := range []func(*command.Registry) error{c.RegisterProcesses, c.RegisterViews, c.RegisterLayouts, c.RegisterCollaboration} {
 			if err = register(r); err != nil {

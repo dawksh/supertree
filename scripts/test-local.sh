@@ -6,6 +6,70 @@ test_repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 test_real_tmux=$(command -v tmux || true)
 test_sandbox=$(mktemp -d /tmp/st-local-tests.XXXXXX)
 cleanup_test_sandbox() {
+  # Native hosts are addressed only through sockets created inside this runner.
+  # Ask them to stop owned jobs and wait for their process-held lock, never kill
+  # a PID taken from a file or touch the developer's normal host namespace.
+  if [ -d "$test_sandbox/native-sockets" ]; then
+    if ! python3 - "$test_sandbox" <<'NATIVE_CLEANUP'
+import fcntl, json, os, pathlib, socket, stat, struct, sys, time
+root = pathlib.Path(sys.argv[1]).resolve()
+def read_frame(conn):
+    def read(n):
+        result = bytearray()
+        while len(result) < n:
+            chunk = conn.recv(n - len(result))
+            if not chunk:
+                raise RuntimeError("test host closed before cleanup acknowledgement")
+            result.extend(chunk)
+        return result
+    size = struct.unpack("!I", read(4))[0]
+    if not 0 < size <= 8 * 1024 * 1024:
+        raise RuntimeError("invalid test host frame")
+    return json.loads(read(size))
+def send(conn, value):
+    data = json.dumps(value).encode()
+    conn.sendall(struct.pack("!I", len(data)) + data)
+for path in (root / "native-sockets").glob("*.sock"):
+    try:
+        info = path.lstat()
+        if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid():
+            raise RuntimeError("unsafe native test socket")
+        namespace = path.stem
+        if len(namespace) != 32 or any(c not in "0123456789abcdef" for c in namespace):
+            raise RuntimeError("unexpected native test socket")
+        with socket.socket(socket.AF_UNIX) as conn:
+            conn.settimeout(5)
+            conn.connect(str(path))
+            hello = dict(version=1, namespace=namespace, op="hello")
+            send(conn, hello)
+            status = read_frame(conn)["status"]
+            directory = pathlib.Path(status["directory"]).resolve()
+            if not directory.is_relative_to(root) or status["namespace"] != namespace or status["version"] != 1:
+                raise RuntimeError("native test host escaped runner scope")
+            lock = os.open(directory / "host.lock", os.O_RDWR | os.O_NOFOLLOW)
+            try:
+                send(conn, dict(hello, op="shutdown", epoch=status["epoch"], force=True))
+                if read_frame(conn).get("error"):
+                    raise RuntimeError("native test host refused cleanup")
+                deadline = time.monotonic() + 30
+                while True:
+                    try:
+                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        if time.monotonic() > deadline:
+                            raise RuntimeError("native test jobs did not stop")
+                        time.sleep(.02)
+            finally:
+                os.close(lock)
+    except (FileNotFoundError, ConnectionRefusedError):
+        pass
+NATIVE_CLEANUP
+    then
+      printf 'test-local: native cleanup failed; preserving private test state at %s\n' "$test_sandbox" >&2
+      return 1
+    fi
+  fi
   # Only sockets physically inside this runner's private directory are eligible.
   if [ -n "$test_real_tmux" ]; then
     for test_socket in "$test_sandbox"/sockets/*.sock; do
