@@ -3,13 +3,18 @@
 set -uo pipefail
 mode=test
 if [ "${1:-}" = --vet ]; then mode=vet; shift; fi
-log=$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/st-go-test.XXXXXX") || exit 1
-trap 'rm -f -- "$log"' EXIT
+log_dir=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/st-go-test.XXXXXX") || exit 1
+log="$log_dir/events"
+trap 'rm -rf -- "$log_dir"' EXIT
 # Prefix stdout and stderr independently, including CR-delimited lines, so raw
 # compiler or test output cannot issue workflow commands. Save raw JSON only
 # in a private temporary file for the annotation summarizer.
-exec 3> >(python3 scripts/go-test-log.py >&2)
+# Bash 3.2 cannot reliably wait for an exec process substitution. Use a normal
+# background child and private FIFO so its exit status remains observable.
+mkfifo "$log_dir/stderr" || exit 1
+python3 scripts/go-test-log.py < "$log_dir/stderr" >&2 &
 stderr_pid=$!
+exec 3> "$log_dir/stderr"
 "$@" 2>&3 | tee "$log" | python3 scripts/go-test-log.py
 statuses=("${PIPESTATUS[@]}")
 exec 3>&-

@@ -70,7 +70,11 @@ func TestWorkerAnswersApprovalWhileTurnStartIsPendingAndCheckpointsIdentity(t *t
 	if err := os.WriteFile(providerExe, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	options := WorkerOptions{ID: "agent_worker", WorkspaceID: "ws_worker", Directory: dir, Socket: filepath.Join(dir, "worker.sock"), StateFile: filepath.Join(dir, "state.json"), Executable: providerExe}
+	stateDir := filepath.Join(dir, "checkpoint")
+	if err := os.Mkdir(stateDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	options := WorkerOptions{ID: "agent_worker", WorkspaceID: "ws_worker", Directory: dir, Socket: filepath.Join(dir, "worker.sock"), StateFile: filepath.Join(stateDir, "state.json"), Executable: providerExe}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
@@ -145,10 +149,13 @@ func TestWorkerAnswersApprovalWhileTurnStartIsPendingAndCheckpointsIdentity(t *t
 	if json.Unmarshal(data, &checkpoint) != nil || checkpoint.Agent.ThreadID != "thread-worker" || checkpoint.Receipts["delivery_once"].TurnID != "turn-worker" {
 		t.Fatal("native identity or delivery receipt was not checkpointed")
 	}
-	if err := os.Remove(options.StateFile); err != nil {
+	// Move the whole storage directory atomically: a late checkpoint can race a
+	// remove-file/mkdir sequence and recreate the file before mkdir. The worker
+	// never recreates this directory, so the fault remains deterministic.
+	if err := os.Rename(stateDir, stateDir+"-saved"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(options.StateFile, 0700); err != nil {
+	if err := os.WriteFile(stateDir, []byte("not a directory"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := call(workerRequest{Method: "send", DeliveryID: "cannot-persist", Text: "must not reach provider", Actor: "human"}); err == nil || !(strings.Contains(err.Error(), "save pending delivery") || strings.Contains(err.Error(), "not ready")) {
