@@ -14,7 +14,15 @@ def bindings(lines):
             continue
         parts = shlex.split(line)
         assert parts[2] not in result, f'duplicate key: {parts[2]}'
-        result[parts[2]] = parts[3:]
+        action = parts[3:]
+        if action[:3] == ['set', '-g', '@st_last_key']:
+            label = action[3]
+            prefix = ['set', '-g', '@st_last_key', label, ';',
+                      'run-shell', '-b', '-d', '3', '-C',
+                      f"if -F '##{{==:##{{@st_last_key}},{label}}}' 'set -gu @st_last_key'", ';']
+            assert action[:12] == prefix, f'unexpected shortcut feedback: {parts[2]}'
+            action = action[12:]
+        result[parts[2]] = action
     return result
 
 current = bindings((root / 'tmux/supertree.conf').read_text().splitlines())
