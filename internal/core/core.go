@@ -43,7 +43,7 @@ func Registry(inspect func(context.Context, InspectArgs) (workspace.Snapshot, er
 		return nil, err
 	}
 	err := command.Register(r, command.Definition{Name: "workspace.inspect", Version: 1,
-		Description: "Inspect workspaces and tmux sessions, optionally selecting one workspace.",
+		Description: "Inspect workspaces and available runtime observations, optionally selecting one workspace.",
 		Effects:     []string{"read"}, Repeatable: true}, inspect)
 	return r, err
 }
@@ -112,6 +112,7 @@ type subscriber struct {
 }
 
 type Core struct {
+	native        bool
 	options       workspace.Options
 	store         *store.Store
 	refresh       sync.Mutex
@@ -127,24 +128,36 @@ type Core struct {
 }
 
 func Open(ctx context.Context, options workspace.Options) (*Core, error) {
+	return open(ctx, options, false)
+}
+
+// OpenNative assembles only Git discovery, durable metadata, and subscriptions.
+// It does not construct legacy process, collaboration, or harness managers.
+func OpenNative(ctx context.Context, options workspace.Options) (*Core, error) {
+	return open(ctx, options, true)
+}
+
+func open(ctx context.Context, options workspace.Options, native bool) (*Core, error) {
 	s, err := store.Open(options.StateDir)
 	if err != nil {
 		return nil, err
 	}
 	var token [16]byte
 	_, _ = rand.Read(token[:])
-	c := &Core{options: options, store: s, clients: make(map[*subscriber]bool),
+	c := &Core{native: native, options: options, store: s, clients: make(map[*subscriber]bool),
 		views: make(map[string]viewLease),
 		state: workspace.Snapshot{Epoch: fmt.Sprintf("%x", token)}}
-	c.processes = process.New(s, tmux.Client{Socket: options.TmuxSocket}, c.workspace)
-	c.processes.Defaults = map[string]string{"ST_STATE": options.StateDir, "ST_WORKTREE_ROOT": options.WorktreeRoot, "ST_NEXT_TMUX_SOCKET": options.TmuxSocket, "ST_NEXT_SOCKET": options.ControlSocket, "PATH": os.Getenv("PATH"), "HOME": os.Getenv("HOME")}
-	for _, key := range []string{"ST_DEV_ROOT", "ST_CONFIG", "ST_CONFDIR", "CODEX_HOME"} {
-		if value := os.Getenv(key); value != "" {
-			c.processes.Defaults[key] = value
+	if !native {
+		c.processes = process.New(s, tmux.Client{Socket: options.TmuxSocket}, c.workspace)
+		c.processes.Defaults = map[string]string{"ST_STATE": options.StateDir, "ST_WORKTREE_ROOT": options.WorktreeRoot, "ST_NEXT_TMUX_SOCKET": options.TmuxSocket, "ST_NEXT_SOCKET": options.ControlSocket, "PATH": os.Getenv("PATH"), "HOME": os.Getenv("HOME")}
+		for _, key := range []string{"ST_DEV_ROOT", "ST_CONFIG", "ST_CONFDIR", "CODEX_HOME"} {
+			if value := os.Getenv(key); value != "" {
+				c.processes.Defaults[key] = value
+			}
 		}
+		c.collaboration = collab.New(s, c.workspace, c.processes.Output)
+		c.agents = agent.New(s, c.processes, c.collaboration, options.StateDir, c.workspace)
 	}
-	c.collaboration = collab.New(s, c.workspace, c.processes.Output)
-	c.agents = agent.New(s, c.processes, c.collaboration, options.StateDir, c.workspace)
 	if err := c.Refresh(ctx, options.Directory, Origin{Actor: "system"}); err != nil {
 		s.Close()
 		return nil, err
@@ -184,7 +197,11 @@ func (c *Core) refreshState(ctx context.Context, directory string, origin Origin
 	}
 	options.Repositories = paths
 	options.Directory = directory
-	next, err := workspace.Discover(ctx, options)
+	discover := workspace.Discover
+	if c.native {
+		discover = workspace.DiscoverGit
+	}
+	next, err := discover(ctx, options)
 	if err != nil {
 		return err
 	}
@@ -194,21 +211,23 @@ func (c *Core) refreshState(ctx context.Context, directory string, origin Origin
 	c.mu.Lock()
 	c.observed = slices.Clone(next.Workspaces)
 	c.mu.Unlock()
-	next.Processes, err = c.processes.Snapshot(ctx, next.Workspaces...)
-	if err != nil {
-		return err
-	}
-	shared, err := c.collaboration.Snapshot(ctx)
-	if err != nil {
-		return err
-	}
-	next.Tasks, next.Contexts, next.Questions = shared.Tasks, shared.Contexts, shared.Questions
-	next.Agents, err = c.agents.Snapshot(ctx)
-	if err != nil {
-		return err
-	}
-	for _, a := range next.Agents {
-		next.Questions = append(next.Questions, a.Questions...)
+	if !c.native {
+		next.Processes, err = c.processes.Snapshot(ctx, next.Workspaces...)
+		if err != nil {
+			return err
+		}
+		shared, err := c.collaboration.Snapshot(ctx)
+		if err != nil {
+			return err
+		}
+		next.Tasks, next.Contexts, next.Questions = shared.Tasks, shared.Contexts, shared.Questions
+		next.Agents, err = c.agents.Snapshot(ctx)
+		if err != nil {
+			return err
+		}
+		for _, a := range next.Agents {
+			next.Questions = append(next.Questions, a.Questions...)
+		}
 	}
 	// Administrative identity keys are persistence details, never client state.
 	for i := range next.Workspaces {
@@ -227,26 +246,29 @@ func (c *Core) refreshState(ctx context.Context, directory string, origin Origin
 		}
 		event := Event{command.SchemaVersion, next.Epoch, next.Sequence, "workspace.changed", next.CapturedAt,
 			changedWorkspaces(c.state, next), origin.Actor, origin.RequestID}
-		c.history = append(c.history, event)
-		if len(c.history) > HistoryLimit {
-			c.history = c.history[len(c.history)-HistoryLimit:]
-		}
-		for client := range c.clients {
-			if client.workspaceID != "" && len(event.WorkspaceIDs) > 0 && !slices.Contains(event.WorkspaceIDs, client.workspaceID) {
-				continue
-			}
-			select {
-			case client.events <- event:
-			default:
-				// Never block reconciliation on a slow consumer. The transport
-				// reports a gap and the next connection must resnapshot.
-				close(client.events)
-				delete(c.clients, client)
-			}
-		}
+		c.publish(event)
 	}
 	c.state = next
 	return nil
+}
+
+// publish runs with mu held and never blocks metadata reconciliation on a client.
+func (c *Core) publish(event Event) {
+	c.history = append(c.history, event)
+	if len(c.history) > HistoryLimit {
+		c.history = c.history[len(c.history)-HistoryLimit:]
+	}
+	for client := range c.clients {
+		if client.workspaceID != "" && len(event.WorkspaceIDs) > 0 && !slices.Contains(event.WorkspaceIDs, client.workspaceID) {
+			continue
+		}
+		select {
+		case client.events <- event:
+		default:
+			close(client.events)
+			delete(c.clients, client)
+		}
+	}
 }
 
 func changedWorkspaces(old, next workspace.Snapshot) []string {
@@ -343,8 +365,10 @@ func (c *Core) Poll(ctx context.Context, interval time.Duration, report func(err
 	watchCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var watch sync.WaitGroup
-	watch.Add(1)
-	go func() { defer watch.Done(); c.watchTmux(watchCtx, kick) }()
+	if !c.native {
+		watch.Add(1)
+		go func() { defer watch.Done(); c.watchTmux(watchCtx, kick) }()
+	}
 	defer watch.Wait()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

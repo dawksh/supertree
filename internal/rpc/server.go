@@ -40,6 +40,7 @@ type streamSlot struct {
 }
 
 type server struct {
+	native  bool
 	core    *core.Core
 	r       *command.Registry
 	options workspace.Options
@@ -55,6 +56,17 @@ func Serve(ctx context.Context, options workspace.Options, socket string, log io
 
 // ServeReady calls ready after initialization, before accepting queued clients.
 func ServeReady(ctx context.Context, options workspace.Options, socket string, log io.Writer, ready func()) error {
+	return serveReady(ctx, options, socket, log, ready, false)
+}
+
+// ServeNative exposes the engine-independent native metadata assembly. Callers
+// must select a separate private state/socket namespace from the legacy daemon.
+// No installed CLI entrypoint is enabled by this internal assembly function.
+func ServeNative(ctx context.Context, options workspace.Options, socket string, log io.Writer) error {
+	return serveReady(ctx, options, socket, log, nil, true)
+}
+
+func serveReady(ctx context.Context, options workspace.Options, socket string, log io.Writer, ready func(), native bool) error {
 	options.ControlSocket = socket
 	endpoint, err := Listen(options.StateDir, socket)
 	if err != nil {
@@ -62,31 +74,23 @@ func ServeReady(ctx context.Context, options workspace.Options, socket string, l
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	c, err := core.Open(ctx, options)
+	open := core.Open
+	if native {
+		open = core.OpenNative
+	}
+	c, err := open(ctx, options)
 	if err != nil {
 		endpoint.Close()
 		return err
 	}
-	s := &server{core: c, options: options, socket: socket, stop: cancel}
-	s.r, err = core.Registry(func(ctx context.Context, args core.InspectArgs) (workspace.Snapshot, error) {
+	s := &server{native: native, core: c, options: options, socket: socket, stop: cancel}
+	s.r, err = c.Registry(func(ctx context.Context, args core.InspectArgs) (workspace.Snapshot, error) {
 		meta, _ := ctx.Value(metaKey{}).(Meta)
 		if err := c.Refresh(ctx, meta.Directory, core.Origin{Actor: meta.Actor, RequestID: meta.RequestID}); err != nil {
 			return workspace.Snapshot{}, err
 		}
 		return c.Snapshot(args.WorkspaceID)
 	})
-	if err == nil {
-		err = c.RegisterProcesses(s.r)
-	}
-	if err == nil {
-		err = c.RegisterViews(s.r)
-	}
-	if err == nil {
-		err = c.RegisterLayouts(s.r)
-	}
-	if err == nil {
-		err = c.RegisterCollaboration(s.r)
-	}
 	if err == nil {
 		err = command.Register(s.r, command.Definition{Name: "daemon.status", Version: 1,
 			Description: "Inspect daemon identity, protocol capabilities and current sequence.", Effects: []string{"read"}, Repeatable: true},
@@ -163,9 +167,14 @@ func ServeReady(ctx context.Context, options workspace.Options, socket string, l
 
 func (s *server) status() Status {
 	snapshot, _ := s.core.Snapshot("")
+	capabilities := []string{"jsonrpc-2.0", "durable-workspace-identity", "event-replay", "resnapshot"}
+	tmuxSocket := s.options.TmuxSocket
+	if s.native {
+		tmuxSocket = ""
+		capabilities = append(capabilities, "native-workspace-metadata", "native-buffer-layouts-v1")
+	}
 	return Status{command.SchemaVersion, true, os.Getpid(), s.socket, s.options.StateDir,
-		s.options.WorktreeRoot, s.options.TmuxSocket, snapshot.Epoch, snapshot.Sequence,
-		[]string{"jsonrpc-2.0", "durable-workspace-identity", "event-replay", "resnapshot"}}
+		s.options.WorktreeRoot, tmuxSocket, snapshot.Epoch, snapshot.Sequence, capabilities}
 }
 
 func (s *server) execute(ctx context.Context, req Request) (Response, bool) {
@@ -174,7 +183,7 @@ func (s *server) execute(ctx context.Context, req Request) (Response, bool) {
 	}
 	if req.Method != "daemon.status" && req.Method != "daemon.stop" &&
 		((req.Meta.WorktreeRoot != "" && req.Meta.WorktreeRoot != s.options.WorktreeRoot) ||
-			(req.Meta.TmuxSocket != "" && req.Meta.TmuxSocket != s.options.TmuxSocket)) {
+			(!s.native && req.Meta.TmuxSocket != "" && req.Meta.TmuxSocket != s.options.TmuxSocket)) {
 		return failure(req.ID, &command.Error{Code: "configuration_mismatch", Message: "daemon uses different workspace or tmux settings; stop it or select a separate ST_STATE"}), false
 	}
 	ctx = command.WithOrigin(ctx, command.Origin{Actor: req.Meta.Actor, RequestID: req.Meta.RequestID})

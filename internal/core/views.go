@@ -42,6 +42,9 @@ type Views struct {
 }
 
 func (c *Core) RegisterViews(r *command.Registry) error {
+	if err := c.requireLegacy(); err != nil {
+		return err
+	}
 	if err := registerProcess(c, r, "view.open", "Register a connected TUI client; returns an inspectable semantic view.", []string{"view.open"}, func(ctx context.Context, args ViewOpen) (workspace.View, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()

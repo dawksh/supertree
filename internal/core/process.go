@@ -39,6 +39,9 @@ func registerProcess[A, R any](c *Core, r *command.Registry, name, description s
 }
 
 func (c *Core) RegisterProcesses(r *command.Registry) error {
+	if err := c.requireLegacy(); err != nil {
+		return err
+	}
 	if err := registerProcess(c, r, "process.list", "List named processes, optionally in one workspace.", []string{"read"}, func(ctx context.Context, args InspectArgs) (ProcessList, error) {
 		if err := c.Refresh(ctx, "", command.Caller(ctx)); err != nil {
 			return ProcessList{}, err

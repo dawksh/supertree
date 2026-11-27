@@ -75,12 +75,13 @@ type Snapshot struct {
 	Agents        []Agent        `json:"agents"`
 }
 
-// Discover includes registered repositories and the current checkout. All Git
-// worktrees are visible; Managed distinguishes linked trees under Supertree's root.
-// IDs are deterministic canonical-path hashes until durable identity is introduced.
-func Discover(ctx context.Context, o Options) (Snapshot, error) {
+// DiscoverGit includes registered repositories and the current checkout without
+// consulting a terminal runtime. It never invokes tmux or fzf. IDs are canonical
+// path candidates; store.Reconcile supplies the existing durable identity.
+func DiscoverGit(ctx context.Context, o Options) (Snapshot, error) {
 	snapshot := Snapshot{SchemaVersion: command.SchemaVersion, CapturedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		StateDir: canonical(o.StateDir), WorktreeRoot: canonical(o.WorktreeRoot),
+		TmuxStatus: "disabled",
 		Workspaces: []Workspace{}, Sessions: []tmux.Session{}, Warnings: []Warning{}, Processes: []Process{}, Views: []View{}, Tasks: []Task{}, Contexts: []ContextItem{}, Questions: []Question{}, Agents: []Agent{}}
 	if _, err := exec.LookPath("git"); err != nil {
 		return snapshot, &command.Error{Code: "dependency_missing", Message: "workspace discovery requires git on PATH"}
@@ -168,6 +169,17 @@ func Discover(ctx context.Context, o Options) (Snapshot, error) {
 				IdentityKey: fileIdentity(gitDirectory(tree.path, tree.bare)), RepositoryKey: fileIdentity(repoDir),
 			})
 		}
+	}
+	sort.Slice(snapshot.Workspaces, func(i, j int) bool { return snapshot.Workspaces[i].Path < snapshot.Workspaces[j].Path })
+	return snapshot, nil
+}
+
+// Discover preserves legacy Git plus tmux observation. Native assembly selects
+// DiscoverGit explicitly instead of treating missing tmux as a runtime fallback.
+func Discover(ctx context.Context, o Options) (Snapshot, error) {
+	snapshot, err := DiscoverGit(ctx, o)
+	if err != nil {
+		return snapshot, err
 	}
 	tmuxCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	snapshot.Sessions, snapshot.TmuxStatus, err = tmux.Inspect(tmuxCtx, o.TmuxSocket)

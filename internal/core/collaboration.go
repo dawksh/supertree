@@ -23,6 +23,9 @@ type Agents struct {
 }
 
 func (c *Core) RegisterCollaboration(r *command.Registry) error {
+	if err := c.requireLegacy(); err != nil {
+		return err
+	}
 	registrations := []func() error{
 		func() error {
 			return registerProcess(c, r, "context.share", "Capture file lines, diff, output, notes or selected context. Target harness saves a shared request; target paired delivers to its native agent. Preview sends nothing.", []string{"context.write", "question.write", "agent.send"}, c.agents.Share)

@@ -69,6 +69,9 @@ func checkLayoutShape(data []byte) error {
 }
 
 func (c *Core) RegisterLayouts(r *command.Registry) error {
+	if err := c.requireLegacy(); err != nil {
+		return err
+	}
 	if err := command.Register(r, command.Definition{Name: "layout.inspect", Version: 1, Description: "Inspect the saved desired layout (not the live tmux layout).", Effects: []string{"read"}, Repeatable: true}, func(ctx context.Context, args InspectArgs) (Layout, error) {
 		if args.WorkspaceID == "" {
 			return Layout{}, &command.Error{Code: "invalid_arguments", Message: "workspace_id is required"}

@@ -88,6 +88,17 @@ It has its own Go module and explicit launcher; ordinary `st` and `./dev open`
 continue using the released workflow below. Its dependency and terminal acceptance
 gates remain separate from passing the existing product tests.
 
+The native metadata foundation is internal: `core.OpenNative` and `rpc.ServeNative`
+select Git-only discovery and versioned `buffer.inspect`/`buffer.save` commands.
+They preserve per-worktree tab order, split arrangements, terminal ownership and
+loan placeholders across core restarts. Compound saves require every affected
+revision and commit atomically; they never launch, stop or resize programs.
+Layouts use explicit node IDs, `columns`/`rows` axes and integer percentage ratios
+from 5 to 95, bounded to 64 KiB, 255 nodes and 32 levels per tree buffer. Focus,
+zoom and narrow-terminal fallback are computed without changing the saved layout.
+There is no native product entrypoint yet; normal launches retain their existing
+runtime and command set.
+
 Try this checkout through the usual worktree, agent, Neovim, and shell workflow.
 The Go controls are an optional addition to that workspace.
 
