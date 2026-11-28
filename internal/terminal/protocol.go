@@ -122,6 +122,10 @@ func ServeReady(ctx context.Context, dir string, ready func()) error {
 					return
 				}
 				hello = true
+				if req.Op == "attach" {
+					h.serveAttachment(ctx, conn, req)
+					return
+				}
 				result, shutdown := h.handle(ctx, req)
 				err := writeFrame(conn, result)
 				if shutdown {
@@ -139,43 +143,17 @@ func ServeReady(ctx context.Context, dir string, ready func()) error {
 // Call opens a fresh authenticated-by-filesystem connection. A lost mutation
 // reply is returned to the caller; Call never retries an operation itself.
 func Call(ctx context.Context, dir string, req Request) (Response, error) {
-	dir, err := privateDir(dir, false)
+	conn, hello, err := dialHost(ctx, dir)
 	if err != nil {
 		return Response{}, err
-	}
-	if err = testScope(dir); err != nil {
-		return Response{}, err
-	}
-	conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "unix", socketPath(dir))
-	if err != nil {
-		return Response{}, failure("host_unavailable", "native terminal host is unavailable; start or inspect it explicitly")
 	}
 	defer conn.Close()
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
-	deadline := time.Now().Add(5 * time.Second)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
-	}
-	_ = conn.SetDeadline(deadline)
-	ns := namespace(dir)
-	if err = writeFrame(conn, Request{Version: ProtocolVersion, Namespace: ns, Op: "hello"}); err != nil {
-		return Response{}, err
-	}
-	var hello Response
-	if err = readFrame(conn, &hello, MaxMessage); err != nil {
-		return Response{}, err
-	}
-	if hello.Error != nil {
-		return hello, hello.Error
-	}
-	if hello.Status == nil || hello.Status.Version != ProtocolVersion || hello.Status.Namespace != ns {
-		return Response{}, failure("protocol_mismatch", "terminal host handshake is invalid")
-	}
 	if req.Op == "hello" {
-		return hello, nil
+		return Response{Status: hello}, nil
 	}
-	req.Version, req.Namespace = ProtocolVersion, ns
+	req.Version, req.Namespace = ProtocolVersion, hello.Namespace
 	if err = writeFrame(conn, req); err != nil {
 		return Response{}, failure("delivery_uncertain", "host request delivery is uncertain; reconcile inventory")
 	}
@@ -187,4 +165,47 @@ func Call(ctx context.Context, dir string, req Request) (Response, error) {
 		return result, result.Error
 	}
 	return result, nil
+}
+
+func dialHost(ctx context.Context, dir string) (net.Conn, *Status, error) {
+	dir, err := privateDir(dir, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err = testScope(dir); err != nil {
+		return nil, nil, err
+	}
+	conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "unix", socketPath(dir))
+	if err != nil {
+		return nil, nil, failure("host_unavailable", "native terminal host is unavailable; start or inspect it explicitly")
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			conn.Close()
+		}
+	}()
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+	deadline := time.Now().Add(5 * time.Second)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	_ = conn.SetDeadline(deadline)
+	ns := namespace(dir)
+	if err = writeFrame(conn, Request{Version: ProtocolVersion, Namespace: ns, Op: "hello"}); err != nil {
+		return nil, nil, err
+	}
+	var hello Response
+	if err = readFrame(conn, &hello, MaxMessage); err != nil {
+		return nil, nil, err
+	}
+	if hello.Error != nil {
+		return nil, nil, hello.Error
+	}
+	if hello.Status == nil || hello.Status.Version != ProtocolVersion || hello.Status.Namespace != ns {
+		return nil, nil, failure("protocol_mismatch", "terminal host handshake is invalid")
+	}
+	ok = true
+	return conn, hello.Status, nil
 }

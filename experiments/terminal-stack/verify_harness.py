@@ -30,7 +30,7 @@ class QuotaBlocked(RuntimeError):
 class HarnessCheck:
     def __init__(self, args):
         self.args = args
-        self.root = Path(tempfile.mkdtemp(prefix="st-stack-harness-", dir="/tmp")).resolve()
+        self.root = Path(tempfile.mkdtemp(prefix="st-stack-harness-", dir=self.fixture_parent())).resolve()
         self.remote = bool(args.ssh)
         self.base = args.remote_directory if self.remote else str(self.root)
         self.state = self.base + "/host"
@@ -52,6 +52,18 @@ class HarnessCheck:
         self.env["ST_AGENT_TOOLS"] = "0"
         self.ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
                     "-o", "StrictHostKeyChecking=yes", "-o", "UpdateHostKeys=no", "-o", "ForwardAgent=no", "-S", "none"]
+
+    def fixture_parent(self):
+        return "/tmp"
+
+    def attach_command(self):
+        return [self.binary, "attach", "-state", self.state]
+
+    def prepare_view(self):
+        self.send(b"\x1b1\x1bz")
+
+    def desktop_runtime(self):
+        return self.root
 
     def run(self, command):
         if self.remote:
@@ -128,7 +140,7 @@ class HarnessCheck:
         raise RuntimeError("Timed out: " + label + "; private screen: " + str(capture))
 
     def attach(self):
-        command = [self.binary, "attach", "-state", self.state]
+        command = self.attach_command()
         if self.remote:
             command = self.ssh + ["-tt", "--", self.args.ssh, "TERM=xterm-256color " + shlex.join(command)]
         child, fd = pty.fork()
@@ -139,7 +151,7 @@ class HarnessCheck:
         os.set_blocking(fd, False)
         self.start_reader()
         time.sleep(.3)
-        self.send(b"\x1b1\x1bz")
+        self.prepare_view()
 
     def drain(self):
         # The reader must run while a slow SSH inspection is in flight too.
@@ -227,12 +239,26 @@ class HarnessCheck:
         self.stop_reader()
         os.close(self.fd)
 
+    def compose_initial_draft(self):
+        for attempt in range(2):
+            self.send("Reply with STAGE2 and COMPLETE joined by a hyphen. Do not call tools.", paste=True)
+            time.sleep(.3)
+            self.send(b"\x0a")  # Legacy Ctrl-j: native Codex newline, not submit.
+            self.send("Literal test text: 界 e\u0301 👩\u200d💻", paste=True)
+            text = self.wait(lambda text: "Trust this folder?" in text or (
+                "Reply with STAGE2" in text and "Literal test text" in text and "STAGE2-COMPLETE" not in text), "multiline draft or folder access")
+            if "Trust this folder?" not in text:
+                break
+            self.trust_fixture(text)
+            self.wait(lambda text: "Trust this folder?" not in text, "composer after deferred folder access")
+            # Access may appear after the first ready frame, consuming draft
+            # keystrokes. No model submission has occurred in this phase.
+            self.send(b"\x03")
+        else:
+            raise RuntimeError("folder access repeatedly interrupted the disposable draft")
+
     def check(self):
-        self.send("Reply with STAGE2 and COMPLETE joined by a hyphen. Do not call tools.", paste=True)
-        time.sleep(.3)
-        self.send(b"\x0a")  # Legacy Ctrl-j: native Codex newline, not submit.
-        self.send("Literal test text: 界 e\u0301 👩\u200d💻", paste=True)
-        self.wait(lambda text: "Reply with STAGE2" in text and "Literal test text" in text and "STAGE2-COMPLETE" not in text, "multiline draft")
+        self.compose_initial_draft()
         self.observe("multiline_and_unicode_paste_without_submit")
         time.sleep(.3)
         self.send(b"\r")
@@ -240,6 +266,14 @@ class HarnessCheck:
         text=self.wait(lambda text:"Trust this folder?" in text or "STAGE2-COMPLETE" in text,"first submission or folder access")
         if "Trust this folder?" in text:
             self.trust_fixture(text)
+            text = self.wait(lambda text: "Trust this folder?" not in text and (
+                "STAGE2-COMPLETE" in text or re.search(r"^\s*› Reply with STAGE2", text, re.M)),
+                "composer or reply after folder access")
+            # Newer harness versions restore the draft after accepting folder
+            # access. Submit only when that exact draft is still in the composer;
+            # never repeat a submission merely because a reply is taking time.
+            if re.search(r"^\s*› Reply with STAGE2", text, re.M):
+                self.send(b"\r")
         self.wait(lambda text: "STAGE2-COMPLETE" in text, "real model submission")
         self.observe("real_model_submission")
         self.send("Produce exactly sixty lines. Each line is ROW, a hyphen, and that line's three-digit number from 001 through 060. No tools or extra text.", paste=True)
@@ -323,7 +357,11 @@ class DesktopHarnessCheck(HarnessCheck):
         for key in list(self.gui_env):
             if key.startswith(("KITTY_", "WEZTERM_")):
                 self.gui_env.pop(key)
-        self.gui_env.update(XDG_RUNTIME_DIR=str(self.root), XDG_CACHE_HOME=str(self.root / "cache"), XDG_CONFIG_HOME=str(self.root / "config"))
+        runtime = self.desktop_runtime()
+        gui_home = runtime / "home"
+        gui_home.mkdir(mode=0o700, exist_ok=True)
+        self.gui_env["HOME"] = str(gui_home)
+        self.gui_env.update(XDG_RUNTIME_DIR=str(runtime), XDG_DATA_HOME=str(runtime / "data"), XDG_CACHE_HOME=str(runtime / "cache"), XDG_CONFIG_HOME=str(runtime / "config"))
         if self.args.outer == "wezterm":
             self.outer = self.args.outer_bin or shutil.which("wezterm")
             gui = str(Path(self.outer).resolve().with_name("wezterm-gui"))
@@ -338,9 +376,9 @@ class DesktopHarnessCheck(HarnessCheck):
                        "-o", "macos_quit_when_last_window_closed=yes",
                        "-o", "remember_window_size=no", "-o", "initial_window_width=140c", "-o", "initial_window_height=40c", "--directory", str(self.root)]
             pane_var, socket_var = "KITTY_WINDOW_ID", "KITTY_LISTEN_ON"
-        script = 'umask 077\nprintf "%s\\n" "$' + pane_var + '" > "$1/pane"\nprintf "%s\\n" "$' + socket_var + '" > "$1/socket"\nexec "$2" attach -state "$3"'
+        script = 'umask 077\nfixture=$1\nshift\nprintf "%s\\n" "$' + pane_var + '" > "$fixture/pane"\nprintf "%s\\n" "$' + socket_var + '" > "$fixture/socket"\nexec "$@"'
         self.gui_log = (self.root / "gui.log").open("ab")
-        self.gui = subprocess.Popen(command + ["/bin/sh", "-c", script, "check", str(self.root), self.binary, self.state], env=self.gui_env, stdout=self.gui_log, stderr=self.gui_log)
+        self.gui = subprocess.Popen(command + ["/bin/sh", "-c", script, "check", str(self.root), *self.attach_command()], env=self.gui_env, stdout=self.gui_log, stderr=self.gui_log)
         self.child = self.gui.pid
         deadline = time.monotonic() + 20
         while True:
@@ -353,7 +391,7 @@ class DesktopHarnessCheck(HarnessCheck):
             time.sleep(.1)
         self.gui_env["WEZTERM_UNIX_SOCKET"] = self.gui_socket
         time.sleep(.3)
-        self.send(b"\x1b1\x1bz")
+        self.prepare_view()
 
     def gui_command(self, name, *args, data=None):
         if self.args.outer == "wezterm":
@@ -399,7 +437,7 @@ class DesktopHarnessCheck(HarnessCheck):
             self.child = None
 
 
-def main():
+def main(pty_check=HarnessCheck, desktop_check=DesktopHarnessCheck):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--authenticated", action="store_true")
     parser.add_argument("--codex-home", default="")
@@ -421,7 +459,7 @@ def main():
         parser.error("--allow-low-quota requires an explicit --model")
     if args.ssh and args.outer != "pty":
         parser.error("SSH check owns its local PTY; GUI checks run locally")
-    check = HarnessCheck(args) if args.outer == "pty" else DesktopHarnessCheck(args)
+    check = pty_check(args) if args.outer == "pty" else desktop_check(args)
     try:
         check.start()
         check.check()

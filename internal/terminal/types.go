@@ -10,6 +10,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	uv "github.com/charmbracelet/ultraviolet"
+
 	"github.com/dawksh/supertree/internal/command"
 )
 
@@ -18,7 +20,7 @@ const (
 	MaxTerminals    = 8
 	MaxReceipts     = 128
 	MaxMessage      = 8 << 20
-	MaxRequest      = 128 << 10
+	MaxRequest      = 512 << 10 // includes JSON escaping of a 64 KiB paste.
 	MaxDefinition   = 32 << 10
 	MaxColumns      = 240
 	MaxRows         = 100
@@ -110,13 +112,43 @@ type Request struct {
 	Force     bool    `json:"force,omitempty"`
 	Row       int     `json:"row,omitempty"`
 	Rows      int     `json:"rows,omitempty"`
+	ReadOnly  bool    `json:"read_only,omitempty"`
+	Input     *Input  `json:"input,omitempty"`
+	Resize    *Resize `json:"resize,omitempty"`
+}
+
+type Input struct {
+	Lease  string  `json:"lease"`
+	Number uint64  `json:"number"`
+	Key    *uv.Key `json:"key,omitempty"`
+	Text   string  `json:"text,omitempty"`
+	Paste  bool    `json:"paste,omitempty"`
+}
+type Resize struct {
+	Lease   string `json:"lease"`
+	Number  uint64 `json:"number"`
+	Columns int    `json:"columns"`
+	Rows    int    `json:"rows"`
+}
+type Attached struct {
+	Info     Info   `json:"info"`
+	Lease    string `json:"lease,omitempty"`
+	ReadOnly bool   `json:"read_only"`
+}
+type Ack struct {
+	Number   uint64         `json:"number"`
+	Geometry uint64         `json:"geometry"`
+	Error    *command.Error `json:"error,omitempty"`
 }
 
 type Response struct {
-	Status *Status        `json:"status,omitempty"`
-	Info   *Info          `json:"info,omitempty"`
-	Screen *Screen        `json:"screen,omitempty"`
-	Error  *command.Error `json:"error,omitempty"`
+	Event    string         `json:"event,omitempty"`
+	Attached *Attached      `json:"attached,omitempty"`
+	Ack      *Ack           `json:"ack,omitempty"`
+	Status   *Status        `json:"status,omitempty"`
+	Info     *Info          `json:"info,omitempty"`
+	Screen   *Screen        `json:"screen,omitempty"`
+	Error    *command.Error `json:"error,omitempty"`
 }
 
 func failure(code, message string) error { return &command.Error{Code: code, Message: message} }

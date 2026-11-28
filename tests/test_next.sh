@@ -35,6 +35,14 @@ status=0
 expected=$(printf '%s\n' "$task_tmp/config state" "$task_tmp/config trees" 3 invoke workspace.inspect '{"workspace_id":"with spaces"}')
 [ "$(cat "$task_tmp/out")" = "$expected" ]
 
+# Native attachment stays an explicit, argument-preserving Go action and never
+# redirects through a tmux popup, including paths with shell/format characters.
+status=0
+"$task_tmp/linked-st" native attach --state "$task_tmp/native state #quote" --terminal term_123 --generation 1 --read-only > "$task_tmp/out" || status=$?
+[ "$status" = 7 ]
+expected=$(printf '%s\n' "$task_tmp/config state" "$task_tmp/config trees" 9 native attach --state "$task_tmp/native state #quote" --terminal term_123 --generation 1 --read-only)
+[ "$(cat "$task_tmp/out")" = "$expected" ]
+
 # Outside tmux, the optional controls use the same client and exact arguments.
 status=0
 TMUX= "$task_tmp/linked-st" control --workspace 'with spaces' > "$task_tmp/out" || status=$?

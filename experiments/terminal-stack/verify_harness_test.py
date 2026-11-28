@@ -97,5 +97,27 @@ class OuterReaderTest(unittest.TestCase):
             os.close(fd)
 
 
+class FolderAccessTest(unittest.TestCase):
+    def test_deferred_access_recovers_draft_before_any_model_submission(self):
+        check = harness.HarnessCheck.__new__(harness.HarnessCheck)
+        check.send = Mock()
+        check.trust_fixture = Mock()
+        check.wait = Mock(side_effect=["Trust this folder?", "composer", "Reply with STAGE2 Literal test text"])
+        with patch.object(harness.time, "sleep"):
+            check.compose_initial_draft()
+        check.trust_fixture.assert_called_once_with("Trust this folder?")
+        sent = [call.args[0] for call in check.send.call_args_list]
+        self.assertIn(b"\x03", sent)
+        self.assertNotIn(b"\r", sent, "draft recovery must not submit a model turn")
+
+    def test_folder_access_is_limited_to_owned_fixture(self):
+        check = harness.HarnessCheck.__new__(harness.HarnessCheck)
+        check.workspace = "/tmp/st-owned/workspace"
+        check.send = Mock()
+        with self.assertRaises(RuntimeError):
+            check.trust_fixture("Trust this folder? /some/other/repo Trust and continue")
+        check.send.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

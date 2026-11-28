@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,7 +76,7 @@ func TestNativeTerminalRPCSurvivesControlRestart(t *testing.T) {
 	ctx := context.Background()
 	meta := rpc.Meta{Directory: options.Directory, Actor: "human"}
 	w := snapshot(t, socket, meta).Workspaces[0]
-	args := core.TerminalLaunchArgs{RequestID: "rpc-start", Definition: terminal.Definition{WorkspaceID: w.ID, Executable: "/bin/sh", Args: []string{"-c", `printf x >> rpc-once; exec sleep 60`}, Directory: w.Path, Environment: map[string]string{"PATH": "/usr/bin:/bin"}, Columns: 80, Rows: 24}}
+	args := core.TerminalLaunchArgs{RequestID: "rpc-start", Definition: terminal.Definition{WorkspaceID: w.ID, Executable: "/bin/sh", Args: []string{"-c", `printf x >> rpc-once; stty -echo; printf 'RPC_READY\n'; while IFS= read -r line; do printf 'RPC_INPUT:%s\n' "$line"; done`}, Directory: w.Path, Environment: map[string]string{"PATH": "/usr/bin:/bin"}, Columns: 80, Rows: 24}}
 	params, _ := json.Marshal(args)
 	launch := func() terminal.Info {
 		t.Helper()
@@ -90,15 +91,54 @@ func TestNativeTerminalRPCSurvivesControlRestart(t *testing.T) {
 		return info
 	}
 	original := launch()
+	attachment, err := terminal.DialAttachment(ctx, filepath.Join(options.StateDir, "native-host"), terminal.Target{TerminalID: original.TerminalID, Generation: original.Generation}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer attachment.Close()
+	awaitFrame := func(want string) {
+		t.Helper()
+		timer := time.NewTimer(3 * time.Second)
+		defer timer.Stop()
+		for {
+			select {
+			case frame, ok := <-attachment.Snapshots():
+				if !ok {
+					t.Fatal(attachment.Err())
+				}
+				var text strings.Builder
+				for _, cell := range frame.Screen.Cells {
+					text.WriteString(cell.Text)
+				}
+				if strings.Contains(text.String(), want) {
+					if frame.Info.PID != original.PID {
+						t.Fatal("control restart changed attached program")
+					}
+					return
+				}
+			case <-timer.C:
+				t.Fatal("attached terminal stopped responding during control restart")
+			}
+		}
+	}
+	awaitFrame("RPC_READY")
 	if _, err := rpc.Call(ctx, socket, "daemon.stop", nil, meta); err != nil {
 		t.Fatal(err)
 	}
 	stopControl()
+	if err := attachment.SendInput(ctx, nil, "while-control-off\r", false); err != nil {
+		t.Fatal(err)
+	}
+	awaitFrame("RPC_INPUT:while-control-off")
 	startControl()
 	reconnected := launch()
 	if reconnected.PID != original.PID || reconnected.HostEpoch != original.HostEpoch || reconnected.Generation != original.Generation {
 		t.Fatal("RPC control restart replaced terminal")
 	}
+	if err := attachment.SendInput(ctx, nil, "after-control-restart\r", false); err != nil {
+		t.Fatal(err)
+	}
+	awaitFrame("RPC_INPUT:after-control-restart")
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		b, _ := os.ReadFile(filepath.Join(w.Path, "rpc-once"))

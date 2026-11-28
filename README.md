@@ -109,7 +109,33 @@ bin/st-next terminal host stop --state "$PWD/.dev/native-host" --force
 ```
 
 The final command explicitly stops that host's programs, including unsaved
-editors. There is no native interactive attachment yet. Low-level `terminal
+editors. Attach to an existing terminal from any terminal emulator:
+
+```sh
+st native attach --state "$PWD/.dev/native-host" --terminal <id> --generation 1
+```
+
+Option-q detaches without stopping the program; Ctrl-a and Ctrl-c go directly
+to the child. This explicit entrypoint uses neither tmux nor fzf. Reattach to
+the same ID/generation to recover its current screen, including an unsaved
+editor, at the new terminal size. Only one attachment owns input and geometry;
+`--read-only` adds a viewer without resizing or typing. Exited programs retain
+their last screen and exit status until an explicit restart. The client restores
+terminal modes and the alternate screen on normal exit; after a forced client
+kill the outer terminal may need `reset`.
+The provisional binary still imports the legacy UI's startup color probe;
+terminals that ignore that query can add about five seconds before attachment.
+
+Screen updates use bounded, complete snapshots with geometry revisions; slow
+viewers coalesce updates while the host continues reading every PTY. Input has
+per-attachment leases, sequence numbers and acknowledgements. Unacknowledged
+input is never automatically replayed. Paste is limited to 64 KiB; an oversized
+bracketed paste is drained and rejected before sending it to the program. Mouse
+forwarding, advanced graphics and multi-pane composition are not implemented
+in this single-terminal client. Child clipboard, title and hyperlink escapes
+cannot pass through to the outer terminal.
+
+Low-level `terminal
 ensure`, `inspect`, `screen`, `stop` and `restart` consume a single JSON request
 on stdin, with the host's current `epoch` and a `launch` or `target` object.
 `launch` contains `request_id`, `terminal_id`, `generation` and `definition`;

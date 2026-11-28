@@ -51,7 +51,13 @@ func (p *process) screen(info Info, row, rows int) (Screen, error) {
 	if rows == 0 {
 		rows = 16
 	}
-	if row < 0 || row >= p.vt.Height() || rows < 1 || rows > 16 {
+	if rows > 16 {
+		return Screen{}, failure("invalid_arguments", "screen inspection accepts at most 16 rows")
+	}
+	return p.screenLocked(info, row, rows)
+}
+func (p *process) screenLocked(info Info, row, rows int) (Screen, error) {
+	if row < 0 || row >= p.vt.Height() || rows < 1 || rows > MaxRows {
 		return Screen{}, failure("invalid_arguments", "screen inspection accepts 1..16 rows at a valid offset")
 	}
 	rows = min(rows, p.vt.Height()-row)

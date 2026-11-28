@@ -55,6 +55,7 @@ const usage = `st next — experimental workspace core
   st next daemon <start|serve|status|stop> [--json]
   st next terminal host <start|serve|status|stop> --state <private-dir>
   st next terminal <ensure|inventory|inspect|screen|stop|restart> --state <private-dir>
+  st next native attach --state <host-dir> --terminal <id> --generation <n>
   st next events [--workspace <id>] [--epoch <epoch> --after <sequence>] [--json]
   st next process <list|start|register|stop|restart|attach|move|output> [args]
   st next tui [--workspace <id>]
@@ -105,12 +106,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			if file, ok := stderr.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
 				theme := uitheme.New()
 				fmt.Fprintln(stderr, theme.Row("error", "failed", coded.Message))
-				fmt.Fprintln(stderr, theme.Row("info", "try", "st pair status · st control · st help"))
+				if args[0] != "native" && args[0] != "terminal" && args[0] != "_terminal-host" {
+					fmt.Fprintln(stderr, theme.Row("info", "try", "st pair status · st control · st help"))
+				}
 			} else {
 				fmt.Fprintf(stderr, "st next: %s\n", coded.Message)
 			}
 		}
 		return 1
+	}
+	if args[0] == "native" {
+		if offline {
+			return fail(&command.Error{Code: "invalid_arguments", Message: "native attachment requires its explicit host namespace"})
+		}
+		if err := nativeCommand(ctx, args[1:]); err != nil {
+			return fail(err)
+		}
+		return 0
 	}
 	if args[0] == "_terminal-host" || args[0] == "terminal" {
 		if offline {

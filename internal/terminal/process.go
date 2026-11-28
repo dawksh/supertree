@@ -32,6 +32,9 @@ type process struct {
 	exitCode                        *int
 	signal                          int
 	inputError                      string
+	subscribers                     map[chan struct{}]bool
+	disposed                        bool
+	writeBudget                     atomic.Int64
 }
 
 func startProcess(d Definition) (*process, error) {
@@ -46,9 +49,14 @@ func startProcess(d Definition) (*process, error) {
 	sort.Strings(keys)
 	cmd.Env = []string{}
 	for _, k := range keys {
-		if k != "TMUX" && k != "TMUX_PANE" && k != "TERM" && k != "TERM_PROGRAM" && k != "COLORTERM" {
-			cmd.Env = append(cmd.Env, k+"="+d.Environment[k])
+		switch k {
+		case "TMUX", "TMUX_PANE", "TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "TERM_SESSION_ID", "COLORTERM", "VTE_VERSION", "WT_SESSION", "WINDOWID":
+			continue
 		}
+		if strings.HasPrefix(k, "WEZTERM_") || strings.HasPrefix(k, "KITTY_") || strings.HasPrefix(k, "ITERM_") {
+			continue
+		}
+		cmd.Env = append(cmd.Env, k+"="+d.Environment[k])
 	}
 	cmd.Env = append(cmd.Env, "TERM=xterm-256color", "TERM_PROGRAM=supertree-native", "COLORTERM=truecolor")
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(d.Columns), Rows: uint16(d.Rows)})
@@ -78,7 +86,7 @@ func startProcess(d Definition) (*process, error) {
 		cmd.Wait()
 		return nil, failure("spawn_failed", "terminal descriptor does not support deadlines")
 	}
-	p := &process{vt: vt.NewEmulator(d.Columns, d.Rows), cmd: cmd, pty: f, outputDone: make(chan struct{}), repliesDone: make(chan struct{}), exited: make(chan struct{}), sequence: 1, geometry: 1}
+	p := &process{vt: vt.NewEmulator(d.Columns, d.Rows), cmd: cmd, pty: f, outputDone: make(chan struct{}), repliesDone: make(chan struct{}), exited: make(chan struct{}), sequence: 1, geometry: 1, subscribers: map[chan struct{}]bool{}}
 	p.vt.SetScrollbackSize(ScrollbackLines)
 	// Do not retain arbitrary link/title/cwd strings in cells/history. Their
 	// parser buffer is bounded upstream; none is a supported outer side effect.
@@ -102,6 +110,7 @@ func (p *process) recordExit(status syscall.WaitStatus) {
 		p.exitCode = &code
 		p.signal = signal
 		p.sequence++
+		p.notifyLocked()
 	}
 	p.mu.Unlock()
 }
@@ -145,6 +154,7 @@ func (p *process) breakInput(message string) {
 	if p.inputError == "" {
 		p.inputError = message
 		p.sequence++
+		p.notifyLocked()
 	}
 	p.mu.Unlock()
 }
@@ -155,7 +165,13 @@ func (p *process) readReplies() {
 	for {
 		n, err := p.vt.Read(buf)
 		if n > 0 {
-			_ = p.pty.SetWriteDeadline(time.Now().Add(250 * time.Millisecond))
+			deadline := time.Now().Add(250 * time.Millisecond)
+			if budget := p.writeBudget.Load(); budget != 0 {
+				if limit := time.Unix(0, budget); limit.Before(deadline) {
+					deadline = limit
+				}
+			}
+			_ = p.pty.SetWriteDeadline(deadline)
 			data := buf[:n]
 			for len(data) > 0 {
 				w, e := p.pty.Write(data)
@@ -181,6 +197,7 @@ func (p *process) readOutput() {
 			p.mu.Lock()
 			_, _ = p.vt.Write(buf[:n])
 			p.sequence++
+			p.notifyLocked()
 			p.mu.Unlock()
 			p.bytes.Add(uint64(n))
 		}
@@ -268,11 +285,21 @@ func (p *process) closeIO() {
 		<-p.outputDone
 	})
 }
-func (p *process) dispose() { p.closeIO(); p.mu.Lock(); _ = p.vt.Close(); p.mu.Unlock() }
+func (p *process) dispose() {
+	p.closeIO()
+	p.mu.Lock()
+	p.disposed = true
+	p.notifyLocked()
+	_ = p.vt.Close()
+	p.mu.Unlock()
+}
 
 func (p *process) info(info Info) Info {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.infoLocked(info)
+}
+func (p *process) infoLocked(info Info) Info {
 	if p.exitCode != nil {
 		code := *p.exitCode
 		info.State = "exited"

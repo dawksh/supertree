@@ -301,6 +301,22 @@ bash scripts/test-local.sh -- python3 experiments/terminal-stack/verify_harness.
 # Omit --outer for the local PTY check.
 ```
 
+The maintained Stage 5 client has its own verifier using the same guarded live
+workflow. Build the root module and explicitly select that client:
+
+```sh
+go build -o .dev/st-native-check ./cmd/st-next
+bash scripts/test-local.sh -- python3 -B scripts/verify-native-harness.py \
+  --authenticated --codex-home "$HOME/.codex" \
+  --binary "$PWD/.dev/st-native-check" --outer wezterm
+```
+
+It starts only disposable native host/programs and requires actual client screen
+acquisition before typing. This matters for bare PTYs that do not answer the
+legacy UI dependency's startup color query. It supports the same kitty/SSH flags;
+use a private `/tmp/st-*` remote namespace for the maintained client. Screens and
+failure diagnostics stay private under the ignored `.dev/` directory.
+
 SSH additionally requires `--ssh user@host`, `--remote-directory` naming an
 operator-created private `/tmp/st-stack-*` namespace, and remote `--binary`/
 `--nvim` paths. `--codex-bin` can select an existing complete remote Codex bundle;

@@ -35,12 +35,13 @@ type host struct {
 	processes map[string]*process
 	stopping  bool
 	workers   sync.WaitGroup
+	writers   map[string]string
 	// Private failure-injection seam: production always uses atomicJournal.
 	save func(string, journal) error
 }
 
 func loadHost(dir string) (*host, error) {
-	h := &host{dir: dir, current: map[string]string{}, processes: map[string]*process{}, save: atomicJournal}
+	h := &host{dir: dir, current: map[string]string{}, processes: map[string]*process{}, writers: map[string]string{}, save: atomicJournal}
 	h.journal = journal{Version: 1, Epoch: token(), Receipts: map[string]receipt{}}
 	f, err := openPrivate(filepath.Join(dir, "receipts.json"), unix.O_RDONLY)
 	if err == nil {
@@ -139,6 +140,7 @@ func (h *host) info(r receipt) Info {
 func (h *host) inventory() Status {
 	result := Status{Version: ProtocolVersion, Namespace: namespace(h.dir), Epoch: h.journal.Epoch, PID: os.Getpid(), Capabilities: []string{"launch-receipts-v1", "screen-inspect-v1", "legacy-xterm-256color", "bounded-graphemes-256"}, Terminals: []Info{}, ReservedBytes: int64(len(h.processes)) * ReservationBytes}
 	result.Directory = h.dir
+	result.Capabilities = append(result.Capabilities, "screen-stream-v1", "single-writer-input-v1")
 	for _, id := range h.current {
 		result.Terminals = append(result.Terminals, h.info(h.journal.Receipts[id]))
 	}
