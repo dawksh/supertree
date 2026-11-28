@@ -102,7 +102,6 @@ sidebar_session() {
   for win in $(tmux list-windows -t "=$sess" -F '#{window_id}'); do
     add_sidebar "$win" "$dir"
   done
-  # style_session keeps the left label aligned with the configured sidebar width.
   tmux set-hook -t "$sess" after-new-window "run-shell \"$(tmux_cmd_word "$self" dq) _sidebar-attach '#{window_id}'\""
 }
 
@@ -202,6 +201,7 @@ sidebar_tab_states() {
       *) glyph=$G_DONE;;
     esac
     tmux set-option -q -t "=$sess:" @st_state_glyph "$glyph" 2>/dev/null || true
+    tmux set-option -q -t "=$sess:" @st_tree_state "$status" 2>/dev/null || true
   done
 }
 
@@ -399,6 +399,8 @@ cmd_sidebar_rm_run() {
 cmd_sidebar_attach() {
   local win=${1:-} dir
   [ -n "$win" ] || return 0
+  # st-next process windows (stp_*) must hold only managed panes for layout save/restore.
+  case $(tmux display-message -p -t "$win" '#{window_name}' 2>/dev/null) in stp_*) return 0;; esac
   dir=$(tmux display-message -p -t "$win" '#{@st_tree_dir}' 2>/dev/null) || return 0
   [ -n "$dir" ] || dir=$(tmux display-message -p -t "$win" '#{pane_current_path}')
   # Windows opened with prefix c get the same tab and card look; they have no slot number.

@@ -13,6 +13,7 @@ export ST_CONFIG="$TEST_ROOT/good.conf"
 export ST_STATE="$TEST_ROOT/good-state"
 export ST_WORKTREE_ROOT="$TEST_ROOT/good-trees"
 export ST_AGENT_LOG="$TEST_ROOT/launched"
+export ST_TEST_LAUNCH_ENV="$TEST_ROOT/launch-env"
 export ST_REAL_TMUX="$REAL_TMUX" ST_ISO_SOCKET="$SOCKET"
 mkdir -p "$HOME/.local/bin" "$TEST_ROOT/repo"
 printf 'ST_HARNESS=codex\nST_WINDOWS="agent vim shell"\n' > "$ST_CONFIG"
@@ -24,7 +25,7 @@ cat > "$HOME/.local/bin/tmux" <<'WRAPPER'
 exec "$ST_REAL_TMUX" -L "$ST_ISO_SOCKET" -f /dev/null "$@"
 WRAPPER
 for program in codex claude nvim; do
-  printf '#!/bin/sh\nprintf "%%s|%%s\\n" %q "${NO_COLOR-unset}" >> "$ST_AGENT_LOG"\nexec sleep 30\n' "$program" > "$HOME/.local/bin/$program"
+  printf '#!/bin/sh\nprintf "%%s|%%s\\n" %q "${NO_COLOR-unset}" >> "$ST_AGENT_LOG"\nprintf "%%s|%%s|%%s\\n" %q "${ST_AGENT_MODE-unset}" "${ST_AGENT_TOOLS-unset}" >> "$ST_TEST_LAUNCH_ENV"\nexec sleep 30\n' "$program" "$program" > "$HOME/.local/bin/$program"
   chmod +x "$HOME/.local/bin/$program"
 done
 chmod +x "$HOME/.local/bin/tmux"
@@ -35,7 +36,7 @@ git -C "$TEST_ROOT/repo" -c user.name=Test -c user.email=test@example.invalid \
 
 # Start the tmux server with a different, valid config to reproduce the split
 # between the parent command and processes launched later by tmux.
-NO_COLOR=1 ST_CONFIG="$TEST_ROOT/poison.conf" ST_STATE="$TEST_ROOT/poison-state" \
+NO_COLOR=1 ST_AGENT_MODE=paired ST_AGENT_TOOLS=1 ST_CONFIG="$TEST_ROOT/poison.conf" ST_STATE="$TEST_ROOT/poison-state" \
   ST_WORKTREE_ROOT="$TEST_ROOT/poison-trees" \
   "$REAL_TMUX" -L "$SOCKET" -f /dev/null new-session -d -s sentinel 'sleep 30'
 
@@ -53,6 +54,11 @@ done
 [ -f "$ST_AGENT_LOG" ] || { printf 'FAIL: no programs launched\n' >&2; exit 1; }
 grep -qx 'codex|unset' "$ST_AGENT_LOG" || { printf 'FAIL: Codex inherited NO_COLOR or did not launch\n' >&2; exit 1; }
 grep -qx 'nvim|unset' "$ST_AGENT_LOG" || { printf 'FAIL: Neovim inherited NO_COLOR or did not launch\n' >&2; exit 1; }
+for program in codex nvim; do
+  grep -qx "$program|terminal|0" "$ST_TEST_LAUNCH_ENV" || {
+    printf 'FAIL: %s inherited experimental mode/tools from the tmux server\n' "$program" >&2; exit 1;
+  }
+done
 ! grep -q '^claude|' "$ST_AGENT_LOG" || { printf 'FAIL: tmux launched Claude from its own config\n' >&2; exit 1; }
 [ "$("$REAL_TMUX" -L "$SOCKET" show-environment -t '=repo/feature' ST_CONFIG)" = "ST_CONFIG=$ST_CONFIG" ] ||
   { printf 'FAIL: session kept tmux server config\n' >&2; exit 1; }

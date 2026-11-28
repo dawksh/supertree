@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+experiment_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+mkdir -p "$experiment_root/.dev/terminal-stack"
+"$experiment_root/experiments/terminal-stack/trial" build -o "$experiment_root/.dev/terminal-stack/spike" ./cmd/spike
+exec "$experiment_root/.dev/terminal-stack/spike" "$@"

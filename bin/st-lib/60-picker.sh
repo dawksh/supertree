@@ -372,13 +372,17 @@ cmd_open() {
   if [ -n "$here" ]; then
     # A live tree already records its checkout path on each window. Reuse it
     # without discovering every repository; home may share the same cwd.
-    live=$(tmux list-windows -a -F '#{session_name}'$'\t''#{@st_tree_dir}' 2>/dev/null |
+    live=$({ tmux list-windows -a -F '#{session_name}'$'\t''#{@st_tree_dir}' 2>/dev/null || true; } |
       awk -F '\t' -v p="$here" -v home="$ST_HOME_SESSION" '$1 != home && $2 == p { print $1; exit }')
-    if [ -n "$live" ]; then attach "$live"; return 0; fi
+    if [ -n "$live" ]; then
+      build_session "$live" "$here"
+      attach "$live"
+      return 0
+    fi
   fi
   main=$(main_worktree .) || main=''
   [ -z "$main" ] || register_repo "$main"
-  rows=$(list_trees | cut -f2-)
+  rows=$(list_trees --include-checkout "$here" | cut -f2-)
   [ -n "$rows" ] || die "no worktrees known yet — run 'st new <branch>' inside a repo"
   [ -z "$here" ] || row=$(printf '%s\n' "$rows" | awk -F '\t' -v p="$here" '$2 == p' | head -1)
   [ -n "$row" ] || row=$(printf '%s\n' "$rows" | sort_recent | head -1)

@@ -12,6 +12,17 @@ one key flips between your primary windows, and two keys leave tmux while keepin
 the tree running. Closing a tree with `st down` lets you reopen the agent in the
 same conversation.
 
+The default workflow follows [release v0.4.34](https://github.com/dawksh/supertree/releases/tag/v0.4.34):
+open or resume a worktree, use the real agent/editor/shell tabs, switch trees,
+split panes, and detach while programs keep running. Existing key bindings,
+picker actions, configured tab order, resume commands, and removal confirmations
+are the compatibility baseline. Visual updates and reliability fixes may improve
+these actions; new features must add optional actions without redirecting them.
+Installing or building the Go core alone does not enable integration or start it
+when opening the normal workspace. Agent questions and approvals stay in the
+actual harness. Controls, shared requests, named processes and native pairing
+remain explicit additions to this flow.
+
 ```
  Supertree                 1. codex ●   2. nvim   3. shell      webauth/feat-otp
  n new · d remove
@@ -54,9 +65,222 @@ ST_NO_TMUX_CONF=1 …     do not touch ~/.tmux.conf
 ST_YES=1 …              answer yes to every prompt (CI, dotfile bootstraps)
 ST_HARNESS=codex …       choose claude, codex, or openrouter non-interactively
 ST_WINDOWS='agent shell' … choose and order tmux windows
+ST_WITH_NEXT=1 …        include the experimental Go core (default: shell-only)
 ```
 
+To include the workspace core without installing Go:
+
+```sh
+curl -fsSL https://github.com/dawksh/supertree/releases/latest/download/install.sh | ST_WITH_NEXT=1 bash
+```
+
+Prebuilt core binaries support macOS and Linux on Intel/AMD 64-bit and ARM64.
+Updates and repairs preserve your choice. `ST_WITH_NEXT=1 st repair` adds or restores
+the core for the installed release; `ST_WITH_NEXT=0 st repair` stops and removes it
+while keeping its workspace database. Shell-only installation works on other
+platforms and with releases that predate the Go assets.
+
 ### From source
+
+The separate [native terminal-stack experiment](experiments/terminal-stack/README.md)
+tests the feasibility of a native Go terminal multiplexer.
+It has its own Go module and explicit launcher; ordinary `st` and `./dev open`
+continue using the released workflow below. Its dependency and terminal acceptance
+gates remain separate from passing the existing product tests.
+
+The native metadata foundation is internal: `core.OpenNative` and `rpc.ServeNative`
+select Git-only discovery and versioned `buffer.inspect`/`buffer.save` commands.
+`buffer.edit` applies revision-checked placement, hide, move, split-ratio and
+split-order changes to one saved tab. Hidden terminals retain their identity;
+placing an existing terminal twice or hiding an active loan is rejected. These
+commands change saved arrangements only; live multi-pane composition, merge and
+borrow controls are still being implemented.
+They preserve per-worktree tab order, split arrangements, terminal ownership and
+loan placeholders across core restarts. Compound saves require every affected
+revision and commit atomically; they never launch, stop or resize programs.
+Layouts use explicit node IDs, `columns`/`rows` axes and integer percentage ratios
+from 5 to 95, bounded to 64 KiB, 255 nodes and 32 levels per tree buffer. Focus,
+zoom and narrow-terminal fallback are computed without changing the saved layout.
+The native terminal host is also opt-in. It owns PTYs, screens and bounded
+history in its own process; closing a client or restarting the workspace core
+does not stop its programs. Normal launches retain their existing runtime.
+
+Build the checkout with `./dev build`, then explicitly manage a private host:
+
+```sh
+bin/st-next terminal host start --state "$PWD/.dev/native-host"
+bin/st-next terminal inventory --state "$PWD/.dev/native-host"
+bin/st-next terminal host stop --state "$PWD/.dev/native-host" --force
+```
+
+The final command explicitly stops that host's programs, including unsaved
+editors. Attach to an existing terminal from any terminal emulator:
+
+```sh
+st native attach --state "$PWD/.dev/native-host" --terminal <id> --generation 1
+```
+
+Option-q detaches without stopping the program; Ctrl-a and Ctrl-c go directly
+to the child. This explicit entrypoint uses neither tmux nor fzf. Reattach to
+the same ID/generation to recover its current screen, including an unsaved
+editor, at the new terminal size. Only one attachment owns input and geometry;
+`--read-only` adds a viewer without resizing or typing. Exited programs retain
+their last screen and exit status until an explicit restart. The client restores
+terminal modes and the alternate screen on normal exit; after a forced client
+kill the outer terminal may need `reset`.
+The provisional binary still imports the legacy UI's startup color probe;
+terminals that ignore that query can add about five seconds before attachment.
+
+Screen updates use bounded, complete snapshots with geometry revisions; slow
+viewers coalesce updates while the host continues reading every PTY. Input has
+per-attachment leases, sequence numbers and acknowledgements. Unacknowledged
+input is never automatically replayed. Paste is limited to 64 KiB; an oversized
+bracketed paste is drained and rejected before sending it to the program. Mouse
+forwarding, advanced graphics and multi-pane composition are not implemented
+in this single-terminal client. Child clipboard, title and hyperlink escapes
+cannot pass through to the outer terminal.
+
+Low-level `terminal
+ensure`, `inspect`, `screen`, `stop` and `restart` consume a single JSON request
+on stdin, with the host's current `epoch` and a `launch` or `target` object.
+`launch` contains `request_id`, `terminal_id`, `generation` and `definition`;
+`target` contains `terminal_id` and `generation`. Definitions contain
+`workspace_id`, an absolute `executable`, an `args` array, absolute `directory`,
+the complete `environment` map, `columns` and `rows`. Launch payloads travel over
+stdin/the socket and private state; inventory and host command lines omit argv
+and environment values.
+Repeat the same request ID/definition to reconcile a lost launch reply. A changed
+request conflicts; restart explicitly uses a fresh request ID, the same known
+definition and the next generation, after its old session has stopped.
+
+`core.OpenNative` exposes `terminal.launch`, `terminal.inspect`, `terminal.stop`
+and `terminal.restart`, using `StateDir/native-host`. Launch/restart first persist
+a controller intent, then reconcile the independent host's durable receipt.
+New execution attempts refresh Git discovery and require the saved cwd to remain
+inside the available owning worktree. Obsolete paths after a move/removal are
+rejected; retries of executed requests can still reconcile their receipts.
+Neither core startup nor these inspections automatically starts a host. A new
+host epoch reports old active receipts as `lost` and never replays them; host
+crash/reboot does not preserve PTYs. Stop inventories the owned job-control
+session, including background groups; jobs that deliberately create another
+session are outside that scope. Stubborn jobs require explicit force.
+
+Initial host limits are eight retained terminal identities, 128 launch/restart
+receipts, 2–240 columns × 2–100 rows, 256 history lines, and 256 UTF-8 bytes per
+grapheme. Admission reserves 64 MiB per retained emulator (512 MiB per namespace);
+this is a conservative reservation, not a hard process-RSS or child-memory cap.
+Inspection returns at most 16 screen rows per request. The maintained emulator
+under `third_party/x-vt` is exactly the pinned upstream source plus the verified
+Unicode patch; its MIT notice is retained. `experiments/terminal-stack/trial
+verify-source` checks that provenance. The core now requires Go 1.24.2+; its
+legacy Bubble Tea UI retains v1, with cellbuf v0.0.14 for ANSI compatibility.
+
+Try this checkout through the usual worktree, agent, Neovim, and shell workflow.
+The Go controls are an optional addition to that workspace.
+
+```sh
+./dev open                    # build and open this checkout's local workspace
+./dev                         # reopen the last local worktree
+./dev new <branch>             # create a worktree through the usual flow
+./dev test                    # automated checks, in a disposable test environment
+```
+
+For a first manual check:
+
+1. Run `./dev open` from this checkout. Use Option-1 for the agent, Option-2
+   for Neovim, and Option-3 for the shell. Option-S focuses the tree sidebar.
+2. Edit in Neovim and run a command in the shell. The existing Option-v split
+   command lets you bring terminals beside each other.
+3. From the local shell, run `st new local-harness-test` to try a new worktree.
+   Use Option-w to switch trees. Each keeps its own programs.
+4. Use Option-Tab to return to the previous tree and Option-q to detach. Run
+   `./dev` again to return to your workspace with its programs still running.
+
+Optional controls open with `st control`; `q` returns to your terminal. They are
+not needed to delegate work, answer the agent, edit code, or switch projects.
+To try agent workspace tools and editor sharing, explicitly set
+`ST_AGENT_TOOLS=1` in `.dev/config` before launching a new agent/editor. Shared
+requests and captured context can then be inspected through those tools or the
+control popup when you choose to use them.
+
+Inside the sandbox, `st` points to this checkout. Outside it, use `./dev` so
+commands target the local environment. `./dev test` runs automated tests; it does
+not open your manual workspace.
+
+The worktree is the workspace: its agent, Neovim, shell, and extra test/server
+terminals share one tab strip. `st control` shows that workspace's processes,
+shared context, and questions in an optional popup; it is not a separate desktop.
+The base tab strip, pane borders, sidebar, and paired conversation use the same
+palette as the controls. Old extra-terminal sessions stay open and are labelled
+as extra terminals; opening the checkout returns to its normal worktree tabs.
+
+The agent tab runs the actual selected harness: Codex, Claude Code, OpenCode, or
+your configured command. Chat and answer its approvals there, edit in Option-2,
+and run tests in Option-3. Supertree provides the surrounding workspace without
+replacing the harness's own interface.
+
+With the Go core installed and `ST_AGENT_TOOLS=1` explicitly enabled, Codex and
+Claude Code receive a session-local Supertree MCP connection. Ask the agent to
+inspect the shared workspace, read captured context, update a task, ask a shared
+question, or start a named test
+process. These are the same commands used by the controls, attributed to the
+agent. Its normal conversation and approvals stay in the harness. Other MCP
+servers and global agent settings are preserved. `ST_AGENT_TOOLS=0` is the
+default: normal launches do not use the core. OpenCode and custom harnesses
+retain their existing launch path; automatic MCP configuration is currently
+implemented for Codex and Claude Code.
+
+The stdio endpoint is also available as `st next mcp --harness <name>` for manual
+MCP configuration. It defaults workspace arguments to the launching checkout.
+Tools expose core schemas and errors, preserve revision checks, and never claim
+to be human actions or publish the human TUI's input state. Disconnecting the
+harness tools or restarting the core leaves terminal programs running.
+
+Fresh dev config uses `ST_AGENT_MODE=terminal` and `ST_AGENT_TOOLS=0`.
+In normal mode, `st share` and `:SupertreeAsk` save shared requests for the harness
+to read through MCP. Ask it to check Supertree questions; saving a request does
+not inject a prompt or interrupt a busy turn. The experimental paired console
+supports direct delivery. Changing config does not replace running programs;
+already open harnesses and editors pick up new launch options when you next
+start them yourself. New worktrees get the current integration immediately.
+
+Additional development commands:
+
+```sh
+./dev control                 # optional controls; popup when inside local tmux
+./dev next inspect --json      # rebuild and inspect local workspaces
+./dev next commands --json     # rebuild and discover commands
+./dev next daemon start        # start the isolated persistent workspace core
+./dev next events --json       # watch workspace changes (Ctrl-C to disconnect)
+./dev package                 # build release assets in .dev/releases; no publishing
+./dev stop                    # close local sessions; keep worktrees and state
+```
+
+This needs Go 1.24+, Git, tmux, and fzf for the sidebar. It creates an ignored
+`.dev/` directory with separate config, state, worktrees, and command wrappers,
+plus a separate tmux socket per checkout. It does not install anything or change
+your dotfiles. Commands keep their caller's working directory, so you can also
+run `/path/to/supertree/dev` from another repository.
+
+Fresh sandboxes use `ST_WINDOWS='agent vim shell'`. Edit `.dev/config` to choose
+your agent or customize the existing layout. Older sandboxes retain their config;
+if yours says `ST_WINDOWS=shell`, change it to `ST_WINDOWS='agent vim shell'` and
+reopen the tree. Missing tabs are added without restarting existing programs.
+Local terminals use a clean Bash shell, with `st` pointing to this checkout.
+Keyboard shortcuts and background jobs use the same local wrappers.
+Shortcut bindings use absolute checkout paths so a changed server PATH cannot
+send them to an installed release. Option-1 returns to the shell from the home
+sidebar; Option-S focuses the sidebar.
+
+State and sessions persist between launches; `./dev stop` closes the local core
+and tmux server without removing worktrees. `./dev tmux list-sessions` inspects that server.
+Each launch rebuilds the Go client; commands inside the sandbox use the current
+build without rebuilding on every keypress. `./dev build` rebuilds it explicitly.
+An already running daemon keeps its loaded code: run `./dev next daemon stop`
+then `./dev next daemon start` after changing core code. Stopping only the daemon
+leaves your local terminals running.
+
+For a persistent installation from source:
 
 ```sh
 git clone https://github.com/dawksh/supertree ~/projects/supertree
@@ -108,13 +332,511 @@ the command. The picker, worktree, and maintenance modules can also be removed
 individually; the shared modules provide the functions used across features.
 Run the shell tests after changing modules.
 
+### Experimental workspace core
+
+The worktree workspace remains the main interface. `st control` opens the Go
+controls as a popup from its shell; closing them returns to that workspace.
+`st next tui` also runs the controls directly for development or standalone use.
+
+The Go core provides workspace inspection, a discoverable command registry, and
+an opt-in local daemon with durable identity and change subscriptions. Build it
+from this checkout with Go 1.24 or newer:
+
+```sh
+go build -o bin/st-next ./cmd/st-next
+bin/st next inspect
+bin/st next inspect --json
+bin/st next commands --json
+```
+
+For a source install, the existing `st` symlink finds the built binary beside
+`bin/st`. Release installs opt in with `ST_WITH_NEXT=1` and place the verified
+prebuilt binary inside `st-lib-<version>`, alongside its matching shell modules.
+Normal Supertree commands do not require Go or this binary. `st next --version`
+reports the core binary's release version and source commit.
+
+Inspection reads registered repositories from `$ST_STATE/repos` and includes the
+current Git checkout without registering it. It lists main, linked, detached, and
+missing worktrees, including linked worktrees outside `ST_WORKTREE_ROOT`. The
+`managed` field indicates a main checkout or linked tree under that root; it does
+not adopt a worktree or authorize changes to it. Bare repositories are reported
+with `kind: "bare"`.
+
+JSON results contain `schema_version: 1`, `workspaces`, `sessions`, `tmux_status`,
+and `warnings`. Missing repositories and individual scan failures produce warnings
+so a partial result remains inspectable. `tmux_status` distinguishes `running`,
+`stopped`, `unavailable`, and `error`. Session associations use the session's initial
+working directory, choosing the deepest matching worktree. They do not establish
+agent identity or infer agent activity.
+
+Without a daemon, inspection remains read-only and IDs are hashes of canonical
+checkout paths. They survive branch switches and symlink aliases. With a daemon,
+SQLite preserves the initially imported IDs and tracks Git administrative-directory
+identity across restarts and moves on the same filesystem, including `git worktree
+move`. Copies or recreated Git administrative directories receive separate
+identities. Cross-filesystem moves have no automatic identity transfer yet.
+Offline inspection after a move uses its new path hash; use the daemon for durable IDs.
+
+The CLI aliases and generic invocation use the same command registry:
+
+```sh
+bin/st next invoke command.list '{}'
+bin/st next invoke workspace.inspect '{}'
+bin/st next inspect --workspace <workspace-id> --json
+bin/st next invoke workspace.inspect '{"workspace_id":"<workspace-id>"}'
+```
+
+`commands --json` exposes command versions, argument and result schemas, effects,
+and recording, repetition, sensitivity, and undo metadata for future macro support.
+`invoke` always returns JSON. Failed JSON requests exit nonzero with a structured
+error on stderr and no result on stdout.
+
+`st next` forwards the shell's resolved `ST_STATE` and `ST_WORKTREE_ROOT` settings.
+Running `bin/st-next` directly reads these environment variables and uses their
+normal home-directory defaults; it does not source shell config. Set
+`ST_NEXT_TMUX_SOCKET` to inspect an explicit tmux socket, otherwise tmux uses its
+normal environment. Direct discovery does not create state directories, execute
+project hooks, or modify Git or tmux state. The daemon writes only its own metadata.
+
+#### Persistent local core
+
+```sh
+./dev next daemon start
+./dev next daemon status --json
+./dev next inspect --json
+./dev next commands --json
+./dev next events --json
+# In another terminal: change a branch or create a worktree using normal tools.
+./dev next daemon stop          # leaves tmux and terminal programs running
+```
+
+`daemon start` detaches and waits until ready; starting it again returns the same
+daemon. `daemon serve` runs in the foreground for debugging. The daemon stores
+identities in `$ST_STATE/next/state.db` and logs in `$ST_STATE/next/daemon.log`.
+It remembers repositories discovered by clients without rewriting `$ST_STATE/repos`.
+Unavailable repositories and missing workspaces remain visible. A process-held
+state lock prevents competing daemons, and a new daemon can reclaim a crashed
+daemon's stale socket. Database schema versions newer than this binary are rejected.
+
+CLI commands automatically use the daemon when its socket exists. Otherwise,
+`inspect`, `commands`, and the original read commands use direct discovery.
+`st next --offline inspect --json` explicitly bypasses a daemon. An existing but
+unreachable socket produces an error; it does not silently switch identity models.
+`ST_NEXT_SOCKET` selects an absolute socket path and requires an online daemon.
+The dev launcher clears this override to keep the sandbox separate.
+
+The default socket is `/tmp/supertree-next-<uid>/<state-path-hash>.sock`, inside an
+owner-only directory. `daemon status --json` reports the exact path and capabilities.
+Clients sharing `ST_STATE` share one daemon; conflicting worktree-root or explicit
+tmux-socket settings are rejected. CLI requests include their current directory,
+so a second client can discover another checkout in the same core.
+
+#### Socket clients and change events
+
+The socket accepts newline-delimited JSON-RPC 2.0 requests, including batches of
+ordinary requests. Method names are the same commands exposed by `commands --json`:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"workspace.inspect","params":{},"meta":{"directory":"/absolute/checkout","actor":"agent:review","request_id":"review-42"}}
+```
+
+Responses retain the request ID. JSON-RPC errors include the structured command
+error in `error.data`. Actor labels provide attribution, not authentication.
+The CLI defaults to actor `human`; set `ST_NEXT_ACTOR` and `ST_NEXT_REQUEST_ID`
+for scripts and agent clients. Frames are limited to 8 MiB, writes time out after
+five seconds, and ordinary idle connections close after one minute.
+
+`event.subscribe` uses a dedicated connection and requires a request ID:
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"event.subscribe","params":{}}
+```
+
+Its acknowledgement contains `epoch`, `sequence`, `resnapshot_required`, and a
+workspace snapshot. Subsequent notifications use method `event` with sequenced
+`workspace.changed` events in `params`. Events invalidate workspace state; inspect
+again to obtain current content. The daemon polls Git and tmux once a second,
+also refreshing before inspection and subscriptions. These are observed changes,
+not an audit of every intermediate external action.
+
+`events --json` prints the acknowledgement followed by event params as JSON lines.
+Canceling it closes only that subscription. Reconnect explicitly with a saved cursor:
+
+```sh
+./dev next events --epoch <previous-epoch> --after <last-sequence> --json
+./dev next events --workspace <workspace-id> --json
+```
+
+The daemon retains the latest 256 events in memory. With a valid cursor, consume
+the replay after your saved sequence before advancing to live events; the
+acknowledgement's sequence is the current high-water mark. If `resnapshot_required`
+is true, replace your state with the supplied snapshot and use its sequence.
+A restart, expired cursor, or replay larger than the 32-event subscriber queue
+requires a fresh snapshot. A live subscriber that falls behind receives a
+`resnapshot_required` notification and disconnects; reconnect without a cursor.
+Event history is not persisted across daemon restarts. CLI event streams report
+disconnects and require an explicit reconnect.
+
+Run `./dev test` for Go vet, race checks, and the shell suite. The runner uses a
+temporary HOME and remaps tmux's default, named, and explicit sockets into its
+own disposable directory. Test cleanup addresses only those private sockets.
+For a focused check, use `bash scripts/test-local.sh -- go test -race ./internal/process`;
+`bash scripts/test-local.sh --shell` runs only the shell suite. CI and release
+checks use the same runner. Test commands should never run against your normal
+tmux environment.
+
+### Named terminal processes
+
+Start the local core, then launch named programs in the current checkout:
+
+```sh
+./dev next daemon start
+./dev next process start --name shell --kind shell -- /bin/bash --noprofile --norc
+./dev next process start --name tests --kind tests -- go test ./...
+./dev next process list
+./dev next process attach <process-id>
+./dev next process output <process-id> --lines 200
+./dev next process stop <process-id>
+./dev next process restart <process-id>
+```
+
+`start` uses an executable plus argument array; shell syntax runs only when you
+explicitly launch a shell with `-c`. Use `--workspace <id>` to target another
+checkout, `--cwd <relative-directory>` for a subdirectory, and repeated
+`--env KEY=VALUE` flags for overrides. Environment values are stored in the private
+launch definition; inspection exposes their names. Avoid putting secrets in argv.
+Names are unique within a workspace; restart an existing definition explicitly.
+
+Each process has a durable ID and a tagged tmux pane. Starts and moves happen in
+the background. `attach` changes focus only as an explicit terminal action;
+`attach --json` or `invoke process.attach` returns coordinates without focusing.
+Exiting the core or UI leaves programs running. Restarting the daemon reconciles
+existing tagged panes and never automatically relaunches missing programs.
+Exited owned terminals retain their output and exit status until stopped/restarted.
+If a launch is interrupted before its outcome is saved, reconciliation keeps the
+terminal intact and reports `starting` with an uncertainty message. Inspect it
+with `attach` or `output`; explicitly stop it before restarting a live terminal.
+Retrying the same start request does not launch another copy. A failed tmux
+inspection also prevents restart until the core can confirm the terminal's state.
+
+```sh
+./dev next process move --process <id> --target <other-id> --direction vertical
+./dev next process move --process <id>   # detach into its own window
+./dev next process register --name editor --workspace <id> --pane %3
+```
+
+Normal agent/editor/shell tabs appear automatically as `source: "observed"`
+when the daemon discovers a Supertree session. Observing them changes no pane
+options and enables attachment/output only. Stop and move require explicit
+registration; restart requires a known launch definition. IDs track the tmux
+server and pane process, so a reused pane number cannot target an older terminal.
+The controls label these existing terminals as read-only.
+Borrowed terminals retain their source workspace, tab name, and identity while
+attachment and output follow their current location. Source placeholders are
+navigation aids and do not appear as programs or accept process registration.
+
+Registration explicitly enables management of an existing terminal. Its original
+launch definition is unknown, so it cannot be restarted by the core.
+Stopping a registered pane still closes that terminal. Process IDs survive moves;
+reused pane IDs after a tmux restart cannot inherit another process's identity.
+The core listens to tmux control-mode changes and also reconciles once a second.
+
+All actions are discoverable through `commands --json` and available via
+`invoke process.start`, `process.list`, `process.register`, `process.stop`,
+`process.restart`, `process.move`, `process.attach`, and `process.output`.
+Mutation arguments accept revision checks where advertised. Repeating a start
+with the same actor/request ID returns the previous launch; changing its arguments
+with that request ID is rejected. A different request ID never implicitly restarts
+an existing named process.
+
+### Capturing a live window layout
+
+The daemon's `layout.capture` command saves **one tmux window** from the
+worktree's existing workspace; it does not create another workspace, change
+focus, resize panes, or stop or restart programs. Choose a managed or explicitly
+registered process in the window as the anchor:
+
+```sh
+./dev next invoke layout.inspect '{"workspace_id":"<workspace-id>"}'
+./dev next invoke layout.capture '{"workspace_id":"<workspace-id>","process_id":"<anchor-process-id>","expected_revision":0}'
+```
+
+All three capture arguments are required. `expected_revision` is the saved
+layout revision from `layout.inspect` (0 when none exists); a stale revision
+fails without saving. The result has `workspace_id`, `revision`, and `root`.
+A root is either `{"type":"pane","resource_id":"<process-id>"}` or
+`{"type":"split","direction":"horizontal|vertical","ratio":0.5,"children":[<node>,<node>]}`.
+Horizontal means side-by-side; vertical means top-to-bottom. Ratios describe
+the first child's share of pane cells, excluding its divider. Nested and
+multi-pane slicing layouts are represented as binary splits.
+
+Every pane in the selected window must already be managed or explicitly
+registered to this workspace; observed-only, foreign, duplicate/ambiguous, or
+missing panes are rejected rather than omitted. Captured process tags must be
+unique across all windows on the tmux server, not only the selected window. Zoomed windows, layouts with
+unsupported geometry or ratios outside 0.05–0.95, and layouts changing during
+capture are rejected. Capture saves metadata only: it does not restore a layout,
+and cannot capture multiple windows in one tree. Registering an existing pane is
+an explicit management action with the consequences described above.
+
+If capture reports a foreign or ambiguous pane, or restore reports other panes,
+inspect the affected window in tmux before retrying. From that window,
+`tmux list-panes -F '#{pane_id} #{pane_current_command} #{@st_next_process}'`
+lists pane IDs, current commands, and process tags without changing them; use
+the appropriate tmux socket if inspecting from outside that session. For
+duplicate tags elsewhere on that server, add `-a` to list panes in all windows. Compare
+with `./dev next process list --workspace <id>` and the saved layout. A blank
+tag or duplicate tag is not proof of ownership; inspect the actual terminals
+and do not register or close a pane merely to dismiss the error. Restore also
+requires the window to contain exactly the panes in the saved layout, so
+registering an extra pane alone cannot resolve that rejection. Registration's
+checks and tagging are not atomic with concurrent tmux changes; inspecting
+first does not guarantee that a later registration targets the same terminal.
+
+Saved workspace layouts are desired metadata, and saving never changes tmux.
+The explicit `layout.restore` registry/RPC action can apply a saved pane/split tree
+in a single existing managed window after checking both the saved revision and a
+caller-supplied live tmux layout token. It refuses unrelated panes, unsupported
+pane order, zoomed windows, cross-window layouts and layouts that do not fit;
+it never starts, stops or adopts terminals. Failures after application may require
+inspecting tmux before retrying. See [layout status](WORKSPACE_LAYOUT_STATUS.md)
+for arguments, concurrency limits and unsupported cases.
+
+### Go workspace TUI
+
+```sh
+./dev next tui                  # starts the local core if needed
+./dev next tui --workspace <id>
+```
+
+The control client opens in your current terminal. Tab switches between workspaces
+and processes; arrows or `j`/`k` select. `s` starts a shell, `n` opens a named-process
+form, Enter attaches, `x` stops after confirmation, `r` restarts, and `m` joins a
+terminal beside another or detaches it into a separate window. `p` opens the
+command palette; its entries and JSON argument models come from the core registry.
+Use `?` for help and `q` to close the TUI. Closing it leaves the core and terminals
+running. Detach from an attached tmux terminal to return to the control client.
+
+Select a running managed or registered process as the window anchor. Uppercase
+`S` inspects the saved revision and asks for confirmation before capturing that
+window. Uppercase `R` inspects the current live token for an anchor included in
+the saved layout and asks before restoring. Escape cancels before submission;
+once restore has been submitted, Escape cannot cancel or hide its result, even
+if the selected workspace changes. A restore partial failure remains visible until
+Ctrl-E acknowledges it; inspect tmux before retrying. Stale revisions, live
+tokens, and other errors are shown; review the state before retrying. Both
+operations are limited to one existing window and do not adopt or stop terminals.
+The daemon must provide `layout.capture`, `layout.live`, and `layout.restore`.
+See [layout status](WORKSPACE_LAYOUT_STATUS.md) for safety limits.
+
+The TUI subscribes to changes, reconnects with a fresh snapshot when required,
+and never repeats a mutation on reconnect. Background process actions preserve
+focus. If the terminal is too small, enlarge it to at least 60 columns × 16 rows.
+After rebuilding core code, restart an already running daemon before opening the
+new client so both use the latest registered commands.
+
+Agent clients can inspect `view.list` (also included in workspace snapshots) to
+see each TUI's workspace/process selection, panel, pending command/input, and
+available command names. `view.select` accepts `view_id`, `workspace_id`, and
+`process_id`, plus an optional `expected_revision`. It changes the visible
+selection without selecting a tmux pane. Selection changes are rejected while
+human input is active. Agents operate the same `process.*` commands directly;
+no simulated keystrokes or screen-coordinate parsing is needed. Connected views
+expire after 30 seconds without a heartbeat; closing a view stops no processes.
+
+### Pairing through shared goals and context
+
+The Go baseline now includes named processes, the control TUI, and one native
+agent integration. Git worktree creation/removal still uses the existing shell
+commands. Macros, registers, bookmarks, and the Lua extension runtime come later.
+
+From a local worktree's shell, run `st control`. It opens controls for that checkout;
+`q` returns to your editor and terminals. Direct `./dev next tui` remains available.
+
+Press `c` for the pairing panel. `t` creates a shared goal; `a` selects this
+worktree's paired agent when one is explicitly configured. With an ordinary
+harness, `i` saves a request with the marked context; the actual harness reads it
+through its MCP tools. `a` never replaces a running CLI or implicitly launches the
+experimental native console. Requests labelled **For agent** do not count as
+waiting for human input. Answered requests remain visible with the agent's reply.
+`f` captures saved file lines, `d` captures the tracked Git diff, `o` captures the
+selected process's output, and `N` adds a note. Use arrows to select a context item
+and Space to mark it. `i` opens a message with the marked context IDs, which you
+can inspect or edit before sending. Capturing context alone sends nothing.
+
+Questions appear in the same panel. Select one and press Enter to answer;
+provider approvals require an explicit `accept` or `decline`. `I` interrupts the
+selected native agent after confirmation, checking that its turn has not changed.
+Keep editing in your editor or shell
+while the agent runs. `r` recaptures a selected context source; `u` marks the shared
+goal done after confirmation. Agent turn completion does not mark a goal successful.
+
+The same workflow is available through structured commands:
+
+```sh
+./dev next daemon start
+./dev pair status             # native agent in the usual Codex tab
+./dev pair send --message 'Investigate this failure'
+./dev pair interrupt
+./dev next task add --title 'Investigate the failing test' --notes 'Keep the interface stable'
+./dev next context add --file internal/example.go --start-line 10 --end-line 30
+./dev next context add --kind diff
+./dev next agent start --name pair --task <task-id>
+./dev next agent list
+./dev next agent send <agent-id> --message 'Investigate this failure' --context <context-id>
+./dev next question list
+./dev next question answer <question-id> --revision 1 --answer 'decline'
+./dev next agent interrupt <agent-id>
+./dev next invoke delivery.list '{}'
+./dev next invoke delivery.inspect '{"delivery_id":"<delivery-id>"}'
+```
+
+#### Pairing in the usual agent tab
+
+Dev sandboxes default to `ST_AGENT_MODE=terminal`, showing the actual harness UI.
+The native pairing console is experimental and opt-in: set `ST_AGENT_MODE=paired`
+in `.dev/config` to try it with Codex. Opening a new worktree then starts native
+pairing in its normal Codex tab beside the unchanged Neovim and shell tabs.
+Type messages there as usual. `/interrupt` stops a turn; `/quit` returns to its
+shell. `st pair status`, `st pair send --message '...'`, and `st pair interrupt`
+target this worktree's agent without copying IDs or opening another agent.
+The control popup answers approvals and questions while the other tabs stay usable.
+
+Already running CLI sessions stay running. To migrate one, exit it normally and,
+from the shell in that same agent tab, run:
+
+```sh
+st pair run --thread <exact-Codex-thread-id>
+```
+
+Omit `--thread` for a new conversation. Once paired, reopening the tree resumes
+its checkpointed exact conversation and keeps its stable agent identity. The
+core never scrapes a terminal or uses an implicit last conversation for migration.
+`ST_AGENT_MODE=terminal` retains ordinary CLI launch; other harnesses keep their
+existing behavior. Existing installations default to terminal mode until configured.
+The native primary agent appears as `primary: true` and its terminal as
+`source: "hosted"`. It is relaunched through the usual worktree/agent-tab flow;
+generic restart is reserved for processes with a recorded launch definition.
+
+#### Share from the editor or shell
+
+Neovim tabs load the bridge when the Go core is present and `ST_AGENT_TOOLS=1`
+is enabled, or when you explicitly choose paired mode. Your mappings and editor
+configuration stay yours. Select saved lines and use `:SupertreeAsk <question>`;
+without a question it prompts for one. `:SupertreePreview` captures a selection
+into a temporary preview without delivery. `:SupertreeContext` captures only, and
+`:SupertreeShareDiff <question>` shares the tracked working-tree diff. Modified
+buffers must be saved explicitly before sharing; cancelling a question sends nothing.
+
+From the usual shell tab:
+
+```sh
+st share --file internal/example.go --start-line 10 --end-line 30 --message 'Why does this fail?'
+st share --diff --message 'Review this change'
+st share --output --message 'Explain this test failure'
+st share --file internal/example.go --preview
+st share --context <reviewed-context-id> --message 'Investigate these lines'
+```
+
+Output sharing captures the current terminal's last 200 lines; `--process <id>`
+selects another terminal explicitly. Preview creates a context ID and sends no
+turn. Reusing that ID selects the reviewed snapshot and rejects it if the saved
+source has changed. The latest open shared goal accompanies the request.
+
+In normal harness mode, sharing returns `status: "requested"` and a shared
+question with `recipient: "agent"` and `context_ids`. Say **“Check my Supertree
+questions”** in Codex or Claude Code. The agent uses `question_list`,
+`context_export`, and `question_answer` to read fresh context and save its reply.
+The request and answer are also visible in the control popup. Saving a request
+does not claim the agent has read it, push terminal input, or interrupt a turn.
+
+Paired mode instead returns the native delivery receipt. `--target harness` or
+`--target paired` selects explicitly. No sharing action starts another agent.
+`--json` returns the structured result; structured clients invoke the same
+`context.share` command with `target: "harness"` or `target: "paired"`, workspace
+ID, and source. An omitted target retains the older paired behavior for existing
+RPC clients. Actor/request IDs deduplicate requests and deliveries even when
+capture and sharing are combined, including retries after a core restart.
+The editor bridge ships with the modules for source and release installations.
+
+`task`, `context`, `agent`, and `question` accept `help`; `commands --json` describes
+all argument/result schemas. Human and agent clients invoke the same commands.
+Named terminals inherit the core's workspace/socket settings, so an agent calling
+the CLI reaches the same workspace interface. Task and question updates use
+revision checks to preserve concurrent human decisions.
+
+File captures record a hash of the saved source, path, and line range. Diff
+captures disable external diff/textconv commands and hash the tracked diff.
+Changed sources are marked stale and rejected during export/delivery unless a
+caller explicitly allows stale context. `context refresh <id>` retains the
+identity and records a new revision. Notes and output are captured snapshots,
+not continuously updated inputs. Context text is bounded to 32 KiB per item;
+truncation is visible, and deliveries include source revisions and capture times.
+Files must be regular text files up to 1 MiB within the selected checkout.
+
+The first native adapter uses the installed `codex app-server --stdio` protocol
+and your Codex login/configuration. It starts a worker as a named tmux process,
+so daemon or TUI disconnects leave its provider and conversation running. Native
+thread and turn IDs are exposed explicitly. Restarting the named worker resumes
+its saved exact thread; it never uses a provider's implicit “last conversation”.
+Native mode uses workspace-write sandboxing and on-request approvals. Command,
+file-change approvals, and provider user-input questions are supported; unknown
+provider requests are rejected visibly. Provider approvals require a `human` or
+`human:<name>` actor; agent-labeled clients cannot approve them. Actor labels
+remain cooperative attribution, not an authentication boundary. A corrupt
+checkpoint prevents startup; a checkpoint write failure disables new sends until
+storage is restored and the worker is restarted. Generic agent CLIs remain available as
+ordinary named terminal processes, with no invented native send/resume capabilities.
+
+Each delivery has a durable receipt containing the exact text/context sent.
+`sent` means the provider accepted a turn, not that its task succeeded. If an
+acknowledgement is lost, the receipt remains `pending`/`unknown`; inspect it to
+reconcile against the worker's receipt. Reusing an actor/request ID returns the
+previous delivery rather than sending twice. The TUI never automatically retries
+mutations. Recent receipt lists omit large text; inspect an ID for the full payload.
+Native conversation previews retain the latest 32 bounded messages; complete
+provider history remains with Codex. This is cooperative file access: arbitrary
+editors and agents can both write files, and the harness does not lock them out.
+
+For Neovim, explicitly load the optional selection bridge:
+
+```lua
+dofile('/path/to/supertree/editor/supertree.lua').setup({
+  command = { '/path/to/supertree/dev', 'next' },
+})
+```
+
+Select saved lines and run `:'<,'>SupertreeContext`. It uses the same CLI capture
+command, reports the context ID, and leaves delivery to you. Unsaved buffers must
+be saved first; the bridge never silently writes them. Other editors can invoke
+the CLI with a file path and line range directly. No symlinks or plugin install
+are required to test this bridge locally.
+
 ### Releases
 
-Pull requests to `main` run the shell test suite on Ubuntu and macOS. A merge
-to `main` triggers the release workflow, which tests the merged commit and
+Pull requests to `main` run Go and shell tests on Ubuntu and macOS, cross-build
+the release matrix, and verify the native binary and asset checksums. A merge
+to `main` triggers the release workflow, which checks each released commit with
+the shell suite, Go vet, and Go race tests before building its assets. It
 publishes `install.sh`, `st.tar.gz`, a legacy upgrade entrypoint named `st`,
-`supertree.conf`, and `SHA256SUMS` as a GitHub
-Release. `st update` then sees the new release automatically.
+`supertree.conf`, four standalone core binaries, and `SHA256SUMS` as a GitHub
+Release. The core asset names are `st-next-darwin-amd64`, `st-next-darwin-arm64`,
+`st-next-linux-amd64`, and `st-next-linux-arm64`. All binaries are built with
+CGO disabled and include the release version and commit. The shell archive
+contains no platform binaries and remains compatible with older upgraders.
+Historical commits predating core packaging produce shell assets only.
+`st update` sees the new release automatically.
+
+Build the same assets locally without tagging or uploading:
+
+```sh
+./dev package                         # working tree; version dev; .dev/releases
+bash scripts/package-release.sh /tmp/st-release v0.0.0-test
+(cd /tmp/st-release && shasum -a 256 -c SHA256SUMS)
+```
+
+These commands require Go and overwrite generated assets in the selected output
+directory. Release publication builds from the exact archived Git commit.
 
 Each merged pull request gets a patch version by default. Add the
 `release:minor` or `release:major` label before merging to request a larger
@@ -135,7 +857,8 @@ running. The first automated release includes changes since the last manual
 release.
 
 In GitHub repository settings, require pull requests and the `Shell tests
-(ubuntu-latest)` and `Shell tests (macos-latest)` checks for `main`. Disable
+(ubuntu-latest)`, `Shell tests (macos-latest)`, `Go tests (ubuntu-latest)`, and
+`Go tests (macos-latest)` checks for `main`. Disable
 direct pushes and rebase merging to preserve one release per merged pull
 request. Create the optional `release:minor`, `release:major`, and
 `release:skip` labels in the repository. The release workflow uses the
@@ -150,7 +873,11 @@ st update
 `st update` checks GitHub for the latest release and installs it immediately when
 a newer version is available. It verifies the release installer, then uses it to
 refresh the command, modules, and tmux bindings together while keeping your
-chosen harness and window layout. Release assets are checked before the current
+chosen harness, window layout, and optional core choice. Core downloads are
+verified before replacement and stay paired with their shell release. A running
+daemon keeps its loaded code; after upgrading the core, run `st next daemon stop`
+then `st next daemon start` to load the new version without closing terminal programs.
+Release assets are checked before the current
 executable is replaced. The update reports its network steps immediately and
 times out if a release request stalls. Run `st --version` to see the installed version.
 
@@ -284,9 +1011,61 @@ newer it refreshes every two seconds while open and fills in the uncommitted
 (`±`) and unpushed (`↑`) counts shortly after it opens.
 
 Prefix stays `C-a`. `M-arrow` pane movement and `S-Enter` are untouched.
-`status-left` shows the agent state and current repository/branch. Long tree names
-keep their start and end with an ellipsis in the middle, so the tree you are
-typing into stays identifiable.
+The top strip shows the current repository/branch and your configured tab slots
+(`1 agent`, `2 vim`, `3 shell` by default). These labels leave the actual Codex,
+Neovim and shell windows and their shortcuts in place. Long tree names keep
+their start and end with an ellipsis. Below 100 columns the tabs become numbers.
+The strip stays one row high at every size, leaving the remaining rows for your
+programs without blank rows above or below the navigation.
+Resizing preserves sidebar visibility, terminal programs and keyboard focus.
+The strip uses native tmux formats, without launching a command on each redraw.
+
+Supertree fills the terminal cell grid. Gutters outside that grid belong to the
+terminal emulator; neither tmux nor an application inside it can draw there.
+For an edge-to-edge workspace, set the host terminal's padding to zero:
+
+- [WezTerm](https://wezterm.org/config/lua/config/window_padding.html), in `wezterm.lua`:
+
+  ```lua
+  config.window_padding = { left = 0, right = 0, top = 0, bottom = 0 }
+  config.enable_scroll_bar = false
+  ```
+
+- [Ghostty](https://ghostty.org/docs/config/reference#window-padding-x), in its config:
+
+  ```ini
+  window-padding-x = 0
+  window-padding-y = 0
+  window-padding-balance = false
+  ```
+
+- [Kitty](https://sw.kovidgoyal.net/kitty/conf/#opt-kitty.window_padding_width), in `kitty.conf`:
+
+  ```conf
+  window_padding_width 0
+  window_margin_width 0
+  single_window_padding_width 0
+  single_window_margin_width 0
+  ```
+
+These are terminal preferences, not Supertree settings. Whole terminal cells
+may still leave a thin pixel remainder at the edge of an arbitrarily sized
+window; OS full-screen mode does not remove configured terminal padding.
+Zero padding alone cannot eliminate that remainder. To make it blend into the
+workspace, WezTerm can use the same default background as Supertree's dark
+surface (use `#f6f7f9` with the light theme):
+
+```lua
+config.colors = config.colors or {}
+config.colors.background = '#0f131b'
+```
+
+[Ghostty](https://ghostty.org/docs/config/reference#window-padding-color) can
+extend the nearest cell's color with `window-padding-color = extend-always`;
+[Kitty](https://sw.kovidgoyal.net/kitty/conf/#opt-kitty.padding_fill_strategy)
+offers `padding_fill_strategy neighboring_cell`. Support depends on the terminal
+version. These affect the fill outside the grid; they do not give the TUI more
+rows or columns. Supertree's split dividers use its workspace surface as well.
 
 Agent state appears in `st ls` and the `M-w` picker. `running` means the agent
 process is active, `input` means its pane shows a prompt, `done` means the agent
@@ -361,13 +1140,21 @@ ST_TAB_dev='npm run dev'
 ST_TAB_git='lazygit'
 ```
 
-Program panes use your terminal's background, without card padding or title
-rows. Split panes get a quiet divider; a single program uses the full area.
+Program panes share the workspace background (`#121212` in the dark theme).
+Codex and shells inherit it for default-colour cells. Neovim launched through
+Supertree gets a local palette overlay for its surfaces and syntax, including
+after a lazy colourscheme loads. Your Vim configuration, plugins, mappings and
+buffers stay in place; Vim opened outside Supertree keeps its usual theme.
+Set `ST_PROGRAM_THEME=native` in the Supertree config to keep native program
+themes and terminal backgrounds, or use `ST_THEME=ansi` for terminal-owned colours.
+The editor overlay applies to newly launched Vim instances. An existing editor
+can load it with `:lua dofile('/path/to/supertree/bin/st-lib/program-theme.lua').setup()`.
+Split panes get a quiet divider; a single program uses the full area.
 
-Tree sessions show their windows as tabs at the top (`1. codex ●`, `2. nvim`,
-`3. shell`). The active tab is underlined, and the current repository and branch
-appear on the left after the agent's state (`●` running, `◆` waiting for you,
-`○` exited). Other tmux sessions keep your own status line.
+Tree sessions show their configured windows as tabs at the top (`1 agent`,
+`2 vim`, `3 shell` by default), with a cyan label and filled background on the
+active tab. The current repository and branch appear on the left. Other tmux
+sessions keep your own status line.
 
 When an agent in another tree starts waiting for you, tmux shows a short notice
 (`◆ webauth/feat-otp needs you · M-w`) to every terminal looking at a different
@@ -629,12 +1416,20 @@ Some terminals can be set to draw symbols like `●` and `◆` two columns wide,
 shifts rows and tabs out of line; `ST_ASCII=1` fixes that.
 Supertree uses explicit colours rather than your terminal's theme. Dark UI surfaces
 use neutral charcoal (`#121212`) and matching RGB and 256-colour grays; accent
-colours use approximations in 256-colour mode. Program panes keep your terminal's
-background. Terminals limited to 16 colours use their own palette. Set
+colours use approximations in 256-colour mode. Program panes use the workspace
+surface by default; `ST_PROGRAM_THEME=native` keeps their terminal background.
+Terminals limited to 16 colours use their own palette. Set
 `ST_THEME=light` in the config for a light background, or `ST_THEME=ansi` to use
 your terminal theme's own colours. `st _palette` prints every colour as your
 terminal draws it. The pickers and the sidebar use the same colours and ignore
 `FZF_DEFAULT_OPTS`, so your own fzf theme does not change them.
+The Go controls and sharing messages use these same eight roles: cyan actions,
+amber input/warnings, blue running, green verified success, red errors, muted
+secondary text, and magenta repositories. Waiting questions receive bold
+emphasis; a completed agent turn does not imply that the shared goal succeeded.
+Existing tab/split/sidebar shortcuts remain unchanged. The local launcher forwards
+theme and ASCII preferences into the controls, including popup launches. Terminal
+fonts stay under your terminal's configuration.
 When output is piped or redirected, `st` prints the plain `:: msg` and `st: msg`
 lines it always has, so scripts keep working.
 

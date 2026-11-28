@@ -10,7 +10,11 @@ export ST_STATE="$BENCH_ROOT/state"
 export ST_CONFIG="$BENCH_ROOT/config"
 export ST_WORKTREE_ROOT="$BENCH_ROOT/worktrees"
 mkdir -p "$HOME/.local/bin" "$ST_STATE" "$ST_WORKTREE_ROOT"
-printf 'ST_HARNESS=codex\n' > "$ST_CONFIG"
+printf 'ST_HARNESS=codex\nST_SIDEBAR=0\n' > "$ST_CONFIG"
+# A warm switch must exercise the current layout, not silently benchmark an
+# upgrade on every sample. Keep an explicit upgrade case for that slower path.
+export ST_BENCH_LAYOUT
+ST_BENCH_LAYOUT=$(bash -c 'st_register_command() { :; }; . "$1"; printf "%s" "$ST_LAYOUT_VERSION"' _ "$ROOT/bin/st-lib/50-tmux.sh")
 printf '#!/bin/sh\ncat >/dev/null\nexit 130\n' > "$HOME/.local/bin/fzf"
 chmod +x "$HOME/.local/bin/fzf"
 cat > "$HOME/.local/bin/tmux" <<'EOF'
@@ -24,7 +28,8 @@ case ${1:-} in
   show-options)
     case $* in
       *'@supertree_home'*) printf '1\n';;
-      *'@st_layout'*) printf '5\n';;
+      *'@st_layout'*) printf '%s\n' "${ST_BENCH_LAYOUT_OVERRIDE:-$ST_BENCH_LAYOUT}";;
+      *'@st_config'*) printf 'codex|agent vim shell|%s|terminal\n' "${SHELL:-/bin/zsh}";;
     esac;;
   list-windows)
     case $* in
@@ -64,7 +69,9 @@ for i in $(seq 1 "$BENCH_REPOS"); do
 done > "$ST_STATE/sidebar/rows"
 
 python3 - "${ST_BENCH_BIN:-$ROOT/bin/st}" "$BENCH_REPOS" "$BENCH_BRANCHES" <<'PY'
+import math
 import os
+import platform
 import statistics
 import subprocess
 import sys
@@ -73,11 +80,20 @@ import time
 st = sys.argv[1]
 repos, branches = map(int, sys.argv[2:4])
 cwd = os.path.join(os.environ["ST_WORKTREE_ROOT"], "repo1", "branch1")
+print('Command overhead with fixture tmux/fzf; excludes terminal attach, drawing, and provider startup.')
+print(f'Host: {platform.platform()}; architecture: {platform.machine()}; logical CPUs: {os.cpu_count()}')
+for tool in (["git", "--version"], ["bash", "--version"], ["python3", "--version"]):
+    version = subprocess.check_output(tool, text=True).splitlines()[0]
+    print(version)
+print('tmux/fzf: deterministic fixtures, not real terminal sessions.')
+print('State: fresh fixture per invocation; initialized repo/sidebar caches; eight fresh CLI processes per case.')
+print('No cold-OS-cache eviction; home-new/layout-upgrade exercise simulated branches; p95 is the maximum of eight samples.')
 cases = (
     ("home existing", [], {"ST_BENCH_HOME_MODE": "existing"}),
     ("home new", [], {"ST_BENCH_HOME_MODE": "new"}),
     ("direct open", ["open"], {}),
     ("tree query", ["go", "repo1/branch1"], {}),
+    ("layout upgrade", ["go", "repo1/branch1"], {"ST_BENCH_LAYOUT_OVERRIDE": "old"}),
     ("home sidebar redraw", ["_sidebar-rows"], {}),
     ("picker", ["go"], {}),
     ("tree discovery", ["_sessions"], {}),
@@ -94,7 +110,8 @@ for name, args, extra_env in cases:
         if result.returncode:
             raise SystemExit(f"{name} failed: {result.returncode}")
         samples.append((time.perf_counter() - start) * 1000)
-    print(f"{name}: median {statistics.median(samples):.1f} ms; "
+    p95 = sorted(samples)[math.ceil(len(samples) * .95) - 1]
+    print(f"{name}: p50 {statistics.median(samples):.1f} ms; p95 {p95:.1f} ms; "
           f"range {min(samples):.1f}-{max(samples):.1f} ms "
           f"(8 runs, {repos} repos, {repos * branches} worktrees)")
 PY

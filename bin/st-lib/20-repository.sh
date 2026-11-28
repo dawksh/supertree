@@ -279,6 +279,11 @@ list_repo_trees() {
 # (repo/branch); a short hash is added only where two trees would collide.
 list_trees() {
   local r pid repo branch path sess clash root live batch count=0 i failed=0
+  local include_checkout=''
+  if [ "$#" -gt 0 ]; then
+    [ "$#" -eq 2 ] && [ "$1" = --include-checkout ] || return 2
+    include_checkout=$2
+  fi
   [ -f "$ST_REPOS" ] || return 0
   live=$(tmux list-sessions -F '#S' 2>/dev/null || true)
   root=$(cd "$ST_WORKTREE_ROOT" 2>/dev/null && pwd -P || printf '%s' "$ST_WORKTREE_ROOT")
@@ -323,7 +328,9 @@ list_trees() {
     }' | while IFS=$'\t' read -r repo branch path orphan sess clash; do
     [ "$clash" = 0 ] || sess="$sess-$(identity_hash "$branch" | cut -c1-6)"
     case $'\n'"$live" in *$'\n'"$repo/"*) sess=$(live_hashed_session "$repo" "$branch" "$sess" "$live");; esac
-    [ "$orphan" = 0 ] || tmux has-session -t "=$sess" 2>/dev/null || continue
+    # An explicit open can start the main checkout before its first worktree.
+    # Ordinary tree pickers still omit inactive repositories with no trees.
+    [ "$orphan" = 0 ] || [ "$path" = "$include_checkout" ] || tmux has-session -t "=$sess" 2>/dev/null || continue
     printf '%s\t%s\t%s\t%s\n' "$repo" "$branch" "$path" "$sess"
   done
 }

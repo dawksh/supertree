@@ -116,6 +116,7 @@ EOF
     pane=$lent; state=${row%%"$tab"*}; command=${row#*"$tab"}
   fi
   if [ "$state" = done ]; then printf 'done'; return; fi
+  case $state in native:waiting) printf input; return;; native:running|native:connecting) printf running; return;; native:*) printf done; return;; esac
   if [ -z "$state" ]; then
     # Sessions created before status tracking have no pane option yet.
     bin=$(harness_bin)
@@ -160,6 +161,9 @@ agent_statuses() {
         s = order[i]; status = "running"
         if (s in pane) { state[s] = pane_state[pane[s]]; command[s] = pane_command[pane[s]] }
         if (!(s in pane) || state[s] == "done") status = "done"
+        else if (state[s] == "native:waiting") status = "input"
+        else if (state[s] == "native:running" || state[s] == "native:connecting") status = "native-running"
+        else if (state[s] ~ /^native:/) status = "done"
         else if (state[s] == "" && command[s] != bin && command[s] != "node" && command[s] != "bun") status = "done"
         printf "%s\037%s\037%s\n", s, status, pane[s]
       }
@@ -172,6 +176,7 @@ $rows
 EOF
   waiting=$'\n'$(panes_waiting_for_input "$running")$'\n'
   while IFS=$'\037' read -r sess status pane; do
+    [ "$status" != native-running ] || status=running
     if [ "$status" = running ]; then
       case $waiting in *$'\n'"$pane"$'\n'*) status=input;; esac
     fi
@@ -273,10 +278,41 @@ set_agent_status() {
   tmux set-option -pq -t "$TMUX_PANE" @st_agent_state "$1" 2>/dev/null || true
 }
 
+# Normal launches follow the release even when a Go binary happens to exist.
+# Only an explicit opt-in adds the launch-scoped MCP connection.
+harness_launch() {
+  local provider=$1 binary=$st_bin_dir/st-next
+  shift
+  [ "$ST_VERSION" = dev ] || binary=$st_lib_dir/st-next
+  if [ "${ST_AGENT_TOOLS:-0}" = 1 ] && [ -x "$binary" ]; then
+    export ST_STATE ST_WORKTREE_ROOT
+    "$binary" harness "$provider" -- "$@"
+  else
+    "$provider" "$@"
+  fi
+}
+
 cmd_run() {
   case ${1:-} in
     _agent) cmd_harness || true;;
     _claude) ST_HARNESS=claude cmd_harness || true;; # old live sessions
+    codex|claude) harness_launch "$@" || true;;
+    nvim)
+      shift
+      local bridge="$st_lib_dir/editor.lua" surface="$st_lib_dir/program-theme.lua" client=''
+      local init=()
+      if [ -f "$surface" ]; then
+        init+=(--cmd 'lua dofile(vim.env.ST_EDITOR_THEME).setup({theme=vim.env.ST_THEME,mode=vim.env.ST_PROGRAM_THEME})')
+      fi
+      if [ "${ST_AGENT_TOOLS:-0}" = 1 ] || [ "${ST_AGENT_MODE:-terminal}" = paired ]; then
+        if [ -f "$bridge" ]; then client=$(next_binary 2>/dev/null) || client=''; fi
+      fi
+      if [ -n "$client" ]; then
+        init+=(--cmd 'lua dofile(vim.env.ST_EDITOR_BRIDGE).setup({command={vim.env.ST_EDITOR_COMMAND}})')
+      fi
+      ST_THEME="${ST_THEME:-dark}" ST_PROGRAM_THEME="${ST_PROGRAM_THEME:-workspace}" ST_EDITOR_THEME="$surface" \
+        ST_AGENT_MODE="${ST_AGENT_MODE:-terminal}" ST_EDITOR_BRIDGE="$bridge" ST_EDITOR_COMMAND="$client" \
+        nvim ${init[@]+"${init[@]}"} "$@" || true;;
     *) "$@" || true;;
   esac
   exec "$(tree_shell)" -l
@@ -287,6 +323,12 @@ cmd_harness() {
   main=$(main_worktree .) || true
   # Return instead of die so cmd_run still drops the pane into a shell.
   [ -n "$main" ] || { info "not inside a git repository"; return 1; }
+  if [ "${ST_AGENT_MODE:-terminal}" = paired ] && [ "$ST_HARNESS" = codex ]; then
+    bin=$(next_binary) || return
+    "$bin" pair run
+    return
+  fi
+  [ -z "${TMUX_PANE:-}" ] || tmux set-option -w -t "$TMUX_PANE" @st_agent_mode terminal 2>/dev/null || true
   repo=$(repo_key "$main")
   branch=$(tree_branch .)
   slug=$(branch_key "${branch:-(detached)}")
@@ -309,8 +351,8 @@ cmd_harness() {
     case $ST_HARNESS in
       # None of these CLIs document an exit code for "nothing to continue", so
       # any failure falls through to the shell rather than discarding the session.
-      claude) claude --continue || info "Claude Code exited with an error; run 'claude' to start fresh";;
-      codex) codex --no-daemon resume --last || info "Codex exited with an error; run 'codex' to start fresh";;
+      claude) harness_launch claude --continue || info "Claude Code exited with an error; run 'claude' to start fresh";;
+      codex) harness_launch codex --no-daemon resume --last || info "Codex exited with an error; run 'codex' to start fresh";;
       openrouter) opencode --continue || info "OpenCode exited with an error; run 'opencode' to start fresh";;
       *) if [ -n "$ST_HARNESS_RESUME_COMMAND" ]; then
            eval "$ST_HARNESS_RESUME_COMMAND" || eval "$ST_HARNESS_COMMAND"
@@ -321,8 +363,8 @@ cmd_harness() {
   else
     : > "$marker"
     case $ST_HARNESS in
-      claude) claude;;
-      codex) codex --no-daemon;;
+      claude) harness_launch claude;;
+      codex) harness_launch codex --no-daemon;;
       openrouter) opencode;;
       *) eval "$ST_HARNESS_COMMAND";;
     esac

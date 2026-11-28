@@ -30,6 +30,13 @@ fi
 
 # tmux may launch this outside an interactive shell
 PATH="$HOME/.local/bin:$HOME/.opencode/bin:/opt/homebrew/bin:$PATH"
+# Keep the test runner's socket guard ahead of system binaries. Fixture-specific
+# mocks in the disposable HOME still take precedence.
+if [ -n "${SUPERTREE_TEST_SANDBOX:-}" ] && [ -x "$SUPERTREE_TEST_SANDBOX/bin/tmux" ]; then
+  PATH="$HOME/.local/bin:$SUPERTREE_TEST_SANDBOX/bin:$PATH"
+fi
+# The local launcher supplies wrappers for this checkout and its isolated tmux.
+if [ -n "${ST_DEV_ROOT:-}" ]; then PATH="$ST_DEV_ROOT/.dev/bin:$PATH"; fi
 
 # Repair must be available before config and modules are loaded: either may be
 # damaged on an installed machine. Reuse the verified release installer so the
@@ -118,6 +125,9 @@ ST_HARNESS=${ST_HARNESS:-claude}
 ST_HARNESS_COMMAND=${ST_HARNESS_COMMAND:-}
 ST_HARNESS_RESUME_COMMAND=${ST_HARNESS_RESUME_COMMAND:-}
 ST_WINDOWS=${ST_WINDOWS-'agent vim shell'}
+ST_AGENT_MODE=${ST_AGENT_MODE:-terminal}
+ST_AGENT_TOOLS=${ST_AGENT_TOOLS:-0}
+ST_PROGRAM_THEME=${ST_PROGRAM_THEME:-workspace}
 
 # Keep NO_COLOR for st's own UI. session_environment and shell_command remove it
 # from tmux panes so agents still use the terminal's colors.
@@ -146,6 +156,7 @@ fi
 [ -f "$st_lib_dir/00-core.sh" ] || { printf 'st: missing modules in %s\n' "$st_lib_dir" >&2; exit 1; }
 # shellcheck disable=SC1090
 . "$st_lib_dir/00-core.sh"
+case $ST_PROGRAM_THEME in workspace|native) ;; *) die 'ST_PROGRAM_THEME must be workspace or native';; esac
 
 # Slot 0 is a placeholder: bash 3.2 treats an empty array as unset under set -u.
 ST_COMMAND_NAMES=('')

@@ -33,26 +33,30 @@ if [ -n "$real_tmux" ]; then
   # The modules register their commands at source time; these functions are
   # exercised against an isolated server with no user's sessions or config.
   . "$ROOT/bin/st-lib/05-ui.sh"
+  . "$ROOT/bin/st-lib/45-chrome.sh"
   . "$ROOT/bin/st-lib/50-tmux.sh"
   . "$ROOT/bin/st-lib/55-sidebar.sh"
 
   export ST_SIDEBAR_WIDTH=24
   style_session 'repo/main'
+  style_panes '=repo/main:'
   tmux set-option -t '=repo/main:' @supertree_label 'repo/main'
-  tmux set-option -t '=repo/main:' @st_state_glyph "$G_IN"
-  left=$(tmux show-options -v -t '=repo/main:' status-left)
-  rendered=$(tmux display-message -p -t '=repo/main:' -F "$left" | sed 's/#\[[^]]*\]//g')
-  case $rendered in *"$G_IN repo/main"*) ;; *) fail 'status-left omitted tree and state';; esac
-  [ "$(tmux show-options -v -t '=repo/main:' status-left-length)" = 25 ] ||
-    fail 'status-left no longer aligns with default sidebar width'
+  tmux set-option -t '=repo/main:' @st_tree_state input
+  # The top strip holds tabs only; the tree label and hints live in the pane bottom bar.
+  [ -z "$(tmux show-options -v -t '=repo/main:' status-left)" ] || fail 'status-left still shows tree chrome'
+  bottom=$(tmux show-options -wv -t '=repo/main:' pane-border-format)
+  rendered=$(tmux display-message -p -t '=repo/main:' -F "$bottom" | sed 's/#\[[^]]*\]//g')
+  case $rendered in *'repo/main'*) ;; *) fail 'bottom bar omitted tree';; esac
+  # A detached 80-column session uses a compact hint; the picker carries detail.
+  case $rendered in *'M-w'*) ;; *) fail 'bottom bar omitted picker hint';; esac
 
   tmux set-option -t '=repo/main:' @supertree_label 'webauth/a-very-long-feature-branch-name'
-  rendered=$(tmux display-message -p -t '=repo/main:' -F "$left" | sed 's/#\[[^]]*\]//g')
-  case $rendered in *'webauth/a-…ranch-name'*) ;; *) fail 'long tree label did not keep both ends';; esac
+  rendered=$(tmux display-message -p -t '=repo/main:' -F "$bottom" | sed 's/#\[[^]]*\]//g')
+  case $rendered in *'webauth/a-v…ranch-name'*) ;; *) fail "long tree label did not keep both ends: $rendered";; esac
 
   ST_SIDEBAR_WIDTH=30 style_session 'repo/main'
-  [ "$(tmux show-options -v -t '=repo/main:' status-left-length)" = 31 ] ||
-    fail 'status-left no longer follows a custom sidebar width'
+  [ "$(tmux show-options -v -t '=repo/main:' status-left-length)" = 200 ] ||
+    fail 'status-left still reserves a sidebar-sized block'
 
   old=$(printf 'repo\tmain\trunning\t/tree\trepo/main')
   new=$(printf 'repo\tmain\tinput\t/tree\trepo/main')
@@ -66,4 +70,4 @@ if [ -n "$real_tmux" ]; then
     fail 'unchanged or disabled notification sent a desktop notice'
 fi
 
-printf 'ok: status-left alignment, middle truncation, and desktop notices\n'
+printf 'ok: workspace identity, compact hint, middle truncation, and desktop notices\n'

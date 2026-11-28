@@ -2,10 +2,10 @@
 # supertree tmux module
 
 # The theme is part of it so open sessions restyle after ST_THEME changes.
-ST_LAYOUT_VERSION=10${ST_THEME:+-$ST_THEME}
+ST_LAYOUT_VERSION=15-${ST_THEME:-dark}-${ST_PROGRAM_THEME:-workspace}
 
 layout_signature() {
-  printf '%s|%s|%s' "$ST_HARNESS" "$ST_WINDOWS" "${ST_SHELL:-${SHELL:-/bin/zsh}}"
+  printf '%s|%s|%s|%s' "$ST_HARNESS" "$ST_WINDOWS" "${ST_SHELL:-${SHELL:-/bin/zsh}}" "${ST_AGENT_MODE:-terminal}"
 }
 
 tree_shell() {
@@ -22,7 +22,7 @@ shell_command() {
 # command that created the session. Pin the resolved choices on this session.
 session_environment() {
   local target="=$1" signature
-  signature="$HOME|$(tree_shell)|$ST_CONFIG|$ST_STATE|$ST_WORKTREE_ROOT|$ST_HARNESS|$ST_WINDOWS|$ST_HARNESS_COMMAND|$ST_HARNESS_RESUME_COMMAND|${ST_SHELL:-}|color"
+  signature="$HOME|$(tree_shell)|$ST_CONFIG|$ST_STATE|$ST_WORKTREE_ROOT|$ST_HARNESS|$ST_WINDOWS|$ST_HARNESS_COMMAND|$ST_HARNESS_RESUME_COMMAND|${ST_SHELL:-}|color|${ST_AGENT_MODE:-terminal}|${ST_AGENT_TOOLS:-0}|${ST_THEME:-dark}|${ST_PROGRAM_THEME:-workspace}"
   [ "$(tmux show-options -qv -t "$target:" @st_environment 2>/dev/null)" != "$signature" ] || return 0
   tmux set-environment -t "$target" HOME "$HOME"
   tmux set-environment -t "$target" SHELL "$(tree_shell)"
@@ -31,6 +31,10 @@ session_environment() {
   tmux set-environment -t "$target" ST_WORKTREE_ROOT "$ST_WORKTREE_ROOT"
   tmux set-environment -t "$target" ST_HARNESS "$ST_HARNESS"
   tmux set-environment -t "$target" ST_WINDOWS "$ST_WINDOWS"
+  tmux set-environment -t "$target" ST_AGENT_MODE "${ST_AGENT_MODE:-terminal}"
+  tmux set-environment -t "$target" ST_AGENT_TOOLS "${ST_AGENT_TOOLS:-0}"
+  tmux set-environment -t "$target" ST_THEME "${ST_THEME:-dark}"
+  tmux set-environment -t "$target" ST_PROGRAM_THEME "${ST_PROGRAM_THEME:-workspace}"
   tmux set-environment -t "$target" ST_HARNESS_COMMAND "$ST_HARNESS_COMMAND"
   tmux set-environment -t "$target" ST_HARNESS_RESUME_COMMAND "$ST_HARNESS_RESUME_COMMAND"
   tmux set-environment -t "$target" ST_SHELL "${ST_SHELL:-}"
@@ -164,9 +168,9 @@ create_window() {
   name=$(window_name "$type")
   # The first pane starts before session_environment can remove NO_COLOR from
   # tmux's server environment. Keep the user's UI preference out of programs.
-  printf -v run 'env -u NO_COLOR HOME=%q SHELL=%q ST_CONFIG=%q ST_STATE=%q ST_WORKTREE_ROOT=%q ST_HARNESS=%q ST_WINDOWS=%q ST_HARNESS_COMMAND=%q ST_HARNESS_RESUME_COMMAND=%q ST_SHELL=%q %q _run' \
+  printf -v run 'env -u NO_COLOR HOME=%q SHELL=%q ST_CONFIG=%q ST_STATE=%q ST_WORKTREE_ROOT=%q ST_HARNESS=%q ST_WINDOWS=%q ST_HARNESS_COMMAND=%q ST_HARNESS_RESUME_COMMAND=%q ST_SHELL=%q ST_THEME=%q ST_PROGRAM_THEME=%q ST_AGENT_MODE=%q ST_AGENT_TOOLS=%q %q _run' \
     "$HOME" "$(tree_shell)" "$ST_CONFIG" "$ST_STATE" "$ST_WORKTREE_ROOT" \
-    "$ST_HARNESS" "$ST_WINDOWS" "$ST_HARNESS_COMMAND" "$ST_HARNESS_RESUME_COMMAND" "${ST_SHELL:-}" "$self"
+    "$ST_HARNESS" "$ST_WINDOWS" "$ST_HARNESS_COMMAND" "$ST_HARNESS_RESUME_COMMAND" "${ST_SHELL:-}" "${ST_THEME:-dark}" "${ST_PROGRAM_THEME:-workspace}" "${ST_AGENT_MODE:-terminal}" "${ST_AGENT_TOOLS:-0}" "$self"
   case $type in
     agent) cmd=("$run _agent");;
     vim) cmd=("$run nvim");;
@@ -184,58 +188,91 @@ create_window() {
 
 # Tab look is set per session and window so other tmux sessions keep the user's status bar.
 style_session() {
-  local width=$(( ${ST_SIDEBAR_WIDTH:-24} + 1 )) label_width left_half right_half left label
-  label_width=$((width - 4))
-  left_half=$(((label_width - 1) / 2))
-  right_half=$((label_width - 1 - left_half))
-  # Keep the tab strip aligned with the configured sidebar width. A long name
-  # keeps both ends so its repo and branch suffix stay identifiable.
-  label="#{?#{==:#{@supertree_label},#{=$label_width:@supertree_label}},#{@supertree_label},#{=$left_half:@supertree_label}$G_MORE#{=-$right_half:@supertree_label}}"
-  # Repo in its colour, branch bold. A name cut before its slash stays plain.
-  label="#{s|^([^/$G_MORE]*/)|#[fg=$UI_REPO_T]\\1#[fg=$UI_TEXT_T]#[bold]|:$label}"
-  left=" #{?@supertree_home,#{p$((width - 2)):@supertree_label},#{?@st_state_glyph,#{@st_state_glyph},${G_OFF:-·}} #{p$label_width:$label}#[default]} "
   tmux set-option -t "=$1:" default-shell "$(tree_shell)" &&
   tmux set-option -t "=$1:" status-position top &&
   tmux set-option -t "=$1:" status-justify left &&
   tmux set-option -t "=$1:" status-style "fg=$UI_TEXT_T,bg=$UI_BAR_T" &&
   tmux set-option -t "=$1:" message-style "fg=$UI_TEXT_T,bg=$UI_TAB_T" &&
-  tmux set-option -t "=$1:" status-left-length "$width" &&
-  tmux set-option -t "=$1:" status-left "$left" &&
-  tmux set-option -t "=$1:" status-right-length 80 &&
-  # @st_need_text (global, opt-in) and @st_state_glyph (per tree) come from the sidebar refresher.
-  tmux set-option -t "=$1:" status-right "#{?@st_need_text,#[fg=$UI_PANEL_T]#[bg=$UI_IN_T]#[bold] #{@st_need_text} #[default] ,}" &&
-  tmux set-option -t "=$1:" status on &&
+  style_chrome "$1" &&
   # When a tree's last program exits, switch to the most recent session instead of
   # leaving tmux. Session-scoped, so the global setting is untouched.
   tmux set-option -t "=$1:" detach-on-destroy off
 }
 
 style_tab() {
-  local target=$1 slot=$2 label
-  # @st_tab_state comes from the sidebar refresher (running/input); without it, fall back to the pane state.
-  label='#{?@st_slot,#{@st_slot}. ,}#W'
-  label="$label#{?@st_tab_state,#{?#{==:#{@st_tab_state},input}, #[fg=$UI_IN_T]$G_IN,#{?#{==:#{@st_tab_state},running}, #[fg=$UI_RUN_T]$G_RUN,}},#{?#{==:#{@st_agent_state},running}, #[fg=$UI_RUN_T]$G_RUN,}}"
+  local target=$1 slot=$2 role='' index=0 type
+  if [ -n "$slot" ]; then
+    while read -r type; do
+      index=$((index + 1))
+      [ "$index" != "$slot" ] || { role=$type; break; }
+    done <<EOF
+$(configured_windows)
+EOF
+  fi
+  chrome_formats
   tmux set-option -w -t "$target" @st_slot "$slot" &&
-  tmux set-option -w -t "$target" window-status-separator '  ' &&
-  tmux set-option -w -t "$target" window-status-format "#[fg=$UI_DIM_T] $label #[default]" &&
-  tmux set-option -w -t "$target" window-status-current-format "#[fg=$UI_A_T]#[bg=$UI_TAB_T]#[bold] $label #[default]" &&
+  tmux set-option -w -t "$target" @st_tab_label "$role" &&
+  tmux set-option -w -t "$target" window-status-separator '' &&
+  tmux set-option -w -t "$target" window-status-format "$CHROME_TAB" &&
+  tmux set-option -w -t "$target" window-status-current-format "$CHROME_TAB_CURRENT" &&
   tmux set-option -w -t "$target" window-status-current-style default &&
   style_panes "$target"
 }
 
-# Keep program panes on the user's terminal background. Only split panes need a
-# divider; a single program gets the full height without an empty title row.
+# Default-colour cells in Codex and shells share the workspace surface. Programs
+# retain explicit colours; native mode leaves their terminal defaults alone.
 style_panes() {
-  local target=$1
-  tmux set-option -w -t "$target" pane-border-status off
-  tmux set-option -w -t "$target" pane-border-style "fg=$UI_BORDER_T,bg=default"
-  tmux set-option -w -t "$target" pane-active-border-style "fg=$UI_DIM_T,bg=default"
+  local target=$1 background=default surface='fg=default,bg=default'
+  if [ "${ST_PROGRAM_THEME:-workspace}" = workspace ]; then
+    background=$UI_PANEL_T
+    surface="fg=$UI_TEXT_T,bg=$background"
+  fi
+  chrome_formats
+  tmux set-option -w -t "$target" pane-border-status bottom
+  tmux set-option -w -t "$target" pane-border-format "$CHROME_BOTTOM"
+  tmux set-option -w -t "$target" pane-border-style "fg=$UI_BORDER_T,bg=$background"
+  tmux set-option -w -t "$target" pane-active-border-style "fg=$UI_DIM_T,bg=$background"
   tmux set-option -w -t "$target" popup-style "fg=$UI_TEXT_T,bg=$UI_PANEL_T"
   tmux set-option -w -t "$target" popup-border-style "fg=$UI_BORDER_T,bg=$UI_PANEL_T"
   tmux set-option -w -t "$target" popup-border-lines rounded
-  tmux set-option -w -t "$target" window-style 'bg=default'
-  tmux set-option -w -t "$target" window-active-style 'bg=default'
+  tmux set-option -w -t "$target" window-style "$surface"
+  tmux set-option -w -t "$target" window-active-style "$surface"
   tmux set-option -w -t "$target" pane-scrollbars off 2>/dev/null || true
+}
+
+# Apply the shared chrome to this checkout's private dev server, including old
+# named-process windows. Only status/options change; no programs are restarted.
+cmd_dev_style() {
+  [ -n "${ST_DEV_ROOT:-}" ] && [ "$ST_STATE" = "$ST_DEV_ROOT/.dev/state" ] || return 0
+  local key expected sess name label path win slot agent_name mode
+  key=$(identity_hash "$ST_DEV_ROOT")
+  expected="/tmp/supertree-dev-$(id -u)/${key:0:16}.sock"
+  [ "${ST_NEXT_TMUX_SOCKET:-}" = "$expected" ] || die 'refusing to style a different tmux server'
+  tmux set-option -g status-position top
+  tmux set-option -g status-style "fg=$UI_TEXT_T,bg=$UI_BAR_T"
+  tmux set-option -g message-style "fg=$UI_TEXT_T,bg=$UI_TAB_T"
+  tmux set-option -g status-right "#[fg=$UI_DIM_T]dev "
+  tmux list-sessions -F '#{session_name}'$'\037''#{@supertree_label}'$'\037''#{session_path}' 2>/dev/null |
+    while IFS=$'\037' read -r sess label path; do
+      case $sess in st-next-*)
+        label="$(basename "$(main_worktree "$path")")/$(tree_branch "$path")"
+        tmux set-option -t "=$sess:" @supertree_label "$label";;
+      esac
+      [ -n "$label" ] || continue
+      style_session "$sess"
+      agent_name=$(tmux show-options -qv -t "=$sess:" @st_agent_window 2>/dev/null) || agent_name=''
+      [ -n "$agent_name" ] || agent_name=$(harness_window)
+      tmux list-windows -t "=$sess" -F '#{window_id}'$'\t''#{window_name}' |
+        while IFS=$'\t' read -r win name; do
+          if [ "$name" = "$agent_name" ]; then
+            mode=terminal
+            if tmux list-panes -t "$win" -F '#{@st_next_process}' | grep -q '^host_agent_'; then mode=paired; fi
+            tmux set-option -w -t "$win" @st_agent_mode "$mode"
+          fi
+          slot=$(configured_windows | while read -r key; do printf '%s\n' "$(window_name "$key")"; done | grep -nxF -- "$name" | cut -d: -f1) || slot=''
+          style_tab "$win" "$slot"
+        done
+    done
 }
 
 cmd_split() {
@@ -710,18 +747,35 @@ select_window_type() {
   window_enabled "$type" "$windows" || { ui_toast "$type window is not enabled in ST_WINDOWS"; return 0; }
   pane=${TMUX_PANE:-}
   sess=$(current_session)
+  # Home has one shell tab even if trees use agent/editor tabs. Selecting its
+  # shell must also move keyboard focus out of the sidebar.
+  if [ "$sess" = "$ST_HOME_SESSION" ] && home_is_open; then
+    [ "$type" = shell ] || { ui_toast "home has only a shell window"; return 0; }
+    tmux select-window -t "=$sess:shell"
+    if declare -F focus_content >/dev/null; then focus_content "$sess"; fi
+    return 0
+  fi
   is_tree_session "$sess" || { ui_toast "not a supertree session"; return 0; }
   session_environment "$sess"
   name=$(window_name "$type")
-  tmux select-window -t "=$sess:$name" 2>/dev/null && return 0
+  if tmux select-window -t "=$sess:$name" 2>/dev/null; then
+    if declare -F focus_content >/dev/null; then focus_content "$sess"; fi
+    return 0
+  fi
   dir=$(tmux display-message -p -t "${pane:-$sess}" '#{pane_current_path}')
   create_window "$sess" "$dir" "$type" 0
   tmux select-window -t "=$sess:$name"
+  if declare -F focus_content >/dev/null; then focus_content "$sess"; fi
 }
 
 cmd_window() {
   local slot=${1:-} windows type='' line i=0
   case $slot in ''|*[!0-9]*|0) die "usage: st window <positive slot>";; esac
+  if [ "$(current_session)" = "$ST_HOME_SESSION" ] && home_is_open; then
+    [ "$slot" = 1 ] || { ui_toast "home has only one window"; return 0; }
+    select_window_type shell shell
+    return
+  fi
   windows=$(configured_windows)
   while IFS= read -r line; do
     i=$((i + 1))
@@ -770,6 +824,7 @@ cmd_leave() {
 
 st_register_command 'down' cmd_down 'close sessions; keep worktrees' 'down [branch|--subtrees|--all]'
 st_register_command 'home' cmd_home 'open the Supertree home shell'
+st_register_command '_dev-style' cmd_dev_style ''
 st_register_command 'toggle' cmd_toggle ''
 st_register_command 'window' cmd_window ''
 st_register_command 'last' cmd_last 'switch to the previous tree'
