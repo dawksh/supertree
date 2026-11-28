@@ -33,11 +33,11 @@ for spec in 'wide 160 48 on' 'medium 120 36 on' 'narrow 80 24 on' 'short 120 24 
   style_tab "=$sess:nvim" 2
   style_tab "=$sess:shell" 3
   case $(tmux show-options -wv -t "=$sess:codex" window-style) in
-    *'bg=#0f131b'*) ;; *) fail "$sess program background differs from workspace";;
+    *"bg=$UI_PANEL_T"*) ;; *) fail "$sess program background differs from workspace";;
   esac
   for option in pane-border-style pane-active-border-style; do
     case $(tmux show-options -wv -t "=$sess:codex" "$option") in
-      *'bg=#0f131b'*) ;; *) fail "$sess divider background differs from program surface";;
+      *"bg=$UI_PANEL_T"*) ;; *) fail "$sess divider background differs from program surface";;
     esac
   done
   [ "$(tmux show-options -v -t "=$sess:" status)" = "$rows" ] || fail "$sess strip height"
@@ -91,7 +91,10 @@ def draw(session, width, height):
                 data += os.read(master, 65536)
         # Colour changes can split repo/branch text across several SGR runs.
         raw = data.decode(errors='replace')
-        assert '\x1b[48;2;15;19;27m' in raw, 'terminal body did not use workspace background'
+        # tmux can encode the neutral workspace surface as RGB or its exact
+        # xterm grayscale entry, including in a combined SGR sequence.
+        background = r'\x1b\[(?:\d+;)*48;(?:2;18;18;18|5;233)(?:;\d+)*m'
+        assert re.search(background, raw), 'terminal body did not use workspace background'
         body_height = int(tmux('display-message', '-p', '-t', session, '#{window_height}').strip())
         assert body_height == height - 1, ('unused terminal rows', body_height, height)
         return re.sub(r'\x1b\[[0-9;]*m|\x1b\(B', '', raw)

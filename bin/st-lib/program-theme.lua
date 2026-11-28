@@ -5,8 +5,8 @@ local applying = false
 
 local palettes = {
   dark = {
-    mode = 'dark', text = '#d4d8e0', muted = '#a0aabd', panel = '#0f131b', bar = '#151a24',
-    selected = '#232b3a', border = '#3a4458', accent = '#5ccfe6', input = '#ffb454',
+    mode = 'dark', text = '#dadada', muted = '#949494', panel = '#121212', bar = '#1c1c1c',
+    selected = '#303030', border = '#444444', accent = '#5ccfe6', input = '#ffb454',
     blue = '#73b8ff', green = '#9fdc7c', red = '#ff7a7a', repo = '#d2a6ff',
   },
   light = {

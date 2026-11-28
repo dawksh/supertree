@@ -57,4 +57,8 @@ func TestGoAndShellShareTheirColourRoles(t *testing.T) {
 			t.Fatalf("only the input state should demand bold emphasis: %s", role.name)
 		}
 	}
+	border := regexp.MustCompile(`ui_tone\s+UI_BORDER\s+([a-f0-9]+)`).FindStringSubmatch(string(shell))
+	if len(border) != 2 || fmt.Sprint(theme.border) != "#"+border[1] {
+		t.Fatal("Go and shell disagree on the border colour")
+	}
 }

@@ -23,7 +23,7 @@ vim.defer_fn(function()
   local ok, err = pcall(function()
     local theme = vim.env.ST_THEME or 'dark'
     local native = vim.env.ST_PROGRAM_THEME == 'native' or theme == 'ansi'
-    local expected = native and 0x112233 or (theme == 'light' and 0xf6f7f9 or 0x0f131b)
+    local expected = native and 0x112233 or (theme == 'light' and 0xf6f7f9 or 0x121212)
     assert(vim.api.nvim_get_hl(0, { name = 'Normal' }).bg == expected, 'initial background did not follow launch theme')
     assert(vim.api.nvim_get_current_line() == 'unsaved human content' and vim.bo.modified, 'theme changed the buffer')
     assert(vim.fn.maparg('<F12>', 'n'):find('keep mapping', 1, true), 'theme replaced a mapping')

@@ -1137,7 +1137,7 @@ ST_TAB_dev='npm run dev'
 ST_TAB_git='lazygit'
 ```
 
-Program panes share the workspace background (`#0f131b` in the dark theme).
+Program panes share the workspace background (`#121212` in the dark theme).
 Codex and shells inherit it for default-colour cells. Neovim launched through
 Supertree gets a local palette overlay for its surfaces and syntax, including
 after a lazy colourscheme loads. Your Vim configuration, plugins, mappings and
@@ -1413,8 +1413,9 @@ Some terminals can be set to draw symbols like `●` and `◆` two columns wide,
 shifts rows and tabs out of line; `ST_ASCII=1` fixes that.
 Supertree uses explicit colours rather than your terminal's theme. Dark UI surfaces
 use neutral charcoal (`#121212`) and matching RGB and 256-colour grays; accent
-colours use approximations in 256-colour mode. Program panes keep your terminal's
-background. Terminals limited to 16 colours use their own palette. Set
+colours use approximations in 256-colour mode. Program panes use the workspace
+surface by default; `ST_PROGRAM_THEME=native` keeps their terminal background.
+Terminals limited to 16 colours use their own palette. Set
 `ST_THEME=light` in the config for a light background, or `ST_THEME=ansi` to use
 your terminal theme's own colours. `st _palette` prints every colour as your
 terminal draws it. The pickers and the sidebar use the same colours and ignore

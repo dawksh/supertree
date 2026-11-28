@@ -417,7 +417,10 @@ func (m *Manager) Snapshot(ctx context.Context, workspaces ...workspace.Workspac
 					break
 				}
 			}
-		} else if live, ok := byID[item.Process.ID]; ok && live.ID == item.Process.PaneID {
+		} else if live, ok := byID[item.Process.ID]; ok && (live.ID == item.Process.PaneID ||
+			(item.Process.PaneID == "" && (item.LaunchPending || item.Process.State == "starting"))) {
+			// An interrupted first launch may have tagged its placeholder before
+			// recording the pane ID. Once recorded, never reassign it by tag alone.
 			reconcile(item, live)
 		} else if !slices.Contains([]string{"stopped", "failed", "missing"}, item.Process.State) {
 			item.Process.State = "missing"
