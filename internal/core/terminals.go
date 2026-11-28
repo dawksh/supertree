@@ -101,25 +101,35 @@ func (c *Core) launchTerminal(ctx context.Context, args TerminalLaunchArgs) (ter
 	if err := args.Definition.Validate(); err != nil {
 		return terminal.Info{}, err
 	}
-	w, err := c.workspace(args.Definition.WorkspaceID)
+	id := intentID(args.Definition.WorkspaceID, args.RequestID)
+	l := terminal.Launch{RequestID: id, TerminalID: "term_" + strings.TrimPrefix(id, "launch_"), Generation: 1, Definition: args.Definition}
+	return c.ensureTerminal(ctx, id, l, "ensure")
+}
+
+// Runs with refresh held, immediately before an operation may launch a child.
+func (c *Core) validateTerminalDirectory(ctx context.Context, definition terminal.Definition) error {
+	// A move/removal can precede the background discovery poll. Refresh before
+	// authorizing execution rather than trusting an otherwise valid cached path.
+	if err := c.refreshState(ctx, c.options.Directory, command.Caller(ctx)); err != nil {
+		return err
+	}
+	w, err := c.workspace(definition.WorkspaceID)
 	if err != nil {
-		return terminal.Info{}, err
+		return err
 	}
 	if w.State != "available" {
-		return terminal.Info{}, &command.Error{Code: "workspace_unavailable", Message: "owning worktree is unavailable"}
+		return &command.Error{Code: "workspace_unavailable", Message: "owning worktree is unavailable"}
 	}
-	dir := workspace.CanonicalPath(args.Definition.Directory)
+	dir := workspace.CanonicalPath(definition.Directory)
 	root := workspace.CanonicalPath(w.Path)
 	rel, err := filepath.Rel(root, dir)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return terminal.Info{}, &command.Error{Code: "invalid_arguments", Message: "terminal cwd must be inside its owning worktree"}
+		return &command.Error{Code: "invalid_arguments", Message: "terminal cwd must be inside its owning worktree"}
 	}
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		return terminal.Info{}, &command.Error{Code: "invalid_arguments", Message: "terminal cwd is unavailable"}
+		return &command.Error{Code: "invalid_arguments", Message: "terminal cwd is unavailable"}
 	}
-	id := intentID(w.ID, args.RequestID)
-	l := terminal.Launch{RequestID: id, TerminalID: "term_" + strings.TrimPrefix(id, "launch_"), Generation: 1, Definition: args.Definition}
-	return c.ensureTerminal(ctx, id, l, "ensure")
+	return nil
 }
 
 // ensureTerminal runs with refresh held. Persist before spawn; reconciling an
@@ -136,6 +146,10 @@ func (c *Core) ensureTerminal(ctx context.Context, id string, l terminal.Launch,
 		if string(a) != string(b) || intent.Operation != operation {
 			return terminal.Info{}, &command.Error{Code: "conflict", Message: "request ID was already used for another terminal operation"}
 		}
+	} else if err := c.validateTerminalDirectory(ctx, l.Definition); err != nil {
+		// Reject a new unsafe launch/restart before recording its intent or
+		// contacting the host. Reconciliation of existing receipts is read-only.
+		return terminal.Info{}, err
 	}
 	response, err := terminal.Call(ctx, c.terminalDir(), terminal.Request{Op: "hello"})
 	if err != nil {
@@ -153,8 +167,13 @@ func (c *Core) ensureTerminal(ctx context.Context, id string, l terminal.Launch,
 		}
 	}
 	var result *terminal.Info
+	mayLaunch := true
 	for _, info := range status.Terminals {
-		if info.TerminalID == l.TerminalID && info.Generation == l.Generation {
+		if info.TerminalID != l.TerminalID {
+			continue
+		}
+		mayLaunch = info.Generation < l.Generation
+		if info.Generation == l.Generation {
 			copy := info
 			result = &copy
 			break
@@ -165,6 +184,14 @@ func (c *Core) ensureTerminal(ctx context.Context, id string, l terminal.Launch,
 			result = &terminal.Info{TerminalID: l.TerminalID, Generation: l.Generation, WorkspaceID: l.Definition.WorkspaceID, RequestID: l.RequestID, HostEpoch: intent.Epoch, State: "lost", Error: "host epoch changed before outcome was reconciled; explicit restart required"}
 		}
 	} else if result == nil {
+		if exists && mayLaunch {
+			// A pending intent can outlive a worktree move/removal. Validate
+			// again before dispatch, but allow historical receipt lookups after
+			// the host has already reached this or a later generation.
+			if err := c.validateTerminalDirectory(ctx, l.Definition); err != nil {
+				return terminal.Info{}, err
+			}
+		}
 		response, err = terminal.Call(ctx, c.terminalDir(), terminal.Request{Op: operation, Epoch: intent.Epoch, Launch: &l})
 		if err != nil {
 			return terminal.Info{}, err

@@ -156,6 +156,9 @@ definition and the next generation, after its old session has stopped.
 `core.OpenNative` exposes `terminal.launch`, `terminal.inspect`, `terminal.stop`
 and `terminal.restart`, using `StateDir/native-host`. Launch/restart first persist
 a controller intent, then reconcile the independent host's durable receipt.
+New execution attempts refresh Git discovery and require the saved cwd to remain
+inside the available owning worktree. Obsolete paths after a move/removal are
+rejected; retries of executed requests can still reconcile their receipts.
 Neither core startup nor these inspections automatically starts a host. A new
 host epoch reports old active receipts as `lost` and never replays them; host
 crash/reboot does not preserve PTYs. Stop inventories the owned job-control
