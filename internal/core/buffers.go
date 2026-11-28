@@ -38,6 +38,12 @@ type BufferSave struct {
 	Edits []BufferEdit `json:"edits"`
 }
 
+type BufferChange struct {
+	WorkspaceID      string        `json:"workspace_id"`
+	ExpectedRevision int64         `json:"expected_revision"`
+	Change           buffer.Change `json:"change"`
+}
+
 func (c *Core) registerBuffers(r *command.Registry) error {
 	if err := command.Register(r, command.Definition{Name: "buffer.inspect", Version: 1, Description: "Inspect saved native tabs and terminal placements; missing workspaces remain explicit.", Effects: []string{"read"}, Repeatable: true}, func(ctx context.Context, args InspectArgs) (Buffers, error) {
 		c.refresh.Lock()
@@ -46,7 +52,39 @@ func (c *Core) registerBuffers(r *command.Registry) error {
 	}); err != nil {
 		return err
 	}
-	return command.Register(r, command.Definition{Name: "buffer.save", Version: 1, Description: "Atomically save revision-checked native arrangements; never launch or resize a terminal.", Effects: []string{"buffer.save"}}, c.saveBuffers)
+	if err := command.Register(r, command.Definition{Name: "buffer.save", Version: 1, Description: "Atomically save revision-checked native arrangements; never launch or resize a terminal.", Effects: []string{"buffer.save"}}, c.saveBuffers); err != nil {
+		return err
+	}
+	return command.Register(r, command.Definition{Name: "buffer.edit", Version: 1, Description: "Revision-check a native tab placement, hide, move, split resize or reversal; preserve terminal lifetime and client focus.", Effects: []string{"buffer.save"}}, c.editBuffer)
+}
+
+func (c *Core) editBuffer(ctx context.Context, args BufferChange) (Buffers, error) {
+	c.refresh.Lock()
+	defer c.refresh.Unlock()
+	if args.WorkspaceID == "" || args.ExpectedRevision < 1 {
+		return Buffers{}, &command.Error{Code: "invalid_arguments", Message: "buffer edit requires a workspace and an existing positive revision"}
+	}
+	if _, err := c.workspace(args.WorkspaceID); err != nil {
+		return Buffers{}, err
+	}
+	saved, err := c.loadBuffers(ctx)
+	if err != nil {
+		return Buffers{}, err
+	}
+	for _, current := range saved {
+		if current.Buffer.WorkspaceID != args.WorkspaceID {
+			continue
+		}
+		if current.Revision != args.ExpectedRevision {
+			return Buffers{}, &command.Error{Code: "conflict", Message: "buffer revision changed; inspect before retrying the edit"}
+		}
+		next, err := buffer.Edit(current.Buffer, args.Change)
+		if err != nil {
+			return Buffers{}, &command.Error{Code: "invalid_arguments", Message: err.Error()}
+		}
+		return c.saveBuffersLocked(ctx, BufferSave{Edits: []BufferEdit{{ExpectedRevision: args.ExpectedRevision, Buffer: next}}})
+	}
+	return Buffers{}, &command.Error{Code: "not_found", Message: "native buffer is not saved; configure its tabs before editing"}
 }
 
 func (c *Core) loadBuffers(ctx context.Context) ([]SavedBuffer, error) {
@@ -128,6 +166,10 @@ func (c *Core) inspectBuffers(ctx context.Context, id string) (Buffers, error) {
 func (c *Core) saveBuffers(ctx context.Context, args BufferSave) (Buffers, error) {
 	c.refresh.Lock()
 	defer c.refresh.Unlock()
+	return c.saveBuffersLocked(ctx, args)
+}
+
+func (c *Core) saveBuffersLocked(ctx context.Context, args BufferSave) (Buffers, error) {
 	invalid := func(message string) (Buffers, error) {
 		return Buffers{}, &command.Error{Code: "invalid_arguments", Message: message}
 	}

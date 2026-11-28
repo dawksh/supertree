@@ -171,7 +171,7 @@ func (s *server) status() Status {
 	tmuxSocket := s.options.TmuxSocket
 	if s.native {
 		tmuxSocket = ""
-		capabilities = append(capabilities, "native-workspace-metadata", "native-buffer-layouts-v1", "native-terminal-intents-v1")
+		capabilities = append(capabilities, "native-workspace-metadata", "native-buffer-layouts-v1", "native-buffer-edits-v1", "native-terminal-intents-v1")
 	}
 	return Status{command.SchemaVersion, true, os.Getpid(), s.socket, s.options.StateDir,
 		s.options.WorktreeRoot, tmuxSocket, snapshot.Epoch, snapshot.Sequence, capabilities}

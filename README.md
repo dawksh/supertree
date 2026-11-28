@@ -90,6 +90,11 @@ gates remain separate from passing the existing product tests.
 
 The native metadata foundation is internal: `core.OpenNative` and `rpc.ServeNative`
 select Git-only discovery and versioned `buffer.inspect`/`buffer.save` commands.
+`buffer.edit` applies revision-checked placement, hide, move, split-ratio and
+split-order changes to one saved tab. Hidden terminals retain their identity;
+placing an existing terminal twice or hiding an active loan is rejected. These
+commands change saved arrangements only; live multi-pane composition, merge and
+borrow controls are still being implemented.
 They preserve per-worktree tab order, split arrangements, terminal ownership and
 loan placeholders across core restarts. Compound saves require every affected
 revision and commit atomically; they never launch, stop or resize programs.

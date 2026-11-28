@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dawksh/supertree/internal/buffer"
 	"github.com/dawksh/supertree/internal/core"
 	"github.com/dawksh/supertree/internal/store"
 	"github.com/dawksh/supertree/internal/terminal"
@@ -82,6 +83,24 @@ func TestNativeLaunchIntentSurvivesControlRestartAndPendingReply(t *testing.T) {
 	}
 	if original.PID == 0 {
 		t.Fatal("no terminal launched")
+	}
+	// Hiding and restoring a display is metadata only, including for a live
+	// program. Its identity, generation, cwd and process survive both edits.
+	doc := buffer.Document{Version: 1, WorkspaceID: workspaceID, Terminals: []buffer.Terminal{{ID: original.TerminalID}}, Tabs: []buffer.Tab{{ID: "agent", Name: "Codex", Root: "pane", Nodes: []buffer.Node{{ID: "pane", Kind: "pane", TerminalID: original.TerminalID}}}}, Loans: []buffer.Loan{}}
+	if _, err := callNative(ctx, r, "buffer.save", core.BufferSave{Edits: []core.BufferEdit{{Buffer: doc}}}); err != nil {
+		t.Fatal(err)
+	}
+	for i, change := range []buffer.Change{
+		{Operation: "hide", TabID: "agent", PaneID: "pane"},
+		{Operation: "place", TabID: "agent", PaneID: "restored", TerminalID: original.TerminalID},
+	} {
+		if _, err := callNative(ctx, r, "buffer.edit", core.BufferChange{WorkspaceID: workspaceID, ExpectedRevision: int64(i + 1), Change: change}); err != nil {
+			t.Fatal(err)
+		}
+		status, err := terminal.Call(ctx, dir, terminal.Request{Op: "inspect", Epoch: original.HostEpoch, Target: &terminal.Target{TerminalID: original.TerminalID, Generation: original.Generation}})
+		if err != nil || status.Info.PID != original.PID || status.Info.State != "running" {
+			t.Fatal("display edit stopped or replaced a live program")
+		}
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for {
